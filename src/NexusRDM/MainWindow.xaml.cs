@@ -12,9 +12,9 @@ namespace NexusRDM;
 public sealed partial class MainWindow : Window
 {
     public MainViewModel  ViewModel { get; }
-    private readonly SessionManager  _sessions;
-    private readonly ISshHandler     _ssh;
-    private readonly IRdpHandler     _rdp;
+    private readonly SessionManager   _sessions;
+    private readonly ISshHandler      _ssh;
+    private readonly IRdpHandler      _rdp;
     private readonly ICredentialVault _vault;
 
     public MainWindow()
@@ -37,23 +37,16 @@ public sealed partial class MainWindow : Window
         if (args.SelectedItem is not NavigationViewItem item) return;
         switch (item.Tag as string)
         {
-            case "audit":
-                // Open audit log in right pane as a pinned tab
-                OpenUtilityTab("Audit Log", Symbol.Clock, new AuditLogPage());
-                break;
-            case "settings":
-                OpenUtilityTab("Settings", Symbol.Setting, new SettingsPage());
-                break;
+            case "audit":    OpenUtilityTab("Audit Log", Symbol.Clock,   new AuditLogPage());  break;
+            case "settings": OpenUtilityTab("Settings",  Symbol.Setting, new SettingsPage()); break;
         }
     }
 
     private void OpenUtilityTab(string header, Symbol icon, UIElement content)
     {
-        foreach (var existing in SessionTabs.TabItems.OfType<TabViewItem>())
-        {
-            if (existing.Tag as string == header)
-            { SessionTabs.SelectedItem = existing; return; }
-        }
+        foreach (var t in SessionTabs.TabItems.OfType<TabViewItem>())
+            if (t.Tag as string == header) { SessionTabs.SelectedItem = t; return; }
+
         var tab = new TabViewItem
         {
             Header     = header,
@@ -83,22 +76,28 @@ public sealed partial class MainWindow : Window
     {
         var (username, password) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
+
         var session = _ssh.CreateSession(profile, username, password!);
         _sessions.AddSsh(profile, session);
-        AddTab(profile, Symbol.Globe, new SshSessionView(new SshSessionViewModel(profile, session, _sessions)));
+        var vm   = new SshSessionViewModel(profile, session, _sessions);
+        AddTab(profile, Symbol.Globe, new SshSessionView(vm));
     }
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)
     {
         var (username, _) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
+
         var session = _rdp.CreateSession(profile, username, string.Empty);
-        AddTab(profile, Symbol.Remote, new RdpSessionView(new RdpSessionViewModel(profile, session, _sessions)));
+        _sessions.AddRdp(profile, session);
+        var vm   = new RdpSessionViewModel(profile, session, _sessions);
+        AddTab(profile, Symbol.Remote, new RdpSessionView(vm));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(ConnectionProfile profile)
+    private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(
+        ConnectionProfile profile)
     {
         if (profile.CredentialKey is not null)
         {
@@ -114,15 +113,17 @@ public sealed partial class MainWindow : Window
     {
         var tab = new TabViewItem
         {
-            Header = profile.DisplayName,
+            Header     = profile.DisplayName,
             IconSource = new SymbolIconSource { Symbol = icon },
-            Tag = profile.Id, Content = content
+            Tag        = profile.Id,
+            Content    = content
         };
         SessionTabs.TabItems.Add(tab);
         SessionTabs.SelectedItem = tab;
     }
 
-    private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    private async void SessionTabs_TabCloseRequested(TabView sender,
+        TabViewTabCloseRequestedEventArgs args)
     {
         if (args.Tab.Tag is Guid id)
         {

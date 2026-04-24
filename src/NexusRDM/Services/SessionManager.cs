@@ -5,7 +5,7 @@ using System.Collections.ObjectModel;
 namespace NexusRDM.Services;
 
 /// <summary>
-/// Tracks every open session tab. Singleton — injected into MainWindow and ViewModels.
+/// Tracks every open session tab (SSH and RDP). Singleton.
 /// </summary>
 public sealed class SessionManager : IDisposable
 {
@@ -16,7 +16,14 @@ public sealed class SessionManager : IDisposable
 
     public OpenSession AddSsh(ConnectionProfile profile, ISshSession session)
     {
-        var entry = new OpenSession(profile, session);
+        var entry = new OpenSession(profile, sshSession: session);
+        Sessions.Add(entry);
+        return entry;
+    }
+
+    public OpenSession AddRdp(ConnectionProfile profile, IRdpSession session)
+    {
+        var entry = new OpenSession(profile, rdpSession: session);
         Sessions.Add(entry);
         return entry;
     }
@@ -35,25 +42,28 @@ public sealed class SessionManager : IDisposable
     }
 }
 
-/// <summary>Represents one live session regardless of protocol.</summary>
+/// <summary>One live session, protocol-agnostic.</summary>
 public sealed class OpenSession : IAsyncDisposable
 {
-    public Guid              ConnectionId { get; }
-    public string            DisplayName  { get; }
-    public ConnectionProtocol Protocol    { get; }
-    public ISshSession?      SshSession  { get; }
+    public Guid               ConnectionId { get; }
+    public string             DisplayName  { get; }
+    public ConnectionProtocol Protocol     { get; }
+    public ISshSession?       SshSession   { get; }
+    public IRdpSession?       RdpSession   { get; }
 
-    public OpenSession(ConnectionProfile profile, ISshSession ssh)
+    internal OpenSession(ConnectionProfile profile,
+        ISshSession? sshSession = null, IRdpSession? rdpSession = null)
     {
         ConnectionId = profile.Id;
         DisplayName  = profile.DisplayName;
         Protocol     = profile.Protocol;
-        SshSession   = ssh;
+        SshSession   = sshSession;
+        RdpSession   = rdpSession;
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (SshSession is not null)
-            await SshSession.DisposeAsync();
+        if (SshSession is not null) await SshSession.DisposeAsync();
+        RdpSession?.Dispose();
     }
 }
