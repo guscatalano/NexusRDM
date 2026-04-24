@@ -7,6 +7,7 @@ using NexusRDM.Core.Protocols;
 using NexusRDM.Core.Services;
 using NexusRDM.Data;
 using NexusRDM.Data.Context;
+using NexusRDM.Services;
 using NexusRDM.ViewModels;
 using Serilog;
 
@@ -22,17 +23,12 @@ public partial class App : Application
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "NexusRDM", "connections.db");
 
-    public App()
-    {
-        InitializeComponent();
-        Services = BuildServices();
-    }
+    public App() { InitializeComponent(); Services = BuildServices(); }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         using var scope = Services.CreateScope();
         scope.ServiceProvider.GetRequiredService<NexusDbContext>().Database.Migrate();
-
         MainWin = new MainWindow();
         MainWin.Activate();
     }
@@ -49,13 +45,13 @@ public partial class App : Application
             .CreateLogger();
 
         var services = new ServiceCollection();
-
         services.AddLogging(b => b.AddSerilog(dispose: true));
         services.AddNexusData(DbPath);
 
         services.AddSingleton<ICredentialVault, CredentialVault>();
         services.AddScoped<IConnectionService,  ConnectionService>();
         services.AddSingleton<ISshHandler,      SshHandler>();
+        services.AddSingleton<SessionManager>();          // <-- new
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();
