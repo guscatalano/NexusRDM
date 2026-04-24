@@ -19,4 +19,7 @@ public interface IConnectionService
     Task RecordFailedAsync(Guid connectionId, string reason, CancellationToken ct = default);
 
     Task<IReadOnlyList<ConnectionProfile>> SearchAsync(string query, CancellationToken ct = default);
+
+    /// <summary>Return the N most recent audit entries across all connections.</summary>
+    Task<IReadOnlyList<AuditEntry>> GetRecentAuditAsync(int limit = 100, CancellationToken ct = default);
 }

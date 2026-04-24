@@ -19,8 +19,7 @@ public partial class App : Application
     public static MainWindow        MainWin  { get; private set; } = null!;
 
     private static string DbPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "NexusRDM", "connections.db");
 
     public App() { InitializeComponent(); Services = BuildServices(); }
@@ -36,12 +35,10 @@ public partial class App : Application
     private static IServiceProvider BuildServices()
     {
         var dbDir   = Path.GetDirectoryName(DbPath)!;
-        var logPath = Path.Combine(dbDir, "logs", "nexus-.log");
         Directory.CreateDirectory(dbDir);
-
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .WriteTo.File(logPath, rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
+        Log.Logger = new LoggerConfiguration().MinimumLevel.Debug()
+            .WriteTo.File(Path.Combine(dbDir, "logs", "nexus-.log"),
+                rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
             .CreateLogger();
 
         var services = new ServiceCollection();
@@ -56,6 +53,8 @@ public partial class App : Application
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();
+        services.AddTransient<AuditLogViewModel>();
+        services.AddTransient<SettingsViewModel>();
 
         return services.BuildServiceProvider();
     }

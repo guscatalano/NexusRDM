@@ -11,10 +11,10 @@ namespace NexusRDM;
 
 public sealed partial class MainWindow : Window
 {
-    public MainViewModel ViewModel { get; }
-    private readonly SessionManager _sessions;
-    private readonly ISshHandler    _ssh;
-    private readonly IRdpHandler    _rdp;
+    public MainViewModel  ViewModel { get; }
+    private readonly SessionManager  _sessions;
+    private readonly ISshHandler     _ssh;
+    private readonly IRdpHandler     _rdp;
     private readonly ICredentialVault _vault;
 
     public MainWindow()
@@ -24,23 +24,54 @@ public sealed partial class MainWindow : Window
         _ssh      = App.Services.GetRequiredService<ISshHandler>();
         _rdp      = App.Services.GetRequiredService<IRdpHandler>();
         _vault    = App.Services.GetRequiredService<ICredentialVault>();
-
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         ConnectionsPane.ConnectRequested += OnConnectRequested;
     }
 
+    // ── Navigation ────────────────────────────────────────────────────────────
+
     private void NavView_SelectionChanged(NavigationView sender,
-        NavigationViewSelectionChangedEventArgs args) { /* TODO M4 */ }
+        NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItem is not NavigationViewItem item) return;
+        switch (item.Tag as string)
+        {
+            case "audit":
+                // Open audit log in right pane as a pinned tab
+                OpenUtilityTab("Audit Log", Symbol.Clock, new AuditLogPage());
+                break;
+            case "settings":
+                OpenUtilityTab("Settings", Symbol.Setting, new SettingsPage());
+                break;
+        }
+    }
+
+    private void OpenUtilityTab(string header, Symbol icon, UIElement content)
+    {
+        foreach (var existing in SessionTabs.TabItems.OfType<TabViewItem>())
+        {
+            if (existing.Tag as string == header)
+            { SessionTabs.SelectedItem = existing; return; }
+        }
+        var tab = new TabViewItem
+        {
+            Header     = header,
+            IconSource = new SymbolIconSource { Symbol = icon },
+            Tag        = header,
+            Content    = content
+        };
+        SessionTabs.TabItems.Add(tab);
+        SessionTabs.SelectedItem = tab;
+    }
+
+    // ── Connect ───────────────────────────────────────────────────────────────
 
     private async void OnConnectRequested(object? sender, ConnectionProfile profile)
     {
-        // Focus if already open
         foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
-        {
             if (item.Tag is Guid id && id == profile.Id)
             { SessionTabs.SelectedItem = item; return; }
-        }
 
         if (profile.Protocol == ConnectionProtocol.Ssh)
             await OpenSshTabAsync(profile);
@@ -48,47 +79,32 @@ public sealed partial class MainWindow : Window
             await OpenRdpTabAsync(profile);
     }
 
-    // ── SSH ───────────────────────────────────────────────────────────────────
-
     private async Task OpenSshTabAsync(ConnectionProfile profile)
     {
         var (username, password) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
-
         var session = _ssh.CreateSession(profile, username, password!);
         _sessions.AddSsh(profile, session);
-        var vm   = new SshSessionViewModel(profile, session, _sessions);
-        var view = new SshSessionView(vm);
-
-        AddTab(profile, Symbol.Globe, view);
+        AddTab(profile, Symbol.Globe, new SshSessionView(new SshSessionViewModel(profile, session, _sessions)));
     }
-
-    // ── RDP ───────────────────────────────────────────────────────────────────
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)
     {
         var (username, _) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
-
-        // RDP session — password is passed via the .rdp file or Windows SSO
         var session = _rdp.CreateSession(profile, username, string.Empty);
-        var vm      = new RdpSessionViewModel(profile, session, _sessions);
-        var view    = new RdpSessionView(vm);
-
-        AddTab(profile, Symbol.Remote, view);
+        AddTab(profile, Symbol.Remote, new RdpSessionView(new RdpSessionViewModel(profile, session, _sessions)));
     }
 
-    // ── Shared helpers ────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(
-        ConnectionProfile profile)
+    private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(ConnectionProfile profile)
     {
         if (profile.CredentialKey is not null)
         {
-            var cred = _vault.Load(profile.CredentialKey);
-            if (cred is not null) return (cred.Value.Username, cred.Value.Password);
+            var c = _vault.Load(profile.CredentialKey);
+            if (c is not null) return (c.Value.Username, c.Value.Password);
         }
-
         var dlg = new CredentialPromptDialog { XamlRoot = Content.XamlRoot };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return (null, null);
         return (dlg.Username, dlg.Password);
@@ -98,17 +114,15 @@ public sealed partial class MainWindow : Window
     {
         var tab = new TabViewItem
         {
-            Header     = profile.DisplayName,
+            Header = profile.DisplayName,
             IconSource = new SymbolIconSource { Symbol = icon },
-            Tag        = profile.Id,
-            Content    = content
+            Tag = profile.Id, Content = content
         };
         SessionTabs.TabItems.Add(tab);
         SessionTabs.SelectedItem = tab;
     }
 
-    private async void SessionTabs_TabCloseRequested(TabView sender,
-        TabViewTabCloseRequestedEventArgs args)
+    private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
     {
         if (args.Tab.Tag is Guid id)
         {
