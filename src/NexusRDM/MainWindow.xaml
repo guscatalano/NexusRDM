@@ -15,22 +15,27 @@
                         SelectionChanged="NavView_SelectionChanged">
 
             <NavigationView.MenuItems>
-                <NavigationViewItem Tag="connections" Icon="Network" Content="Connections" IsSelected="True" />
-                <NavigationViewItem Tag="audit"       Icon="Clock"   Content="Audit Log" />
+                <NavigationViewItem Tag="connections" Content="Connections" IsSelected="True">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="World" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Tag="audit" Content="Audit Log">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Clock" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem Tag="settings" Icon="Setting" Content="Settings" />
+                <NavigationViewItem Tag="settings" Content="Settings">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <!-- Main area: left pane + splitter + tab sessions -->
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="280" MinWidth="180" MaxWidth="420" />
-                    <ColumnDefinition Width="1" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
+            <Grid ColumnDefinitions="280,1,*">
                 <views:ConnectionsPane x:Name="ConnectionsPane" Grid.Column="0" />
 
                 <Border Grid.Column="1"

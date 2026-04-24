@@ -11,12 +11,20 @@
             PlaceholderText="Search  (Ctrl+F)" QueryIcon="Find"
             Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
-        <CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed" Background="Transparent" Margin="0,4,0,0">
-            <AppBarButton Icon="Add"       Label="New connection" Command="{x:Bind ViewModel.NewConnectionCommand}"  ToolTipService.ToolTip="New connection" />
-            <AppBarButton Icon="NewFolder" Label="New group"      Command="{x:Bind ViewModel.NewGroupCommand}"       ToolTipService.ToolTip="New group" />
-            <AppBarSeparator />
-            <AppBarButton Icon="Refresh"   Label="Refresh"        Command="{x:Bind ViewModel.RefreshCommand}"        ToolTipService.ToolTip="Refresh" />
-        </CommandBar>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="4,4,4,0" Spacing="2">
+            <Button Command="{x:Bind ViewModel.NewConnectionCommand}" ToolTipService.ToolTip="New connection">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <SymbolIcon Symbol="Add" />
+                    <TextBlock Text="New" />
+                </StackPanel>
+            </Button>
+            <Button Command="{x:Bind ViewModel.NewGroupCommand}" ToolTipService.ToolTip="New group">
+                <SymbolIcon Symbol="NewFolder" />
+            </Button>
+            <Button Command="{x:Bind ViewModel.RefreshCommand}" ToolTipService.ToolTip="Refresh">
+                <SymbolIcon Symbol="Refresh" />
+            </Button>
+        </StackPanel>
 
         <TreeView Grid.Row="2" x:Name="ConnectionTree"
                   ItemsSource="{x:Bind ViewModel.RootItems, Mode=OneWay}"
