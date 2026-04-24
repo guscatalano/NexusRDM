@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="NexusRDM.Views.ConnectionsPane"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:NexusRDM.ViewModels">
+
+    <Grid RowDefinitions="Auto,Auto,*">
+
+        <!-- Search -->
+        <AutoSuggestBox
+            Grid.Row="0"
+            Margin="8,8,8,0"
+            PlaceholderText="Search  (Ctrl+F)"
+            QueryIcon="Find"
+            Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+        <!-- Toolbar -->
+        <CommandBar Grid.Row="1" DefaultLabelPosition="Collapsed" Background="Transparent" Margin="0,4,0,0">
+            <AppBarButton Icon="Add"     Label="New connection" Command="{x:Bind ViewModel.NewConnectionCommand}" ToolTipService.ToolTip="New connection (Ctrl+N)" />
+            <AppBarButton Icon="NewFolder" Label="New group"   Command="{x:Bind ViewModel.NewGroupCommand}"      ToolTipService.ToolTip="New group" />
+            <AppBarSeparator />
+            <AppBarButton Icon="Refresh" Label="Refresh"       Command="{x:Bind ViewModel.RefreshCommand}"       ToolTipService.ToolTip="Refresh" />
+        </CommandBar>
+
+        <!-- Connection tree -->
+        <TreeView
+            Grid.Row="2"
+            x:Name="ConnectionTree"
+            ItemsSource="{x:Bind ViewModel.RootItems, Mode=OneWay}"
+            SelectionMode="Single"
+            ItemInvoked="ConnectionTree_ItemInvoked"
+            CanDragItems="True"
+            CanReorderItems="True">
+            <TreeView.ItemTemplate>
+                <DataTemplate x:DataType="vm:ConnectionTreeNode">
+                    <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="True">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" />
+                            <TextBlock Text="{x:Bind DisplayName}" />
+                        </StackPanel>
+                    </TreeViewItem>
+                </DataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+
+    </Grid>
+</UserControl>

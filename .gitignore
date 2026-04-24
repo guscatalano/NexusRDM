@@ -1,0 +1,66 @@
+## NexusRDM .gitignore
+
+# Build outputs
+[Bb]in/
+[Oo]bj/
+out/
+[Pp]ublish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# NuGet
+packages/
+*.nupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+# Windows App SDK / WinUI 3
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxsym
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Generated files
+*.g.cs
+*.g.i.cs
+
+# EF Core Migrations (keep scaffolded ones, ignore auto-generated snapshots optionally)
+# Uncomment below if you want to exclude migration snapshots:
+# **/Migrations/*Snapshot.cs
+
+# SQLite local database files
+*.db
+*.db-shm
+*.db-wal
+
+# User secrets
+secrets.json
+appsettings.Local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
