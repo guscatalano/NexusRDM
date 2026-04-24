@@ -51,7 +51,8 @@ public partial class App : Application
         services.AddSingleton<ICredentialVault, CredentialVault>();
         services.AddScoped<IConnectionService,  ConnectionService>();
         services.AddSingleton<ISshHandler,      SshHandler>();
-        services.AddSingleton<SessionManager>();          // <-- new
+        services.AddSingleton<IRdpHandler,      RdpHandler>();
+        services.AddSingleton<SessionManager>();
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();
