@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:NexusRDM.ViewModels"
     xmlns:models="using:NexusRDM.Core.Models"
+    xmlns:conv="using:NexusRDM.Converters"
     Title="{x:Bind ViewModel.Title}"
     PrimaryButtonText="Save"
     CloseButtonText="Cancel"
@@ -12,99 +13,89 @@
     PrimaryButtonClick="OnSaveClick"
     MinWidth="520">
 
+    <ContentDialog.Resources>
+        <conv:InvertBoolConverter       x:Key="InvertBoolConverter" />
+        <conv:SshVisibilityConverter    x:Key="SshVisibilityConverter" />
+        <conv:RdpVisibilityConverter    x:Key="RdpVisibilityConverter" />
+        <conv:PrivKeyVisibilityConverter x:Key="PrivKeyVisibilityConverter" />
+    </ContentDialog.Resources>
+
     <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="620">
         <StackPanel Spacing="4" Padding="0,4,16,4">
 
-            <!-- ── Error banner ──────────────────────────────────────────── -->
+            <!-- Error banner -->
             <InfoBar x:Name="ErrorBar"
                      Severity="Error"
-                     IsOpen="{x:Bind ViewModel.ErrorMessage.Length, Mode=OneWay, Converter={StaticResource NonZeroToBoolConverter}}"
+                     IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
                      Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                      IsClosable="False" />
 
-            <!-- ── GENERAL ───────────────────────────────────────────────── -->
+            <!-- GENERAL -->
             <TextBlock Text="General" Style="{ThemeResource BaseTextBlockStyle}" Margin="0,8,0,4" />
 
-            <TextBox Header="Display name"
-                     PlaceholderText="e.g. Production Web Server"
+            <TextBox Header="Display name" PlaceholderText="e.g. Production Web Server"
                      Text="{x:Bind ViewModel.DisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                      IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
 
             <Grid ColumnDefinitions="*,Auto,120">
                 <TextBox Grid.Column="0" Header="Host / IP"
                          PlaceholderText="hostname or 192.168.x.x"
-                         Text="{x:Bind ViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                         IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
-                <TextBlock Grid.Column="1" Text=":" VerticalAlignment="Bottom" Margin="6,0,6,8"
-                           Style="{ThemeResource BodyTextBlockStyle}" />
-                <NumberBox Grid.Column="2" Header="Port" Minimum="1" Maximum="65535" SpinButtonPlacementMode="Compact"
-                           Value="{x:Bind ViewModel.Port, Mode=TwoWay}"
-                           IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
+                         Text="{x:Bind ViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Column="1" Text=":" VerticalAlignment="Bottom" Margin="6,0,6,8" />
+                <NumberBox Grid.Column="2" Header="Port" Minimum="1" Maximum="65535"
+                           SpinButtonPlacementMode="Compact"
+                           Value="{x:Bind ViewModel.Port, Mode=TwoWay}" />
             </Grid>
 
             <ComboBox Header="Protocol" HorizontalAlignment="Stretch"
-                      SelectedItem="{x:Bind ViewModel.Protocol, Mode=TwoWay}"
-                      IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}">
+                      SelectedItem="{x:Bind ViewModel.Protocol, Mode=TwoWay}">
                 <models:ConnectionProtocol>Ssh</models:ConnectionProtocol>
                 <models:ConnectionProtocol>Rdp</models:ConnectionProtocol>
             </ComboBox>
 
-            <TextBox Header="Tags (comma separated)"
-                     PlaceholderText="linux, production, web"
+            <TextBox Header="Tags (comma separated)" PlaceholderText="linux, production, web"
                      Text="{x:Bind ViewModel.Tags, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
-            <!-- ── CREDENTIALS ───────────────────────────────────────────── -->
+            <!-- CREDENTIALS -->
             <TextBlock Text="Credentials" Style="{ThemeResource BaseTextBlockStyle}" Margin="0,12,0,4" />
+            <TextBox Header="Username" Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <PasswordBox Header="Password" Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <CheckBox Content="Save to Windows Credential Manager" IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
 
-            <TextBox Header="Username"
-                     Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-
-            <PasswordBox Header="Password"
-                         Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-
-            <CheckBox Content="Save to Windows Credential Manager"
-                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
-
-            <!-- ── SSH OPTIONS (visible when protocol = SSH) ──────────────── -->
-            <StackPanel x:Name="SshPanel" Spacing="4"
+            <!-- SSH OPTIONS -->
+            <StackPanel Spacing="4"
                         Visibility="{x:Bind ViewModel.Protocol, Mode=OneWay, Converter={StaticResource SshVisibilityConverter}}">
-
                 <TextBlock Text="SSH Options" Style="{ThemeResource BaseTextBlockStyle}" Margin="0,12,0,4" />
-
                 <ComboBox Header="Authentication method" HorizontalAlignment="Stretch"
                           SelectedItem="{x:Bind ViewModel.SshAuthMethod, Mode=TwoWay}">
                     <models:SshAuthMethod>Password</models:SshAuthMethod>
                     <models:SshAuthMethod>PrivateKey</models:SshAuthMethod>
                     <models:SshAuthMethod>KeyboardInteractive</models:SshAuthMethod>
                 </ComboBox>
-
                 <TextBox Header="Private key path (.pem / .ppk)"
                          PlaceholderText="C:\Users\you\.ssh\id_rsa"
                          Text="{x:Bind ViewModel.PrivateKeyPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                          Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}}" />
-
                 <NumberBox Header="Keep-alive interval (seconds)" Minimum="0" Maximum="300"
                            SpinButtonPlacementMode="Compact"
                            Value="{x:Bind ViewModel.KeepAliveSeconds, Mode=TwoWay}" />
             </StackPanel>
 
-            <!-- ── RDP OPTIONS (visible when protocol = RDP) ─────────────── -->
-            <StackPanel x:Name="RdpPanel" Spacing="4"
+            <!-- RDP OPTIONS -->
+            <StackPanel Spacing="4"
                         Visibility="{x:Bind ViewModel.Protocol, Mode=OneWay, Converter={StaticResource RdpVisibilityConverter}}">
-
                 <TextBlock Text="RDP Options" Style="{ThemeResource BaseTextBlockStyle}" Margin="0,12,0,4" />
-
                 <TextBox Header="Domain (optional)" Text="{x:Bind ViewModel.RdpDomain, Mode=TwoWay}" />
-
                 <Grid ColumnDefinitions="*,Auto,*">
-                    <NumberBox Grid.Column="0" Header="Width"  Minimum="640"  Maximum="7680" SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.RdpWidth,  Mode=TwoWay}" />
+                    <NumberBox Grid.Column="0" Header="Width"  Minimum="640"  Maximum="7680"
+                               SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.RdpWidth,  Mode=TwoWay}" />
                     <TextBlock Grid.Column="1" Text="×" VerticalAlignment="Bottom" Margin="8,0,8,8" />
-                    <NumberBox Grid.Column="2" Header="Height" Minimum="480"  Maximum="4320" SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.RdpHeight, Mode=TwoWay}" />
+                    <NumberBox Grid.Column="2" Header="Height" Minimum="480"  Maximum="4320"
+                               SpinButtonPlacementMode="Compact" Value="{x:Bind ViewModel.RdpHeight, Mode=TwoWay}" />
                 </Grid>
-
-                <CheckBox Content="Full screen" IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
-                <CheckBox Content="Redirect clipboard" IsChecked="{x:Bind ViewModel.RdpClipboard, Mode=TwoWay}" />
-                <CheckBox Content="Redirect local drives" IsChecked="{x:Bind ViewModel.RdpDrives, Mode=TwoWay}" />
+                <CheckBox Content="Full screen"            IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
+                <CheckBox Content="Redirect clipboard"    IsChecked="{x:Bind ViewModel.RdpClipboard,  Mode=TwoWay}" />
+                <CheckBox Content="Redirect local drives" IsChecked="{x:Bind ViewModel.RdpDrives,     Mode=TwoWay}" />
             </StackPanel>
 
         </StackPanel>

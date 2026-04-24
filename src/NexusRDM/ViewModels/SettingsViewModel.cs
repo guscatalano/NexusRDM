@@ -1,55 +1,60 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.UI;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml;
 
 namespace NexusRDM.ViewModels;
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
-    private const string ThemeKey = "AppTheme";
-
-    [ObservableProperty] private int    _themeIndex   = 0;  // 0=System, 1=Light, 2=Dark
-    [ObservableProperty] private string _defaultSshUser = string.Empty;
+    [ObservableProperty] private int    _themeIndex      = 0; // 0=System 1=Light 2=Dark
+    [ObservableProperty] private string _defaultSshUser  = string.Empty;
     [ObservableProperty] private int    _defaultSshPort  = 22;
     [ObservableProperty] private int    _defaultRdpPort  = 3389;
     [ObservableProperty] private bool   _saveWindowSize  = true;
 
-    public string AppVersion =>
-        Windows.ApplicationModel.Package.Current.Id.Version is var v
-            ? $"{v.Major}.{v.Minor}.{v.Build}"
-            : "dev";
-
-    public SettingsViewModel() => LoadFromLocalSettings();
-
-    private void LoadFromLocalSettings()
+    /// <summary>Safe for unpackaged apps — Package.Current throws without identity.</summary>
+    public string AppVersion
     {
-        var local = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
-        if (local.TryGetValue("ThemeIndex",      out var t)) ThemeIndex      = (int)t;
-        if (local.TryGetValue("DefaultSshUser",  out var u)) DefaultSshUser  = (string)u;
-        if (local.TryGetValue("DefaultSshPort",  out var sp)) DefaultSshPort = (int)sp;
-        if (local.TryGetValue("DefaultRdpPort",  out var rp)) DefaultRdpPort = (int)rp;
-        if (local.TryGetValue("SaveWindowSize",  out var sw)) SaveWindowSize  = (bool)sw;
+        get
+        {
+            try
+            {
+                var v = Windows.ApplicationModel.Package.Current.Id.Version;
+                return $"{v.Major}.{v.Minor}.{v.Build}";
+            }
+            catch { return "1.0.0-dev"; }
+        }
+    }
+
+    public SettingsViewModel() => Load();
+
+    private void Load()
+    {
+        var s = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+        if (s.TryGetValue("ThemeIndex",    out var t))  ThemeIndex     = (int)t;
+        if (s.TryGetValue("SshUser",       out var u))  DefaultSshUser = (string)u;
+        if (s.TryGetValue("SshPort",       out var sp)) DefaultSshPort = (int)sp;
+        if (s.TryGetValue("RdpPort",       out var rp)) DefaultRdpPort = (int)rp;
+        if (s.TryGetValue("SaveWinSize",   out var sw)) SaveWindowSize = (bool)sw;
     }
 
     [RelayCommand]
     private void Save()
     {
-        var local = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
-        local["ThemeIndex"]     = ThemeIndex;
-        local["DefaultSshUser"] = DefaultSshUser;
-        local["DefaultSshPort"] = DefaultSshPort;
-        local["DefaultRdpPort"] = DefaultRdpPort;
-        local["SaveWindowSize"] = SaveWindowSize;
+        var s = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+        s["ThemeIndex"]  = ThemeIndex;
+        s["SshUser"]     = DefaultSshUser;
+        s["SshPort"]     = DefaultSshPort;
+        s["RdpPort"]     = DefaultRdpPort;
+        s["SaveWinSize"] = SaveWindowSize;
 
-        // Apply theme immediately
-        var requested = ThemeIndex switch
+        var theme = ThemeIndex switch
         {
-            1 => Microsoft.UI.Xaml.ElementTheme.Light,
-            2 => Microsoft.UI.Xaml.ElementTheme.Dark,
-            _ => Microsoft.UI.Xaml.ElementTheme.Default
+            1 => ElementTheme.Light,
+            2 => ElementTheme.Dark,
+            _ => ElementTheme.Default
         };
-        if (App.MainWin.Content is Microsoft.UI.Xaml.FrameworkElement root)
-            root.RequestedTheme = requested;
+        if (App.MainWin.Content is FrameworkElement root)
+            root.RequestedTheme = theme;
     }
 }

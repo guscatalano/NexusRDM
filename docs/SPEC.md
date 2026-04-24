@@ -1,51 +1,55 @@
 # NexusRDM — Specification v0.1
 
 ## Overview
-A modern WinUI 3 desktop app for managing RDP and SSH connections in a
-single tabbed interface. Targets sysadmins and developers managing many
-remote machines.
+
+A modern WinUI 3 desktop app for managing RDP and SSH connections in a single tabbed interface. Targets sysadmins and developers managing many remote machines.
 
 ---
 
 ## Status
 
 ### ✅ M1 — Connection CRUD
-- [x] Solution + project files (NexusRDM, Core, Data, Tests)
-- [x] Core models: ConnectionProfile, Group, AuditEntry, ProtocolOptions
-- [x] Service interfaces: IConnectionService, ICredentialVault, ISshHandler, IRdpHandler
-- [x] CredentialVault — Windows Credential Manager, `NexusRDM/` prefix, never touches SQLite
-- [x] ConnectionService — orchestrates repo + audit log
-- [x] EF Core: NexusDbContext, ConnectionRepository, AuditRepository
-- [x] InitialSchema migration + design-time factory
-- [x] DI wiring in App.xaml.cs
-- [x] MainWindow shell — NavigationView (compact) + TabView
-- [x] ConnectionsPane — TreeView + search + toolbar (Add / New Group / Refresh)
-- [x] Right-click context menu — Connect / Edit… / Delete with confirmation dialog
-- [x] EditConnectionDialog — General, Credentials, SSH options, RDP options tabs
-- [x] ValueConverters for show/hide SSH vs RDP panels
+
+- \[x\] Solution + project files (NexusRDM, Core, Data, Tests)
+- \[x\] Core models: ConnectionProfile, Group, AuditEntry, ProtocolOptions
+- \[x\] Service interfaces: IConnectionService, ICredentialVault, ISshHandler, IRdpHandler
+- \[x\] CredentialVault — Windows Credential Manager, `NexusRDM/` prefix, never touches SQLite
+- \[x\] ConnectionService — orchestrates repo + audit log
+- \[x\] EF Core: NexusDbContext, ConnectionRepository, AuditRepository
+- \[x\] InitialSchema migration + design-time factory
+- \[x\] DI wiring in App.xaml.cs
+- \[x\] MainWindow shell — NavigationView (compact) + TabView
+- \[x\] ConnectionsPane — TreeView + search + toolbar (Add / New Group / Refresh)
+- \[x\] Right-click context menu — Connect / Edit… / Delete with confirmation dialog
+- \[x\] EditConnectionDialog — General, Credentials, SSH options, RDP options tabs
+- \[x\] ValueConverters for show/hide SSH vs RDP panels
 
 ### ✅ M2 — SSH Sessions
-- [x] SshSession (SSH.NET) — async read loop firing DataReceived events
-- [x] SshHandler factory — password auth + private key auth
-- [x] SessionManager singleton — tracks open SSH + RDP sessions
-- [x] SshSessionViewModel — connect/disconnect/resize/input
-- [x] SshSessionView — toolbar + terminal surface + status bar
-- [x] TerminalControl — VtNetCore 1.0.9 VT parser, Canvas renderer, keyboard translation
-- [x] CredentialPromptDialog — shown when no saved credential
+
+- \[x\] SshSession ([SSH.NET](http://SSH.NET)) — async read loop firing DataReceived events
+- \[x\] SshHandler factory — password auth + private key auth
+- \[x\] SessionManager singleton — tracks open SSH + RDP sessions
+- \[x\] SshSessionViewModel — connect/disconnect/resize/input
+- \[x\] SshSessionView — toolbar + terminal surface + status bar
+- \[x\] TerminalControl — VtNetCore 1.0.9 VT parser, Canvas renderer, keyboard translation
+- \[x\] CredentialPromptDialog — shown when no saved credential
 
 ### ✅ M3 — RDP Sessions
-- [x] RdpHandler + RdpSession — launches mstsc.exe, reparents window into HWND panel
-- [x] Writes temporary .rdp file with all settings (resolution, audio, clipboard, drives)
-- [x] RdpSessionViewModel — connect/disconnect/resize/Ctrl+Alt+Del
-- [x] RdpSessionView — toolbar + HWND host panel + status bar
+
+- \[x\] RdpHandler + RdpSession — launches mstsc.exe, reparents window into HWND panel
+- \[x\] Writes temporary .rdp file with all settings (resolution, audio, clipboard, drives)
+- \[x\] RdpSessionViewModel — connect/disconnect/resize/Ctrl+Alt+Del
+- \[x\] RdpSessionView — toolbar + HWND host panel + status bar
 
 ### ✅ M4 — Settings + Audit
-- [x] AuditLogPage + AuditLogViewModel — filterable list of all events
-- [x] SettingsPage + SettingsViewModel — theme, default ports, persisted to LocalSettings
-- [x] Navigation wired: Audit Log and Settings open as pinned tabs
+
+- \[x\] AuditLogPage + AuditLogViewModel — filterable list of all events
+- \[x\] SettingsPage + SettingsViewModel — theme, default ports, persisted to LocalSettings
+- \[x\] Navigation wired: Audit Log and Settings open as pinned tabs
 
 ### ✅ Tests
-- [x] 9 passing integration tests (ConnectionServiceTests)
+
+- \[x\] 9 passing integration tests (ConnectionServiceTests)
   - CreateAsync persists + writes audit entry
   - UpdateAsync changes display name
   - DeleteAsync removes profile + writes audit entry
@@ -69,6 +73,7 @@ NexusRDM.Core.Tests (net9.0 — xunit, in-memory SQLite)
 ```
 
 Key rules:
+
 - Core has zero WinUI / EF Core dependencies — fully testable
 - Credentials never enter SQLite — Windows Credential Manager only
 - ViewModels depend on IConnectionService, never on repositories directly
@@ -78,12 +83,9 @@ Key rules:
 
 ## Known TODOs / Future Work
 
-- TerminalControl: replace Canvas/TextBlock renderer with Win2D SwapChainPanel
-  for proper colour, bold, underline, and GPU-accelerated rendering
-- SSH resize: SSH.NET 2024.2.x ShellStream doesn't expose resize directly;
-  current stub stores new cols/rows for reconnect. Full fix: recreate ShellStream
-- RDP phase 2: replace mstsc.exe reparent with AxMSTSCLib for in-process embedding,
-  programmatic credential passing, and event handling
+- TerminalControl: replace Canvas/TextBlock renderer with Win2D SwapChainPanel for proper colour, bold, underline, and GPU-accelerated rendering
+- SSH resize: [SSH.NET](http://SSH.NET) 2024.2.x ShellStream doesn't expose resize directly; current stub stores new cols/rows for reconnect. Full fix: recreate ShellStream
+- RDP phase 2: replace mstsc.exe reparent with AxMSTSCLib for in-process embedding, programmatic credential passing, and event handling
 - Add NewGroupDialog (currently a stub in NewGroupCommand)
 - SFTP file browser tab (SSH)
 - PuTTY sessions.reg import

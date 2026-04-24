@@ -21,8 +21,6 @@ public sealed partial class ConnectionsViewModel : ObservableObject
 
     public ConnectionsViewModel(IConnectionService svc) => _svc = svc;
 
-    // ── Load ──────────────────────────────────────────────────────────────────
-
     [RelayCommand]
     public async Task LoadAsync(string? query = null)
     {
@@ -52,7 +50,8 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         return node;
     }
 
-    // ── Commands ──────────────────────────────────────────────────────────────
+    // RelayCommand strips "Async" → generates NewConnectionCommand, EditConnectionCommand,
+    // DeleteConnectionCommand, RefreshCommand — no manual aliases needed.
 
     [RelayCommand]
     public async Task NewConnectionAsync()
@@ -83,12 +82,6 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private Task RefreshAsync() => LoadAsync();
     private bool CanRefresh() => !IsLoading;
-
-    // XAML-friendly aliases
-    public IAsyncRelayCommand RefreshCommand       => RefreshAsyncCommand;
-    public IAsyncRelayCommand NewConnectionCommand => NewConnectionAsyncCommand;
-    public IAsyncRelayCommand EditConnectionCommand   => EditConnectionAsyncCommand;
-    public IAsyncRelayCommand DeleteConnectionCommand => DeleteConnectionAsyncCommand;
 }
 
 public sealed class ConnectionTreeNode
