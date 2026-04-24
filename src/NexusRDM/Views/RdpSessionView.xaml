@@ -8,26 +8,23 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Toolbar -->
-        <CommandBar Grid.Row="0" DefaultLabelPosition="Collapsed" Background="Transparent">
-            <AppBarTextBlock Text="{x:Bind ViewModel.Host, Mode=OneTime}"
-                             Style="{ThemeResource CaptionTextBlockStyle}"
-                             VerticalAlignment="Center" Margin="8,0" />
-            <AppBarSeparator />
-            <AppBarButton Label="Ctrl+Alt+Del" ToolTipService.ToolTip="Send Ctrl+Alt+Del"
-                          Click="SendCtrlAltDel_Click">
-                <AppBarButton.Icon>
-                    <FontIcon Glyph="&#xE756;" />
-                </AppBarButton.Icon>
-            </AppBarButton>
-            <AppBarButton Icon="DisconnectDrive" Label="Disconnect"
-                          Command="{x:Bind ViewModel.DisconnectCommand}" />
-        </CommandBar>
+        <Grid Grid.Row="0" Background="{ThemeResource LayerFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+              BorderThickness="0,0,0,1" Padding="8,4" ColumnDefinitions="Auto,*,Auto,Auto">
 
-        <!--
-            RdpHostPanel is the HWND anchor. We retrieve its HWND via
-            WindowNative + interop and pass it to RdpSession.Connect().
-            The mstsc child window is reparented into this panel's HWND.
-        -->
+            <FontIcon Grid.Column="0" Glyph="&#xE8AF;" FontSize="14" Margin="0,0,8,0"
+                      VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1"
+                       Text="{x:Bind ViewModel.Host, Mode=OneTime}"
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       VerticalAlignment="Center" />
+            <Button Grid.Column="2" Content="Ctrl+Alt+Del" Margin="8,0"
+                    Click="SendCtrlAltDel_Click" />
+            <Button Grid.Column="3" Content="Disconnect"
+                    Command="{x:Bind ViewModel.DisconnectCommand}" />
+        </Grid>
+
+        <!-- HWND host panel for mstsc.exe child window -->
         <Border x:Name="RdpHostPanel" Grid.Row="1" Background="#000000"
                 SizeChanged="RdpHostPanel_SizeChanged" />
 

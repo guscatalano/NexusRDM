@@ -9,35 +9,40 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- Session toolbar -->
-        <CommandBar Grid.Row="0" DefaultLabelPosition="Collapsed" Background="Transparent">
-            <AppBarTextBlock Text="{x:Bind ViewModel.Host, Mode=OneTime}"
-                             Style="{ThemeResource CaptionTextBlockStyle}"
-                             VerticalAlignment="Center" Margin="8,0" />
-            <AppBarSeparator />
-            <AppBarButton Icon="DisconnectDrive" Label="Disconnect"
-                          Command="{x:Bind ViewModel.DisconnectCommand}" />
-        </CommandBar>
+        <Grid Grid.Row="0" Background="{ThemeResource LayerFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+              BorderThickness="0,0,0,1" Padding="8,4" ColumnDefinitions="Auto,*,Auto,Auto">
 
-        <!-- Terminal surface — custom TerminalControl renders VT output here -->
+            <FontIcon Grid.Column="0" Glyph="&#xE704;" FontSize="14" Margin="0,0,8,0"
+                      VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1"
+                       Text="{x:Bind ViewModel.Host, Mode=OneTime}"
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       VerticalAlignment="Center" />
+            <ProgressRing Grid.Column="2"
+                          IsActive="{x:Bind ViewModel.IsConnecting, Mode=OneWay}"
+                          Width="16" Height="16" Margin="8,0" />
+            <Button Grid.Column="3" Content="Disconnect"
+                    Command="{x:Bind ViewModel.DisconnectCommand}"
+                    Style="{ThemeResource DefaultButtonStyle}" />
+        </Grid>
+
+        <!-- Terminal surface -->
         <controls:TerminalControl x:Name="Terminal" Grid.Row="1"
                                   FontFamily="Cascadia Code, Consolas, Courier New"
                                   FontSize="14" />
 
         <!-- Status bar -->
         <Border Grid.Row="2" BorderThickness="0,1,0,0"
-                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                Padding="8,4">
-            <Grid ColumnDefinitions="*,Auto">
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" Padding="8,4">
+            <Grid ColumnDefinitions="*,Auto,Auto">
                 <TextBlock Grid.Column="0"
                            Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
                            Style="{ThemeResource CaptionTextBlockStyle}"
                            VerticalAlignment="Center" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
-                    <TextBlock x:Name="SizeLabel" Style="{ThemeResource CaptionTextBlockStyle}"
-                               VerticalAlignment="Center" />
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsConnecting, Mode=OneWay}"
-                                  Width="16" Height="16" />
-                </StackPanel>
+                <TextBlock x:Name="SizeLabel" Grid.Column="1"
+                           Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" Margin="0,0,8,0" />
             </Grid>
         </Border>
 
