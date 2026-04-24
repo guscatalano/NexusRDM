@@ -16,15 +16,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Windows App SDK + WinUI 3 -->
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250402001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" PrivateAssets="all" />
-
-    <!-- MVVM + UI helpers -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.Segmented" Version="8.1.240916" />
-
-    <!-- DI + Logging -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
