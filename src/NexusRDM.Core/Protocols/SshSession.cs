@@ -1,6 +1,5 @@
 using Renci.SshNet;
 using NexusRDM.Core.Interfaces;
-using NexusRDM.Core.Models;
 
 namespace NexusRDM.Core.Protocols;
 
@@ -11,9 +10,11 @@ namespace NexusRDM.Core.Protocols;
 /// </summary>
 public sealed class SshSession : ISshSession
 {
-    private readonly SshClient           _client;
-    private ShellStream?                 _shell;
-    private CancellationTokenSource?     _readCts;
+    private readonly SshClient        _client;
+    private ShellStream?              _shell;
+    private CancellationTokenSource?  _readCts;
+    private uint                      _cols = 220;
+    private uint                      _rows = 50;
 
     public Guid ConnectionId { get; }
     public bool IsConnected  => _client.IsConnected;
@@ -31,9 +32,9 @@ public sealed class SshSession : ISshSession
     {
         await Task.Run(_client.Connect, ct);
 
-        var modes  = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>();
-        _shell     = _client.CreateShellStream("xterm-256color", 220, 50, 0, 0, 4096, modes);
-        _readCts   = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var modes = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>();
+        _shell    = _client.CreateShellStream("xterm-256color", _cols, _rows, 0, 0, 4096, modes);
+        _readCts  = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _ = ReadLoopAsync(_readCts.Token);
     }
 
@@ -46,7 +47,11 @@ public sealed class SshSession : ISshSession
 
     public Task ResizeAsync(int columns, int rows, CancellationToken ct = default)
     {
-        _shell?.SendWindowChangeRequest((uint)columns, (uint)rows, 0, 0);
+        // TODO M2: SSH.NET 2024.2.x doesn't expose resize via ShellStream directly.
+        // When we build the terminal view we'll tear down and recreate the ShellStream
+        // with the new dimensions, or use a raw channel PTY-req packet.
+        _cols = (uint)columns;
+        _rows = (uint)rows;
         return Task.CompletedTask;
     }
 

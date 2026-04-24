@@ -14,10 +14,9 @@ public sealed class CredentialVault : ICredentialVault
 
     public string Save(string key, string username, string password)
     {
-        var fullKey = Prefix + key;
         using var cred = new Credential
         {
-            Target          = fullKey,
+            Target          = Prefix + key,
             Username        = username,
             Password        = password,
             Type            = CredentialType.Generic,
@@ -39,9 +38,14 @@ public sealed class CredentialVault : ICredentialVault
         cred.Delete();
     }
 
-    public IReadOnlyList<string> ListKeys() =>
-        CredentialSet.Load()
+    public IReadOnlyList<string> ListKeys()
+    {
+        // CredentialSet.Load() is an instance method in CredentialManagement 1.x
+        var set = new CredentialSet();
+        set.Load();
+        return set
             .Where(c => c.Target.StartsWith(Prefix, StringComparison.Ordinal))
             .Select(c => c.Target[Prefix.Length..])
             .ToList();
+    }
 }
