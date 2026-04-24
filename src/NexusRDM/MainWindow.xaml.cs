@@ -14,6 +14,7 @@ public sealed partial class MainWindow : Window
     public MainViewModel ViewModel { get; }
     private readonly SessionManager _sessions;
     private readonly ISshHandler    _ssh;
+    private readonly IRdpHandler    _rdp;
     private readonly ICredentialVault _vault;
 
     public MainWindow()
@@ -21,6 +22,7 @@ public sealed partial class MainWindow : Window
         ViewModel = App.Services.GetRequiredService<MainViewModel>();
         _sessions = App.Services.GetRequiredService<SessionManager>();
         _ssh      = App.Services.GetRequiredService<ISshHandler>();
+        _rdp      = App.Services.GetRequiredService<IRdpHandler>();
         _vault    = App.Services.GetRequiredService<ICredentialVault>();
 
         InitializeComponent();
@@ -29,11 +31,11 @@ public sealed partial class MainWindow : Window
     }
 
     private void NavView_SelectionChanged(NavigationView sender,
-        NavigationViewSelectionChangedEventArgs args) { /* TODO M4: nav */ }
+        NavigationViewSelectionChangedEventArgs args) { /* TODO M4 */ }
 
     private async void OnConnectRequested(object? sender, ConnectionProfile profile)
     {
-        // Focus existing tab if already open
+        // Focus if already open
         foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
         {
             if (item.Tag is Guid id && id == profile.Id)
@@ -43,58 +45,63 @@ public sealed partial class MainWindow : Window
         if (profile.Protocol == ConnectionProtocol.Ssh)
             await OpenSshTabAsync(profile);
         else
-            OpenRdpPlaceholderTab(profile);   // M3 will replace this
+            await OpenRdpTabAsync(profile);
     }
+
+    // ── SSH ───────────────────────────────────────────────────────────────────
 
     private async Task OpenSshTabAsync(ConnectionProfile profile)
     {
-        // Resolve credentials
-        string username = string.Empty, password = string.Empty;
+        var (username, password) = await ResolveCredentialsAsync(profile);
+        if (username is null) return;
+
+        var session = _ssh.CreateSession(profile, username, password!);
+        _sessions.AddSsh(profile, session);
+        var vm   = new SshSessionViewModel(profile, session, _sessions);
+        var view = new SshSessionView(vm);
+
+        AddTab(profile, Symbol.Globe, view);
+    }
+
+    // ── RDP ───────────────────────────────────────────────────────────────────
+
+    private async Task OpenRdpTabAsync(ConnectionProfile profile)
+    {
+        var (username, _) = await ResolveCredentialsAsync(profile);
+        if (username is null) return;
+
+        // RDP session — password is passed via the .rdp file or Windows SSO
+        var session = _rdp.CreateSession(profile, username, string.Empty);
+        var vm      = new RdpSessionViewModel(profile, session, _sessions);
+        var view    = new RdpSessionView(vm);
+
+        AddTab(profile, Symbol.Remote, view);
+    }
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(
+        ConnectionProfile profile)
+    {
         if (profile.CredentialKey is not null)
         {
             var cred = _vault.Load(profile.CredentialKey);
-            if (cred is not null) { username = cred.Value.Username; password = cred.Value.Password; }
+            if (cred is not null) return (cred.Value.Username, cred.Value.Password);
         }
 
-        if (string.IsNullOrEmpty(username))
-        {
-            // Prompt — simple dialog for now
-            var dlg = new CredentialPromptDialog { XamlRoot = Content.XamlRoot };
-            if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-            username = dlg.Username;
-            password = dlg.Password;
-        }
-
-        var session  = _ssh.CreateSession(profile, username, password);
-        var entry    = _sessions.AddSsh(profile, session);
-        var vm       = new SshSessionViewModel(profile, session, _sessions);
-        var view     = new SshSessionView(vm);
-
-        var tab = new TabViewItem
-        {
-            Header     = profile.DisplayName,
-            IconSource = new SymbolIconSource { Symbol = Symbol.Globe },
-            Tag        = profile.Id,
-            Content    = view
-        };
-
-        SessionTabs.TabItems.Add(tab);
-        SessionTabs.SelectedItem = tab;
+        var dlg = new CredentialPromptDialog { XamlRoot = Content.XamlRoot };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return (null, null);
+        return (dlg.Username, dlg.Password);
     }
 
-    private void OpenRdpPlaceholderTab(ConnectionProfile profile)
+    private void AddTab(ConnectionProfile profile, Symbol icon, UIElement content)
     {
         var tab = new TabViewItem
         {
             Header     = profile.DisplayName,
-            IconSource = new SymbolIconSource { Symbol = Symbol.Remote },
+            IconSource = new SymbolIconSource { Symbol = icon },
             Tag        = profile.Id,
-            Content    = new TextBlock
-            {
-                Text = "RDP support coming in M3",
-                VerticalAlignment   = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
-            }
+            Content    = content
         };
         SessionTabs.TabItems.Add(tab);
         SessionTabs.SelectedItem = tab;
