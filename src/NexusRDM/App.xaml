@@ -2,12 +2,20 @@
 <Application
     x:Class="NexusRDM.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:conv="using:NexusRDM.Converters">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Value converters available app-wide -->
+            <conv:InvertBoolConverter       x:Key="InvertBoolConverter" />
+            <conv:NonZeroToBoolConverter    x:Key="NonZeroToBoolConverter" />
+            <conv:SshVisibilityConverter    x:Key="SshVisibilityConverter" />
+            <conv:RdpVisibilityConverter    x:Key="RdpVisibilityConverter" />
+            <conv:PrivKeyVisibilityConverter x:Key="PrivKeyVisibilityConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
