@@ -32,7 +32,6 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         _session.FatalError   += (_, msg)    => { IsConnected = false; IsConnecting = false; StatusMessage = $"Error: {msg}"; };
     }
 
-    /// <summary>Called by the view once it has a valid HWND to host the RDP client.</summary>
     public void StartConnection(nint hwndParent, int width, int height) =>
         _session.Connect(hwndParent, width, height);
 
@@ -41,11 +40,11 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
     public void SendCtrlAltDel() => _session.SendCtrlAltDel();
 
     [RelayCommand]
-    private void Disconnect()
+    private async Task DisconnectAsync()
     {
         _session.Disconnect();
         var entry = _mgr.FindByConnectionId(ConnectionId);
-        if (entry is not null) _mgr.CloseAsync(entry);
+        if (entry is not null) await _mgr.CloseAsync(entry);
     }
 
     public void Dispose() => _session.Dispose();
