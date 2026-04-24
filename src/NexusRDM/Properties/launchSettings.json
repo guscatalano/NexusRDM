@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "NexusRDM (Unpackaged)": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    }
+  }
+}
