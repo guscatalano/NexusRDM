@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="NexusRDM.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Padding="24,16">
+        <StackPanel Spacing="8" MaxWidth="600">
+
+            <TextBlock Text="Settings" Style="{ThemeResource TitleTextBlockStyle}" Margin="0,0,0,12" />
+
+            <!-- Appearance -->
+            <TextBlock Text="Appearance" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,8,0,4" />
+            <ComboBox Header="Theme" HorizontalAlignment="Stretch"
+                      SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}">
+                <ComboBoxItem Content="System default" />
+                <ComboBoxItem Content="Light" />
+                <ComboBoxItem Content="Dark" />
+            </ComboBox>
+
+            <!-- SSH defaults -->
+            <TextBlock Text="SSH defaults" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
+            <TextBox Header="Default username"
+                     PlaceholderText="e.g. admin"
+                     Text="{x:Bind ViewModel.DefaultSshUser, Mode=TwoWay}" />
+            <NumberBox Header="Default SSH port" Minimum="1" Maximum="65535"
+                       SpinButtonPlacementMode="Compact"
+                       Value="{x:Bind ViewModel.DefaultSshPort, Mode=TwoWay}" />
+
+            <!-- RDP defaults -->
+            <TextBlock Text="RDP defaults" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
+            <NumberBox Header="Default RDP port" Minimum="1" Maximum="65535"
+                       SpinButtonPlacementMode="Compact"
+                       Value="{x:Bind ViewModel.DefaultRdpPort, Mode=TwoWay}" />
+
+            <!-- About -->
+            <TextBlock Text="About" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Nexus RDM" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.AppVersion, Mode=OneTime}"
+                           Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Save -->
+            <Button Content="Save settings" Command="{x:Bind ViewModel.SaveCommand}"
+                    Style="{ThemeResource AccentButtonStyle}" Margin="0,16,0,0" />
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>
