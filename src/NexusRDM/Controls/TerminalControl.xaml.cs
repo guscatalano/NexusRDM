@@ -165,8 +165,8 @@ public sealed partial class TerminalControl : UserControl
     public byte[] TranslateSpecialKeyForView(VirtualKey key) =>
         TranslateSpecialKey(key, IsModifierDown(VirtualKey.Control), IsModifierDown(VirtualKey.Shift));
 
-    /// <summary>Maps non-printable / control keys to VT byte sequences. Returns [] for printable keys (handled by CharacterReceived).</summary>
-    private static byte[] TranslateSpecialKey(VirtualKey key, bool ctrl, bool shift) => key switch
+    /// <summary>Maps non-printable / control keys to VT byte sequences. Returns [] for printable keys (handled by CharacterReceived). Public-static so unit tests can call it without instantiating the control.</summary>
+    public static byte[] TranslateSpecialKey(VirtualKey key, bool ctrl, bool shift) => key switch
     {
         VirtualKey.Enter    => "\r"u8.ToArray(),
         VirtualKey.Back     => "\x7f"u8.ToArray(),
