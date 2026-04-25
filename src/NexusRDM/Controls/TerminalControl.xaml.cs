@@ -40,8 +40,12 @@ public sealed partial class TerminalControl : UserControl
 
         Background = new SolidColorBrush(Color.FromArgb(255, 12, 12, 12));
         IsTabStop  = true;
-        KeyDown   += OnKeyDown;
-        SizeChanged += OnSizeChanged;
+        UseSystemFocusVisuals = false;
+        KeyDown            += OnKeyDown;
+        CharacterReceived  += OnCharacterReceived;
+        SizeChanged        += OnSizeChanged;
+        PointerPressed     += (_, e) => { Focus(FocusState.Pointer); e.Handled = true; };
+        Loaded             += (_, _) => Focus(FocusState.Programmatic);
 
         // VtNetCore can ask us to send data (e.g. device attribute responses)
         _vtc.SendData += (_, e) => UserInput?.Invoke(this, e.Data);
@@ -56,6 +60,8 @@ public sealed partial class TerminalControl : UserControl
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
+
+    private static readonly Color DefaultFg = Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
 
     private void Render()
     {
@@ -75,24 +81,27 @@ public sealed partial class TerminalControl : UserControl
                 var cell = line[col];
                 if (cell.Char is '\0' or ' ') continue;
 
-                var fg = cell.Attributes.ForegroundRgb;
+                // VtNetCore reports ARGB=0 (fully transparent) for the default
+                // foreground; fall back to a visible light gray in that case.
+                var fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
+                var fgColor = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
+
                 var tb = new TextBlock
                 {
                     Text       = cell.Char.ToString(),
                     FontFamily = FontFamily,
                     FontSize   = FontSize,
-                    Foreground = new SolidColorBrush(ArgbToColor(fg.ARGB))
+                    Foreground = new SolidColorBrush(fgColor)
                 };
 
-                // Background cell (only paint non-black backgrounds)
-                var bg = cell.Attributes.BackgroundRgb;
-                if (bg.ARGB != 0)
+                var bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
+                if ((bgArgb >> 24) != 0)
                 {
                     var bgRect = new Rectangle
                     {
                         Width  = cw,
                         Height = ch,
-                        Fill   = new SolidColorBrush(ArgbToColor(bg.ARGB))
+                        Fill   = new SolidColorBrush(ArgbToColor(bgArgb))
                     };
                     Canvas.SetLeft(bgRect, col * cw);
                     Canvas.SetTop(bgRect,  row * ch);
@@ -123,13 +132,28 @@ public sealed partial class TerminalControl : UserControl
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        var bytes = TranslateKey(e.Key, IsModifierDown(VirtualKey.Control),
-                                        IsModifierDown(VirtualKey.Shift));
+        bool ctrl  = IsModifierDown(VirtualKey.Control);
+        bool shift = IsModifierDown(VirtualKey.Shift);
+
+        var bytes = TranslateSpecialKey(e.Key, ctrl, shift);
         if (bytes is { Length: > 0 })
         {
             UserInput?.Invoke(this, bytes);
             e.Handled = true;
         }
+        // Printable keys are intentionally *not* handled here — they flow into
+        // CharacterReceived which gives us the OS-translated unicode (handles
+        // Shift, AltGr, IME, dead keys, layout differences, symbols, etc.).
+    }
+
+    private void OnCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs e)
+    {
+        // Skip control-range chars; OnKeyDown already handled them
+        // (Enter=0x0D, Backspace=0x08, Tab=0x09, Escape=0x1B, etc.).
+        if (e.Character < 0x20 || e.Character == 0x7F) return;
+
+        UserInput?.Invoke(this, System.Text.Encoding.UTF8.GetBytes(new[] { e.Character }));
+        e.Handled = true;
     }
 
     private static bool IsModifierDown(VirtualKey key) =>
@@ -137,7 +161,12 @@ public sealed partial class TerminalControl : UserControl
             .GetKeyStateForCurrentThread(key)
             .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
-    private static byte[] TranslateKey(VirtualKey key, bool ctrl, bool shift) => key switch
+    /// <summary>Public wrapper so the parent view can route keys when this control isn't focused.</summary>
+    public byte[] TranslateSpecialKeyForView(VirtualKey key) =>
+        TranslateSpecialKey(key, IsModifierDown(VirtualKey.Control), IsModifierDown(VirtualKey.Shift));
+
+    /// <summary>Maps non-printable / control keys to VT byte sequences. Returns [] for printable keys (handled by CharacterReceived).</summary>
+    private static byte[] TranslateSpecialKey(VirtualKey key, bool ctrl, bool shift) => key switch
     {
         VirtualKey.Enter    => "\r"u8.ToArray(),
         VirtualKey.Back     => "\x7f"u8.ToArray(),
@@ -154,11 +183,6 @@ public sealed partial class TerminalControl : UserControl
         VirtualKey.PageDown => "\x1b[6~"u8.ToArray(),
         VirtualKey k when ctrl && k >= VirtualKey.A && k <= VirtualKey.Z
                             => [(byte)(k - VirtualKey.A + 1)],
-        VirtualKey k when k >= VirtualKey.A && k <= VirtualKey.Z
-                            => [shift ? (byte)('A' + (k - VirtualKey.A))
-                                      : (byte)('a' + (k - VirtualKey.A))],
-        VirtualKey k when k >= VirtualKey.Number0 && k <= VirtualKey.Number9
-                            => [(byte)('0' + (k - VirtualKey.Number0))],
         _ => []
     };
 
@@ -171,10 +195,16 @@ public sealed partial class TerminalControl : UserControl
     {
         int newCols = Math.Max(10, (int)(e.NewSize.Width  / CharWidth));
         int newRows = Math.Max(4,  (int)(e.NewSize.Height / CharHeight));
+
+        // Canvas needs explicit dimensions or it stays 0×0 and clips its children.
+        TermCanvas.Width  = e.NewSize.Width;
+        TermCanvas.Height = e.NewSize.Height;
+
         if (newCols == _cols && newRows == _rows) return;
         _cols = newCols;
         _rows = newRows;
         _vtc.ResizeView(_cols, _rows);
+        DispatcherQueue.TryEnqueue(Render);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

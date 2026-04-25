@@ -34,10 +34,18 @@ public sealed class RdpVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type t, object p, string l) => throw new NotImplementedException();
 }
 
-/// <summary>SshAuthMethod.PrivateKey → Visible — shows the private key path box.</summary>
+/// <summary>
+/// SshAuthMethod.PrivateKey → Visible (so the key-path box shows for key auth).
+/// Pass ConverterParameter="Invert" to flip — used to hide the password box
+/// when key auth is selected.
+/// </summary>
 public sealed class PrivKeyVisibilityConverter : IValueConverter
 {
-    public object Convert(object value, Type t, object p, string l) =>
-        value is SshAuthMethod.PrivateKey ? Visibility.Visible : Visibility.Collapsed;
+    public object Convert(object value, Type t, object p, string l)
+    {
+        bool isKey = value is SshAuthMethod.PrivateKey;
+        bool invert = p is string s && s.Equals("Invert", StringComparison.OrdinalIgnoreCase);
+        return (isKey ^ invert) ? Visibility.Visible : Visibility.Collapsed;
+    }
     public object ConvertBack(object value, Type t, object p, string l) => throw new NotImplementedException();
 }

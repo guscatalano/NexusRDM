@@ -15,6 +15,7 @@ public sealed class SshSession : ISshSession
     private CancellationTokenSource?  _readCts;
     private uint                      _cols = 220;
     private uint                      _rows = 50;
+    private bool                      _disposed;
 
     public Guid ConnectionId { get; }
     public bool IsConnected  => _client.IsConnected;
@@ -57,8 +58,13 @@ public sealed class SshSession : ISshSession
 
     public Task DisconnectAsync()
     {
+        if (_disposed)
+            return Task.CompletedTask;
         _readCts?.Cancel();
-        _client.Disconnect();
+        if (_client.IsConnected)
+        {
+            try { _client.Disconnect(); } catch (ObjectDisposedException) { }
+        }
         return Task.CompletedTask;
     }
 
@@ -89,6 +95,8 @@ public sealed class SshSession : ISshSession
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
         await DisconnectAsync();
         _shell?.Dispose();
         _client.Dispose();

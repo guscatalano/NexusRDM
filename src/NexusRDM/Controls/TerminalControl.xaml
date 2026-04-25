@@ -5,14 +5,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!--
-        Canvas-based renderer. TerminalControl.cs places TextBlock children
-        for each visible glyph. Will be replaced with a Win2D SwapChainPanel
-        for full colour/bold/underline support in M2 polish.
+        Canvas-based renderer. TerminalControl.xaml.cs places TextBlock children
+        for each visible glyph. Canvas DesiredSize is (0,0) by default so we
+        size it explicitly in OnSizeChanged; otherwise nothing would be visible.
     -->
-    <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                  VerticalScrollBarVisibility="Auto"
-                  Background="#0C0C0C">
-        <Canvas x:Name="TermCanvas" />
-    </ScrollViewer>
+    <Border Background="#0C0C0C">
+        <Canvas x:Name="TermCanvas"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top" />
+    </Border>
 
 </UserControl>
