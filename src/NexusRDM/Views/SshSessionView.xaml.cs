@@ -12,23 +12,22 @@ public sealed partial class SshSessionView : UserControl
         ViewModel = vm;
         InitializeComponent();
 
-        // Wire VT data from VM into the terminal control
+        HostLabel.Text = $"{vm.Host}";
+        HostStatusLabel.Text = vm.DisplayName;
+
         ViewModel.DataReceived += (_, data) =>
             DispatcherQueue.TryEnqueue(() => Terminal.Feed(data));
 
-        // Wire keyboard from terminal control back to the SSH session
         Terminal.UserInput += async (_, data) =>
             await ViewModel.SendInputAsync(data);
 
-        // Wire resize
         Terminal.SizeChanged += async (_, _) =>
         {
             var (cols, rows) = Terminal.TerminalSize;
-            SizeLabel.Text   = $"{cols}x{rows}";
+            SizeLabel.Text   = $"{cols}×{rows}";
             await ViewModel.ResizeAsync(cols, rows);
         };
 
-        // Connect as soon as this view is loaded
         Loaded += async (_, _) => await ViewModel.ConnectAsync();
     }
 }

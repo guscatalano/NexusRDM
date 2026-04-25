@@ -6,48 +6,125 @@
     xmlns:views="using:NexusRDM.Views"
     Title="Nexus RDM">
 
-    <Grid>
-        <NavigationView x:Name="NavView"
-                        PaneDisplayMode="LeftCompact"
-                        IsBackButtonVisible="Collapsed"
-                        OpenPaneLength="260"
-                        CompactPaneLength="48"
-                        SelectionChanged="NavView_SelectionChanged">
+    <!-- Root: dark bg matching NxBg0 -->
+    <Grid Background="{StaticResource NxBg0}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-            <NavigationView.MenuItems>
-                <NavigationViewItem Tag="connections" Content="Connections" IsSelected="True">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="World" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem Tag="audit" Content="Audit Log">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Clock" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.MenuItems>
-
-            <NavigationView.FooterMenuItems>
-                <NavigationViewItem Tag="settings" Content="Settings">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Setting" />
-                    </NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.FooterMenuItems>
-
-            <Grid ColumnDefinitions="280,1,*">
-                <views:ConnectionsPane x:Name="ConnectionsPane" Grid.Column="0" />
-
-                <Border Grid.Column="1"
-                        Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
-
-                <TabView x:Name="SessionTabs"
-                         Grid.Column="2"
-                         TabWidthMode="SizeToContent"
-                         IsAddTabButtonVisible="False"
-                         TabCloseRequested="SessionTabs_TabCloseRequested" />
+        <!-- Custom drag region / title bar -->
+        <Border Grid.Row="0" Height="32"
+                Background="{StaticResource NxBg1}"
+                BorderBrush="{StaticResource NxBrd}"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <TextBlock Text="Nexus RDM"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="{StaticResource NxTx2}" />
             </Grid>
+        </Border>
 
-        </NavigationView>
+        <!-- Main area: compact sidebar + content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="44" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Compact icon sidebar (44px — matches prototype) -->
+            <Border Grid.Column="0"
+                    Background="{StaticResource NxBg1}"
+                    BorderBrush="{StaticResource NxBrd}"
+                    BorderThickness="0,0,1,0">
+                <StackPanel VerticalAlignment="Stretch">
+                    <!-- Connections -->
+                    <Button x:Name="BtnNavConn"
+                            Click="BtnNavConn_Click"
+                            Width="36" Height="36"
+                            Margin="4,6,4,2"
+                            Padding="0"
+                            Background="{StaticResource NxBg3}"
+                            BorderThickness="0"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Connections">
+                        <PathIcon Data="M1,3 L7,3 L7,7 L1,7 Z M9,9 L15,9 L15,13 L9,13 Z M4,7 L4,9 L12,9"
+                                  Foreground="{StaticResource NxTx1}"
+                                  Width="16" Height="16" />
+                    </Button>
+
+                    <!-- Audit log -->
+                    <Button x:Name="BtnNavAudit"
+                            Click="BtnNavAudit_Click"
+                            Width="36" Height="36"
+                            Margin="4,2,4,2"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Audit log">
+                        <FontIcon Glyph="&#xE9F9;"
+                                  FontSize="15"
+                                  Foreground="{StaticResource NxTx3}" />
+                    </Button>
+
+                    <Border Height="1" Background="{StaticResource NxBrd}" Margin="8,4" />
+
+                    <!-- Settings (bottom) -->
+                    <Button x:Name="BtnNavSettings"
+                            Click="BtnNavSettings_Click"
+                            Width="36" Height="36"
+                            Margin="4,2,4,4"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Settings">
+                        <FontIcon Glyph="&#xE713;"
+                                  FontSize="15"
+                                  Foreground="{StaticResource NxTx3}" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- Right: connections pane + tabs, or full-width pages -->
+            <Grid Grid.Column="1">
+
+                <!-- CONNECTIONS + TAB VIEW -->
+                <Grid x:Name="ConnView">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="240" MinWidth="160" MaxWidth="360" />
+                        <ColumnDefinition Width="1" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <views:ConnectionsPane x:Name="ConnectionsPane"
+                                           Grid.Column="0"
+                                           Background="{StaticResource NxBg1}" />
+
+                    <Border Grid.Column="1" Background="{StaticResource NxBrd}" />
+
+                    <TabView x:Name="SessionTabs"
+                             Grid.Column="2"
+                             TabWidthMode="SizeToContent"
+                             IsAddTabButtonVisible="False"
+                             Background="{StaticResource NxBg0}"
+                             TabCloseRequested="SessionTabs_TabCloseRequested" />
+                </Grid>
+
+                <!-- AUDIT LOG PAGE (full width) -->
+                <views:AuditLogPage x:Name="AuditPage"
+                                    Visibility="Collapsed"
+                                    Background="{StaticResource NxBg0}" />
+
+                <!-- SETTINGS PAGE (full width) -->
+                <views:SettingsPage x:Name="SettingsPageView"
+                                    Visibility="Collapsed"
+                                    Background="{StaticResource NxBg0}" />
+
+            </Grid>
+        </Grid>
     </Grid>
 </Window>

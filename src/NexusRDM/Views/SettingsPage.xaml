@@ -2,50 +2,145 @@
 <Page
     x:Class="NexusRDM.Views.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="{StaticResource NxBg0}">
 
-    <ScrollViewer Padding="24,16">
-        <StackPanel Spacing="8" MaxWidth="600">
+    <Grid ColumnDefinitions="150,1,*">
 
-            <TextBlock Text="Settings" Style="{ThemeResource TitleTextBlockStyle}" Margin="0,0,0,12" />
-
-            <!-- Appearance -->
-            <TextBlock Text="Appearance" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,8,0,4" />
-            <ComboBox Header="Theme" HorizontalAlignment="Stretch"
-                      SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}">
-                <ComboBoxItem Content="System default" />
-                <ComboBoxItem Content="Light" />
-                <ComboBoxItem Content="Dark" />
-            </ComboBox>
-
-            <!-- SSH defaults -->
-            <TextBlock Text="SSH defaults" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
-            <TextBox Header="Default username"
-                     PlaceholderText="e.g. admin"
-                     Text="{x:Bind ViewModel.DefaultSshUser, Mode=TwoWay}" />
-            <NumberBox Header="Default SSH port" Minimum="1" Maximum="65535"
-                       SpinButtonPlacementMode="Compact"
-                       Value="{x:Bind ViewModel.DefaultSshPort, Mode=TwoWay}" />
-
-            <!-- RDP defaults -->
-            <TextBlock Text="RDP defaults" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
-            <NumberBox Header="Default RDP port" Minimum="1" Maximum="65535"
-                       SpinButtonPlacementMode="Compact"
-                       Value="{x:Bind ViewModel.DefaultRdpPort, Mode=TwoWay}" />
-
-            <!-- About -->
-            <TextBlock Text="About" Style="{ThemeResource SubtitleTextBlockStyle}" Margin="0,16,0,4" />
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBlock Text="Nexus RDM" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                <TextBlock Text="{x:Bind ViewModel.AppVersion, Mode=OneTime}"
-                           Style="{ThemeResource CaptionTextBlockStyle}"
-                           VerticalAlignment="Center" />
+        <!-- Left nav -->
+        <Border Grid.Column="0"
+                BorderBrush="{StaticResource NxBrd}"
+                BorderThickness="0,0,1,0">
+            <StackPanel Padding="0,8">
+                <ListBox x:Name="SettingsNav"
+                         SelectionChanged="SettingsNav_SelectionChanged"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         SelectedIndex="0">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="14,7" />
+                            <Setter Property="FontSize" Value="12" />
+                            <Setter Property="Foreground" Value="{StaticResource NxTx2}" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="BorderThickness" Value="2,0,0,0" />
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBoxItem Content="General" />
+                    <ListBoxItem Content="SSH defaults" />
+                    <ListBoxItem Content="RDP defaults" />
+                    <ListBoxItem Content="Credentials" />
+                    <ListBoxItem Content="About" />
+                </ListBox>
             </StackPanel>
+        </Border>
 
-            <!-- Save -->
-            <Button Content="Save settings" Command="{x:Bind ViewModel.SaveCommand}"
-                    Style="{ThemeResource AccentButtonStyle}" Margin="0,16,0,0" />
+        <Border Grid.Column="1" Background="{StaticResource NxBrd}" />
 
-        </StackPanel>
-    </ScrollViewer>
+        <!-- Settings body -->
+        <ScrollViewer Grid.Column="2" Padding="20,16,20,20">
+            <StackPanel Spacing="0" MaxWidth="500">
+
+                <!-- Appearance section -->
+                <TextBlock Text="APPEARANCE"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,0,0,10" />
+
+                <!-- Theme row -->
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Theme" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Color scheme" FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="120">
+                            <ComboBoxItem Content="Dark" />
+                            <ComboBoxItem Content="Light" />
+                            <ComboBoxItem Content="System" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
+                <!-- SSH Defaults section -->
+                <TextBlock Text="SSH DEFAULTS"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Default username" FontSize="12" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1"
+                                 Text="{x:Bind ViewModel.DefaultSshUser, Mode=TwoWay}"
+                                 Background="{StaticResource NxBg2}"
+                                 BorderBrush="{StaticResource NxBrd}"
+                                 Foreground="{StaticResource NxTx1}"
+                                 FontSize="12"
+                                 Width="120"
+                                 CornerRadius="5" />
+                    </Grid>
+                </Border>
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Keep-alive interval" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Seconds between keepalive packets" FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <NumberBox Grid.Column="1"
+                                   Value="{x:Bind ViewModel.DefaultSshPort, Mode=TwoWay}"
+                                   Minimum="0" Maximum="300"
+                                   SpinButtonPlacementMode="Compact"
+                                   Background="{StaticResource NxBg2}"
+                                   BorderBrush="{StaticResource NxBrd}"
+                                   Foreground="{StaticResource NxTx1}"
+                                   FontSize="12"
+                                   Width="90" />
+                    </Grid>
+                </Border>
+
+                <!-- Save -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
+                    <Button Command="{x:Bind ViewModel.SaveCommand}"
+                            Background="{StaticResource NxAccent}"
+                            BorderThickness="0"
+                            CornerRadius="5"
+                            Padding="14,6"
+                            FontSize="12"
+                            Foreground="White"
+                            Content="Save settings" />
+                    <Button Background="{StaticResource NxBg2}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="1"
+                            CornerRadius="5"
+                            Padding="14,6"
+                            FontSize="12"
+                            Foreground="{StaticResource NxTx2}"
+                            Content="Reset to defaults" />
+                </StackPanel>
+
+                <!-- About -->
+                <TextBlock Text="ABOUT"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,24,0,10" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8" Padding="0,4">
+                    <TextBlock Text="Nexus RDM" FontSize="13" FontWeight="Medium" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind ViewModel.AppVersion, Mode=OneTime}"
+                               FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+
+    </Grid>
 </Page>
