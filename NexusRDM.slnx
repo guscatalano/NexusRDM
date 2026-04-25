@@ -2,12 +2,12 @@
   <Folder Name="/src/">
     <Project Path="src/NexusRDM.Core/NexusRDM.Core.csproj" />
     <Project Path="src/NexusRDM.Data/NexusRDM.Data.csproj" />
-    <Project Path="src/NexusRDM/NexusRDM.csproj">
-      <Platform Solution="Debug|*" Project="x64" />
-    </Project>
+    <Project Path="src/NexusRDM/NexusRDM.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NexusRDM.Core.Tests/NexusRDM.Core.Tests.csproj" />
     <Project Path="tests/NexusRDM.Data.Tests/NexusRDM.Data.Tests.csproj" />
+    <Project Path="tests/NexusRDM.Tests.UiSmoke/NexusRDM.Tests.UiSmoke.csproj" />
+    <Project Path="tests/NexusRDM.Tests.ViewModels/NexusRDM.Tests.ViewModels.csproj" />
   </Folder>
 </Solution>
