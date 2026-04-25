@@ -35,8 +35,10 @@ NexusRDM/
 │   ├── NexusRDM.Core/        # Business logic, models, service interfaces, protocol handlers
 │   └── NexusRDM.Data/        # EF Core DbContext, repositories, migrations
 ├── tests/
-│   ├── NexusRDM.Core.Tests/
-│   └── NexusRDM.Data.Tests/
+│   ├── NexusRDM.Core.Tests/         # service + EF integration tests (in-mem SQLite)
+│   ├── NexusRDM.Data.Tests/
+│   ├── NexusRDM.Tests.ViewModels/   # xUnit tests for VM logic with fake services
+│   └── NexusRDM.Tests.UiSmoke/      # FlaUI end-to-end smoke tests against the built exe
 └── docs/
 ```
 
@@ -44,8 +46,23 @@ NexusRDM/
 
 1. Install [Visual Studio 2022](https://visualstudio.microsoft.com/) with **Windows App SDK** workload
 2. Install [Windows App SDK](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads) (stable)
-3. Clone this repo and open `NexusRDM.sln`
+3. Clone this repo and open `NexusRDM.slnx`
 4. Set `NexusRDM` as startup project and run
+
+## Tests
+
+```bash
+# unit + service tests
+dotnet test tests/NexusRDM.Core.Tests
+dotnet test tests/NexusRDM.Tests.ViewModels   # requires VS18 / WindowsAppSDK build targets
+
+# end-to-end smoke (launches the built NexusRDM.exe)
+dotnet build src/NexusRDM
+dotnet test tests/NexusRDM.Tests.UiSmoke
+```
+
+The FlaUI smoke suite auto-skips when no built `NexusRDM.exe` is found, so a clean
+checkout doesn't fail tests before the app is built once.
 
 ## Requirements
 
