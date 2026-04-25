@@ -1,8 +1,10 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Xaml;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using System.Collections.ObjectModel;
+using Windows.UI;
 
 namespace NexusRDM.ViewModels;
 
@@ -50,9 +52,6 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         return node;
     }
 
-    // RelayCommand strips "Async" → generates NewConnectionCommand, EditConnectionCommand,
-    // DeleteConnectionCommand, RefreshCommand — no manual aliases needed.
-
     [RelayCommand]
     public async Task NewConnectionAsync()
     {
@@ -77,7 +76,7 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void NewGroup() { /* TODO M4 */ }
+    private void NewGroup() { }
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private Task RefreshAsync() => LoadAsync();
@@ -86,15 +85,36 @@ public sealed partial class ConnectionsViewModel : ObservableObject
 
 public sealed class ConnectionTreeNode
 {
-    public string DisplayName { get; }
-    public string Glyph      { get; }
-    public ConnectionProfile? Profile { get; }
+    // Prototype dot colors
+    private static readonly Color SshOnColor  = Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C); // #3DD68C
+    private static readonly Color RdpOnColor  = Color.FromArgb(0xFF, 0x4D, 0xA6, 0xFF); // #4DA6FF
+    private static readonly Color OffColor    = Color.FromArgb(0xFF, 0x40, 0x40, 0x50); // #404050
+    private static readonly Color GroupColor  = Color.FromArgb(0xFF, 0x60, 0x60, 0x70); // folder grey
+
+    public string             DisplayName    { get; }
+    public Color              DotColor       { get; }
+    public string             BadgeText      { get; }
+    public Visibility         BadgeVisibility { get; }
+    public ConnectionProfile? Profile        { get; }
     public ObservableCollection<ConnectionTreeNode> Children { get; } = [];
 
     public ConnectionTreeNode(ConnectionProfile p)
     {
-        Profile = p; DisplayName = p.DisplayName;
-        Glyph = p.Protocol == ConnectionProtocol.Ssh ? "\uE704" : "\uE8AF";
+        Profile     = p;
+        DisplayName = p.DisplayName;
+        // Show connected dot if was recently connected, grey otherwise
+        DotColor    = p.Protocol == ConnectionProtocol.Ssh
+            ? (p.LastConnectedAt.HasValue ? SshOnColor : OffColor)
+            : (p.LastConnectedAt.HasValue ? RdpOnColor : OffColor);
+        BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
+        BadgeVisibility = Visibility.Visible;
     }
-    public ConnectionTreeNode(Group g) { DisplayName = g.Name; Glyph = "\uE8B7"; }
+
+    public ConnectionTreeNode(Group g)
+    {
+        DisplayName     = g.Name;
+        DotColor        = GroupColor;
+        BadgeText       = string.Empty;
+        BadgeVisibility = Visibility.Collapsed;
+    }
 }

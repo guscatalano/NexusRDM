@@ -2,7 +2,9 @@
   <Folder Name="/src/">
     <Project Path="src/NexusRDM.Core/NexusRDM.Core.csproj" />
     <Project Path="src/NexusRDM.Data/NexusRDM.Data.csproj" />
-    <Project Path="src/NexusRDM/NexusRDM.csproj" />
+    <Project Path="src/NexusRDM/NexusRDM.csproj">
+      <Platform Solution="Debug|*" Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/NexusRDM.Core.Tests/NexusRDM.Core.Tests.csproj" />
