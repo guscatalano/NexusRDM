@@ -35,10 +35,10 @@ public sealed partial class MainWindow : Window
 
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
         SetTitleBarColors();
         ConnectionsPane.ConnectRequested += OnConnectRequested;
 
-        // Add welcome tab
         AddWelcomeTab();
     }
 
@@ -59,23 +59,136 @@ public sealed partial class MainWindow : Window
 
     private void AddWelcomeTab()
     {
-        var content = new Grid { Background = (SolidColorBrush)Application.Current.Resources["NxBg0"] };
-        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Spacing = 12 };
-        stack.Children.Add(new FontIcon { Glyph = "\uE968", FontSize = 40, Foreground = (SolidColorBrush)Application.Current.Resources["NxTx3"] });
-        stack.Children.Add(new TextBlock { Text = "Nexus RDM", FontSize = 15, FontWeight = new Windows.UI.Text.FontWeight(500), Foreground = (SolidColorBrush)Application.Current.Resources["NxTx1"], HorizontalAlignment = HorizontalAlignment.Center });
-        stack.Children.Add(new TextBlock { Text = "Click any connection to open a session", FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["NxTx2"], HorizontalAlignment = HorizontalAlignment.Center });
-        content.Children.Add(stack);
+        var bg0    = (SolidColorBrush)Application.Current.Resources["NxBg0"];
+        var bg1    = (SolidColorBrush)Application.Current.Resources["NxBg1"];
+        var brd    = (SolidColorBrush)Application.Current.Resources["NxBrd"];
+        var tx1    = (SolidColorBrush)Application.Current.Resources["NxTx1"];
+        var tx2    = (SolidColorBrush)Application.Current.Resources["NxTx2"];
+        var tx3    = (SolidColorBrush)Application.Current.Resources["NxTx3"];
+        var ssh    = (SolidColorBrush)Application.Current.Resources["NxSsh"];
+        var rdp    = (SolidColorBrush)Application.Current.Resources["NxRdp"];
+        var accent = (SolidColorBrush)Application.Current.Resources["NxAccent"];
+
+        var root = new Grid { Background = bg0, Padding = new Thickness(40, 32, 40, 32) };
+
+        var scroller = new ScrollViewer
+        {
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalAlignment           = HorizontalAlignment.Center,
+        };
+
+        var stack = new StackPanel { Spacing = 18, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
+
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        titleRow.Children.Add(new FontIcon { Glyph = "", FontSize = 28, Foreground = accent, VerticalAlignment = VerticalAlignment.Center });
+        titleRow.Children.Add(new TextBlock { Text = "Nexus RDM", FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(600), Foreground = tx1, VerticalAlignment = VerticalAlignment.Center });
+        stack.Children.Add(titleRow);
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "A unified remote-desktop manager for SSH and RDP sessions. " +
+                   "Define your connections once, store credentials securely in the Windows Credential Manager, " +
+                   "and jump into a tabbed session with a single click.",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = tx2,
+        });
+
+        stack.Children.Add(SectionHeader("GET STARTED", tx3));
+        stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "1", "Add a connection",
+            "Click “New” in the left pane. Pick SSH or RDP, fill in host/port, and choose how to authenticate."));
+        stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "2", "Save credentials",
+            "Enter username/password and tick “Save to Windows Credential Manager.” Your secrets never live in plain text."));
+        stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "3", "Open a session",
+            "Click any connection in the tree. SSH opens in a terminal tab; RDP launches the embedded Remote Desktop control."));
+
+        stack.Children.Add(SectionHeader("PROTOCOLS", tx3));
+        var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 18 };
+        legend.Children.Add(LegendDot(ssh, "SSH — terminal sessions", tx2));
+        legend.Children.Add(LegendDot(rdp, "RDP — remote desktop",    tx2));
+        stack.Children.Add(legend);
+
+        stack.Children.Add(SectionHeader("TIPS", tx3));
+        stack.Children.Add(BulletLine("•  Use the search box (Ctrl+F) to filter the connection tree.", tx2));
+        stack.Children.Add(BulletLine("•  Group connections to keep environments organised.",          tx2));
+        stack.Children.Add(BulletLine("•  The Audit pane records every session open, close, and error.", tx2));
+        stack.Children.Add(BulletLine("•  Settings let you change theme and default ports.",            tx2));
+
+        scroller.Content = stack;
+        root.Children.Add(scroller);
 
         SessionTabs.TabItems.Add(new TabViewItem
         {
             Header     = "Home",
             Tag        = "welcome",
-            Content    = content,
+            Content    = root,
             IconSource = new SymbolIconSource { Symbol = Symbol.Home }
         });
     }
 
-    // ── Navigation ────────────────────────────────────────────────────────────
+    private static TextBlock SectionHeader(string text, SolidColorBrush fg) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        FontWeight = new Windows.UI.Text.FontWeight(600),
+        Foreground = fg,
+        Margin = new Thickness(0, 8, 0, 0),
+    };
+
+    private static Border StepCard(SolidColorBrush bg, SolidColorBrush brd, SolidColorBrush accent,
+                                   SolidColorBrush tx1, SolidColorBrush tx2,
+                                   string number, string title, string body)
+    {
+        var card = new Border
+        {
+            Background      = bg,
+            BorderBrush     = brd,
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(6),
+            Padding         = new Thickness(14, 12, 14, 12),
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var num = new TextBlock
+        {
+            Text = number,
+            FontSize = 16,
+            FontWeight = new Windows.UI.Text.FontWeight(600),
+            Foreground = accent,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        Grid.SetColumn(num, 0);
+
+        var inner = new StackPanel { Spacing = 2 };
+        inner.Children.Add(new TextBlock { Text = title, FontSize = 13, FontWeight = new Windows.UI.Text.FontWeight(600), Foreground = tx1 });
+        inner.Children.Add(new TextBlock { Text = body, FontSize = 12, Foreground = tx2, TextWrapping = TextWrapping.Wrap });
+        Grid.SetColumn(inner, 1);
+
+        grid.Children.Add(num);
+        grid.Children.Add(inner);
+        card.Child = grid;
+        return card;
+    }
+
+    private static StackPanel LegendDot(SolidColorBrush dot, string label, SolidColorBrush fg)
+    {
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        sp.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = dot, VerticalAlignment = VerticalAlignment.Center });
+        sp.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = fg, VerticalAlignment = VerticalAlignment.Center });
+        return sp;
+    }
+
+    private static TextBlock BulletLine(string text, SolidColorBrush fg) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        Foreground = fg,
+        TextWrapping = TextWrapping.Wrap,
+    };
 
     private void BtnNavConn_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Connections);
     private void BtnNavAudit_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Audit);
@@ -105,8 +218,6 @@ public sealed partial class MainWindow : Window
     {
         if (btn.Content is IconElement icon) icon.Foreground = brush;
     }
-
-    // ── Connect ───────────────────────────────────────────────────────────────
 
     private async void OnConnectRequested(object? sender, ConnectionProfile profile)
     {
@@ -169,6 +280,23 @@ public sealed partial class MainWindow : Window
         var dlg = new CredentialPromptDialog { XamlRoot = Content.XamlRoot };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return (null, null);
         return (dlg.Username, dlg.Password);
+    }
+
+    public async Task<ConnectionProfile?> ShowEditConnectionPanelAsync(ConnectionProfile? existing)
+    {
+        var panel = new EditConnectionPanel(existing);
+        OverlayHost.Children.Clear();
+        OverlayHost.Children.Add(panel);
+        OverlayHost.Visibility = Visibility.Visible;
+        try
+        {
+            return await panel.Result;
+        }
+        finally
+        {
+            OverlayHost.Visibility = Visibility.Collapsed;
+            OverlayHost.Children.Clear();
+        }
     }
 
     private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)

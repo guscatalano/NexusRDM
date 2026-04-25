@@ -55,7 +55,7 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     [RelayCommand]
     public async Task NewConnectionAsync()
     {
-        var saved = await Views.EditConnectionDialog.ShowForNewAsync();
+        var saved = await App.MainWin.ShowEditConnectionPanelAsync(null);
         if (saved is not null) await LoadAsync();
     }
 
@@ -63,7 +63,7 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     public async Task EditConnectionAsync(ConnectionTreeNode? node)
     {
         if (node?.Profile is null) return;
-        var saved = await Views.EditConnectionDialog.ShowForEditAsync(node.Profile);
+        var saved = await App.MainWin.ShowEditConnectionPanelAsync(node.Profile);
         if (saved is not null) await LoadAsync();
     }
 

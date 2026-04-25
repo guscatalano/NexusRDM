@@ -9,7 +9,6 @@
   <ItemGroup>
     <PackageReference Include="SSH.NET" Version="2024.2.0" />
     <PackageReference Include="VtNetCore" Version="1.0.9" />
-    <PackageReference Include="CredentialManagement" Version="1.0.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
   </ItemGroup>

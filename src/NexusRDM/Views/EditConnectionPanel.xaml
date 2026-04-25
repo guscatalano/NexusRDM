@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="NexusRDM.Views.EditConnectionPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:NexusRDM.ViewModels"
+    xmlns:models="using:NexusRDM.Core.Models"
+    xmlns:conv="using:NexusRDM.Converters">
+
+    <!-- Full-bleed scrim + right-anchored panel -->
+    <Grid Background="#80000000" Tapped="OnScrimTapped">
+
+        <Border HorizontalAlignment="Right"
+                VerticalAlignment="Stretch"
+                Width="440"
+                Background="{StaticResource NxBg1}"
+                BorderBrush="{StaticResource NxBrd}"
+                BorderThickness="1,0,0,0"
+                Tapped="OnPanelTapped">
+
+            <Grid RowDefinitions="Auto,*,Auto">
+
+                <!-- Header -->
+                <Border Grid.Row="0"
+                        Background="{StaticResource NxBg1}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="0,0,0,1"
+                        Padding="20,14,12,14">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Configure how Nexus connects to this host."
+                                       FontSize="11"
+                                       Foreground="{StaticResource NxTx3}" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Click="OnCancelClick"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="8"
+                                ToolTipService.ToolTip="Close">
+                            <FontIcon Glyph="&#xE711;" FontSize="12"
+                                      Foreground="{StaticResource NxTx2}" />
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <!-- Body -->
+                <ScrollViewer Grid.Row="1"
+                              VerticalScrollBarVisibility="Auto"
+                              Padding="20,16,20,16">
+                    <StackPanel Spacing="6">
+
+                        <!-- Error banner: selectable so the user can copy the message. -->
+                        <Border Visibility="{x:Bind ViewModel.ErrorVisibility, Mode=OneWay}"
+                                Background="#33FF6B6B"
+                                BorderBrush="#80FF6B6B"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="10,8">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <FontIcon Grid.Column="0"
+                                          Glyph="&#xE783;"
+                                          FontSize="14"
+                                          Foreground="{StaticResource NxRed}"
+                                          VerticalAlignment="Top"
+                                          Margin="0,2,8,0" />
+                                <TextBox  Grid.Column="1"
+                                          Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                                          IsReadOnly="True"
+                                          AcceptsReturn="True"
+                                          TextWrapping="Wrap"
+                                          BorderThickness="0"
+                                          Background="Transparent"
+                                          Padding="0"
+                                          FontSize="12"
+                                          Foreground="{StaticResource NxTx1}" />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="GENERAL"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{StaticResource NxTx3}"
+                                   Margin="0,4,0,2" />
+
+                        <TextBox Header="Display name" PlaceholderText="e.g. Production Web Server"
+                                 Text="{x:Bind ViewModel.DisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
+
+                        <ComboBox Header="Protocol" HorizontalAlignment="Stretch"
+                                  ItemsSource="{x:Bind ViewModel.ProtocolOptions}"
+                                  DisplayMemberPath="Display"
+                                  SelectedItem="{x:Bind ViewModel.SelectedProtocolOption, Mode=TwoWay}" />
+
+                        <Grid ColumnDefinitions="*,Auto,110">
+                            <TextBox Grid.Column="0" Header="Host / IP"
+                                     PlaceholderText="hostname or 192.168.x.x"
+                                     Text="{x:Bind ViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Column="1" Text=":" VerticalAlignment="Bottom" Margin="6,0,6,8"
+                                       Foreground="{StaticResource NxTx2}" />
+                            <NumberBox Grid.Column="2" Header="Port" Minimum="1" Maximum="65535"
+                                       SpinButtonPlacementMode="Compact"
+                                       Value="{x:Bind ViewModel.Port, Mode=TwoWay}" />
+                        </Grid>
+
+                        <TextBox Header="Tags (comma separated)" PlaceholderText="linux, production, web"
+                                 Text="{x:Bind ViewModel.Tags, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- SSH section: credentials + ssh-specific options -->
+                        <StackPanel Spacing="6"
+                                    Visibility="{x:Bind ViewModel.Protocol, Mode=OneWay, Converter={StaticResource SshVisibilityConverter}}">
+                            <TextBlock Text="SSH"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,12,0,2" />
+                            <TextBox Header="Username"
+                                     Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <ComboBox Header="Authentication method" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.SshAuthOptions}"
+                                      DisplayMemberPath="Display"
+                                      SelectedItem="{x:Bind ViewModel.SelectedSshAuthOption, Mode=TwoWay}" />
+                            <PasswordBox Header="Password"
+                                         Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}, ConverterParameter=Invert}" />
+                            <TextBox Header="Private key path (.pem / .ppk)"
+                                     PlaceholderText="C:\Users\you\.ssh\id_rsa"
+                                     Text="{x:Bind ViewModel.PrivateKeyPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}}" />
+                            <CheckBox Content="Save to Windows Credential Manager"
+                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
+                            <NumberBox Header="Keep-alive interval (seconds)" Minimum="0" Maximum="300"
+                                       SpinButtonPlacementMode="Compact"
+                                       Value="{x:Bind ViewModel.KeepAliveSeconds, Mode=TwoWay}" />
+                        </StackPanel>
+
+                        <!-- RDP section: credentials + rdp-specific options -->
+                        <StackPanel Spacing="6"
+                                    Visibility="{x:Bind ViewModel.Protocol, Mode=OneWay, Converter={StaticResource RdpVisibilityConverter}}">
+                            <TextBlock Text="RDP"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,12,0,2" />
+                            <TextBox Header="Domain (optional)"
+                                     Text="{x:Bind ViewModel.RdpDomain, Mode=TwoWay}" />
+                            <TextBox Header="Username"
+                                     Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <PasswordBox Header="Password"
+                                         Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <CheckBox Content="Save to Windows Credential Manager"
+                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
+
+                            <TextBlock Text="DISPLAY"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,8,0,2" />
+                            <Grid ColumnDefinitions="*,Auto,*">
+                                <NumberBox Grid.Column="0" Header="Width" Minimum="640" Maximum="7680"
+                                           SpinButtonPlacementMode="Compact"
+                                           Value="{x:Bind ViewModel.RdpWidth, Mode=TwoWay}" />
+                                <TextBlock Grid.Column="1" Text="×" VerticalAlignment="Bottom" Margin="8,0,8,8"
+                                           Foreground="{StaticResource NxTx2}" />
+                                <NumberBox Grid.Column="2" Header="Height" Minimum="480" Maximum="4320"
+                                           SpinButtonPlacementMode="Compact"
+                                           Value="{x:Bind ViewModel.RdpHeight, Mode=TwoWay}" />
+                            </Grid>
+                            <CheckBox Content="Full screen"           IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
+                            <CheckBox Content="Redirect clipboard"    IsChecked="{x:Bind ViewModel.RdpClipboard,  Mode=TwoWay}" />
+                            <CheckBox Content="Redirect local drives" IsChecked="{x:Bind ViewModel.RdpDrives,     Mode=TwoWay}" />
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Footer -->
+                <Border Grid.Row="2"
+                        Background="{StaticResource NxBg1}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="0,1,0,0"
+                        Padding="20,12,20,14">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Cancel" Click="OnCancelClick" />
+                        <Button Content="Save"   Click="OnSaveClick"
+                                Style="{StaticResource AccentButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
+                    </StackPanel>
+                </Border>
+
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

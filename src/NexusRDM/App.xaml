@@ -50,6 +50,93 @@
             <SolidColorBrush x:Key="TabViewItemHeaderForeground" Color="{StaticResource NxTx2Color}" />
             <SolidColorBrush x:Key="TabViewItemHeaderForegroundSelected" Color="{StaticResource NxTx1Color}" />
 
+            <!-- ContentDialog: dark surface, sharp border, no acrylic -->
+            <SolidColorBrush x:Key="ContentDialogBackground"           Color="{StaticResource NxBg1Color}" />
+            <SolidColorBrush x:Key="ContentDialogForeground"           Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ContentDialogBorderBrush"          Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="ContentDialogTopOverlay"           Color="{StaticResource NxBg1Color}" />
+            <SolidColorBrush x:Key="ContentDialogSeparatorBorderBrush" Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="ContentDialogSmokeFill"            Color="#80000000" />
+            <Thickness x:Key="ContentDialogBorderWidth">1</Thickness>
+
+            <!-- TextBox / PasswordBox / NumberBox -->
+            <SolidColorBrush x:Key="TextControlBackground"               Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver"    Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="TextControlBackgroundFocused"        Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="TextControlBackgroundDisabled"       Color="{StaticResource NxBg1Color}" />
+            <SolidColorBrush x:Key="TextControlForeground"               Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="TextControlForegroundPointerOver"    Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="TextControlForegroundFocused"        Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="TextControlForegroundDisabled"       Color="{StaticResource NxTx3Color}" />
+            <SolidColorBrush x:Key="TextControlBorderBrush"              Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver"   Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="TextControlBorderBrushFocused"       Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForeground"    Color="{StaticResource NxTx3Color}" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{StaticResource NxTx2Color}" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused"     Color="{StaticResource NxTx2Color}" />
+            <SolidColorBrush x:Key="TextControlHeaderForeground"         Color="{StaticResource NxTx2Color}" />
+            <SolidColorBrush x:Key="TextControlButtonBackground"         Color="Transparent" />
+            <SolidColorBrush x:Key="TextControlButtonForeground"         Color="{StaticResource NxTx2Color}" />
+            <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{StaticResource NxTx1Color}" />
+
+            <!-- ComboBox -->
+            <SolidColorBrush x:Key="ComboBoxBackground"               Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver"    Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed"        Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundFocused"        Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled"       Color="{StaticResource NxBg1Color}" />
+            <SolidColorBrush x:Key="ComboBoxForeground"               Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxForegroundPointerOver"    Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxForegroundPressed"        Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxForegroundFocused"        Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrush"              Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver"   Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushFocused"       Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground"               Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver"    Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush"              Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="ComboBoxItemBackground"               Color="Transparent" />
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver"    Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected"       Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ComboBoxItemForeground"               Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxItemForegroundSelected"       Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ComboBoxPlaceHolderForeground"        Color="{StaticResource NxTx3Color}" />
+
+            <!-- Buttons (close + default) -->
+            <SolidColorBrush x:Key="ButtonBackground"            Color="{StaticResource NxBg2Color}" />
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ButtonBackgroundPressed"     Color="{StaticResource NxBg3Color}" />
+            <SolidColorBrush x:Key="ButtonForeground"            Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ButtonForegroundPressed"     Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="ButtonBorderBrush"           Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="{StaticResource NxBrdColor}" />
+
+            <!-- AccentButton (PrimaryButton in dialogs) -->
+            <SolidColorBrush x:Key="AccentButtonBackground"            Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{StaticResource NxAccent2Color}" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPressed"     Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="AccentButtonForeground"            Color="White" />
+            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="White" />
+            <SolidColorBrush x:Key="AccentButtonBorderBrush"           Color="{StaticResource NxAccentColor}" />
+
+            <!-- CheckBox -->
+            <SolidColorBrush x:Key="CheckBoxForegroundUnchecked"            Color="{StaticResource NxTx2Color}" />
+            <SolidColorBrush x:Key="CheckBoxForegroundUncheckedPointerOver" Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="CheckBoxForegroundChecked"              Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillUnchecked"   Color="Transparent" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked"     Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked" Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeChecked"   Color="{StaticResource NxAccentColor}" />
+            <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked"    Color="White" />
+
+            <!-- InfoBar (error banner) -->
+            <SolidColorBrush x:Key="InfoBarErrorSeverityBackgroundBrush" Color="#33FF6B6B" />
+            <SolidColorBrush x:Key="InfoBarBorderBrush"                  Color="{StaticResource NxBrdColor}" />
+            <SolidColorBrush x:Key="InfoBarTitleForeground"              Color="{StaticResource NxTx1Color}" />
+            <SolidColorBrush x:Key="InfoBarMessageForeground"            Color="{StaticResource NxTx1Color}" />
+
             <!-- Value converters app-wide -->
             <conv:InvertBoolConverter       x:Key="InvertBoolConverter" />
             <conv:NonZeroToBoolConverter    x:Key="NonZeroToBoolConverter" />

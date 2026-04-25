@@ -14,7 +14,8 @@
         </Grid.RowDefinitions>
 
         <!-- Custom drag region / title bar -->
-        <Border Grid.Row="0" Height="32"
+        <Border x:Name="AppTitleBar"
+                Grid.Row="0" Height="32"
                 Background="{StaticResource NxBg1}"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,0,0,1">
@@ -23,7 +24,8 @@
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            FontSize="12"
-                           Foreground="{StaticResource NxTx2}" />
+                           Foreground="{StaticResource NxTx2}"
+                           IsHitTestVisible="False" />
             </Grid>
         </Border>
 
@@ -126,5 +128,10 @@
 
             </Grid>
         </Grid>
+
+        <!-- Overlay host for slide-over panels — sits above the main content row -->
+        <Grid x:Name="OverlayHost"
+              Grid.Row="1"
+              Visibility="Collapsed" />
     </Grid>
 </Window>

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Xaml;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using System.ComponentModel.DataAnnotations;
@@ -22,8 +23,11 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     [ObservableProperty] private string             _tags     = string.Empty;
     [ObservableProperty] private Guid?              _groupId;
 
-    partial void OnProtocolChanged(ConnectionProtocol value) =>
+    partial void OnProtocolChanged(ConnectionProtocol value)
+    {
         Port = value == ConnectionProtocol.Ssh ? 22 : 3389;
+        OnPropertyChanged(nameof(SelectedProtocolOption));
+    }
 
     [ObservableProperty] private string  _username       = string.Empty;
     [ObservableProperty] private string  _password       = string.Empty;
@@ -47,17 +51,51 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
+    [NotifyPropertyChangedFor(nameof(ErrorVisibility))]
     private string _errorMessage = string.Empty;
 
-    /// <summary>Drives InfoBar.IsOpen cleanly without .Length chain in x:Bind.</summary>
+    /// <summary>Drives the error banner visibility cleanly without .Length chains in x:Bind.</summary>
     public bool HasError => !string.IsNullOrEmpty(ErrorMessage);
+
+    public Visibility ErrorVisibility => HasError ? Visibility.Visible : Visibility.Collapsed;
 
     public ConnectionProfile? SavedProfile { get; private set; }
     public bool   IsEditing => _existingId.HasValue;
     public string Title     => IsEditing ? "Edit Connection" : "New Connection";
     public List<Group> Groups { get; private set; } = [];
 
-    public EditConnectionViewModel(IConnectionService svc, ConnectionProfile? existing = null)
+    public sealed record NamedOption<T>(string Display, T Value);
+
+    public IReadOnlyList<NamedOption<ConnectionProtocol>> ProtocolOptions { get; } =
+    [
+        new("SSH", ConnectionProtocol.Ssh),
+        new("RDP", ConnectionProtocol.Rdp),
+    ];
+
+    public IReadOnlyList<NamedOption<SshAuthMethod>> SshAuthOptions { get; } =
+    [
+        new("Password",              SshAuthMethod.Password),
+        new("Private key",           SshAuthMethod.PrivateKey),
+        new("Keyboard-interactive",  SshAuthMethod.KeyboardInteractive),
+    ];
+
+    /// <summary>SelectedItem-style binding helpers; setters tolerate transient nulls during list refresh.</summary>
+    public NamedOption<ConnectionProtocol>? SelectedProtocolOption
+    {
+        get => ProtocolOptions.FirstOrDefault(o => o.Value == Protocol);
+        set { if (value is not null) Protocol = value.Value; }
+    }
+
+    public NamedOption<SshAuthMethod>? SelectedSshAuthOption
+    {
+        get => SshAuthOptions.FirstOrDefault(o => o.Value == SshAuthMethod);
+        set { if (value is not null) SshAuthMethod = value.Value; }
+    }
+
+    partial void OnSshAuthMethodChanged(SshAuthMethod value) =>
+        OnPropertyChanged(nameof(SelectedSshAuthOption));
+
+    public EditConnectionViewModel(IConnectionService svc, ConnectionProfile? existing = null, ICredentialVault? vault = null)
     {
         _svc        = svc;
         _existingId = existing?.Id;
@@ -65,11 +103,32 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
         DisplayName   = existing.DisplayName;
         Host          = existing.Host;
-        Port          = existing.Port;
+        // Protocol must be set before Port — OnProtocolChanged resets Port to the
+        // protocol default (22/3389), and would clobber the persisted port otherwise.
         Protocol      = existing.Protocol;
+        Port          = existing.Port;
         Tags          = existing.Tags;
         GroupId       = existing.GroupId;
         CredentialKey = existing.CredentialKey;
+
+        // Reflect whether a credential is currently in the vault rather than
+        // always defaulting to true.
+        SaveCredential = !string.IsNullOrEmpty(existing.CredentialKey);
+
+        // Hydrate username/password from the vault if a key was previously saved,
+        // so the user can see (and tweak) what was stored rather than re-typing.
+        if (vault is not null && !string.IsNullOrEmpty(CredentialKey))
+        {
+            try
+            {
+                if (vault.Load(CredentialKey) is { } cred)
+                {
+                    Username = cred.Username;
+                    Password = cred.Password;
+                }
+            }
+            catch { /* missing/corrupt entry — leave fields empty, user can re-enter */ }
+        }
 
         if (existing.Protocol == ConnectionProtocol.Ssh)
         {
