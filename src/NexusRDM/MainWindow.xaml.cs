@@ -222,8 +222,10 @@ public sealed partial class MainWindow : Window
     private async void OnConnectRequested(object? sender, ConnectionProfile profile)
     {
         ShowNav(NavSection.Connections);
+        // Tree-click reuses an open tab if one already exists; the right-click
+        // Duplicate path bypasses this by calling Open*TabAsync directly.
         foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
-            if (item.Tag is Guid id && id == profile.Id)
+            if (item.Tag is OpenSession os && os.ConnectionId == profile.Id)
             { SessionTabs.SelectedItem = item; return; }
 
         if (profile.Protocol == ConnectionProtocol.Ssh)
@@ -237,9 +239,9 @@ public sealed partial class MainWindow : Window
         var (username, password) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
         var session = _ssh.CreateSession(profile, username, password!);
-        _sessions.AddSsh(profile, session);
-        var vm   = new SshSessionViewModel(profile, session, _sessions);
-        AddSessionTab(profile, Symbol.Globe, new SshSessionView(vm),
+        var entry   = _sessions.AddSsh(profile, session);
+        var vm      = new SshSessionViewModel(profile, session, _sessions);
+        AddSessionTab(profile, entry, Symbol.Globe, new SshSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxSsh"]);
     }
 
@@ -248,26 +250,50 @@ public sealed partial class MainWindow : Window
         var (username, _) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
         var session = _rdp.CreateSession(profile, username, string.Empty);
-        _sessions.AddRdp(profile, session);
-        var vm   = new RdpSessionViewModel(profile, session, _sessions);
-        AddSessionTab(profile, Symbol.Remote, new RdpSessionView(vm),
+        var entry   = _sessions.AddRdp(profile, session);
+        var vm      = new RdpSessionViewModel(profile, session, _sessions);
+        AddSessionTab(profile, entry, Symbol.Remote, new RdpSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxRdp"]);
     }
 
-    private void AddSessionTab(ConnectionProfile profile, Symbol icon, UIElement content, SolidColorBrush dotColor)
+    private void AddSessionTab(ConnectionProfile profile, OpenSession entry, Symbol icon, UIElement content, SolidColorBrush dotColor)
     {
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         header.Children.Add(new Ellipse { Width = 7, Height = 7, Fill = dotColor });
         header.Children.Add(new TextBlock { Text = profile.DisplayName, FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["NxTx1"] });
 
-        SessionTabs.TabItems.Add(new TabViewItem
+        var tab = new TabViewItem
         {
             Header     = header,
-            Tag        = profile.Id,
+            // Tag carries the OpenSession instance — close handler disposes
+            // exactly this session (matters when duplicate tabs share a
+            // ConnectionId).
+            Tag        = entry,
             Content    = content,
             IconSource = new SymbolIconSource { Symbol = icon }
-        });
-        SessionTabs.SelectedItem = SessionTabs.TabItems.Last();
+        };
+
+        // Right-click flyout — currently exposes Duplicate. Only meaningful for
+        // SSH because RDP's mstsc-based session can't share state across tabs.
+        var menu = new MenuFlyout();
+        if (profile.Protocol == ConnectionProtocol.Ssh)
+        {
+            var dup = new MenuFlyoutItem { Text = "Duplicate", Icon = new SymbolIcon(Symbol.Copy) };
+            dup.Click += async (_, _) => await OpenSshTabAsync(profile);
+            menu.Items.Add(dup);
+            menu.Items.Add(new MenuFlyoutSeparator());
+        }
+        var close = new MenuFlyoutItem { Text = "Close", Icon = new SymbolIcon(Symbol.Cancel) };
+        close.Click += async (_, _) =>
+        {
+            await _sessions.CloseAsync(entry);
+            SessionTabs.TabItems.Remove(tab);
+        };
+        menu.Items.Add(close);
+        tab.ContextFlyout = menu;
+
+        SessionTabs.TabItems.Add(tab);
+        SessionTabs.SelectedItem = tab;
     }
 
     private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(ConnectionProfile profile)
@@ -301,11 +327,11 @@ public sealed partial class MainWindow : Window
 
     private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
     {
-        if (args.Tab.Tag is Guid id)
-        {
-            var entry = _sessions.FindByConnectionId(id);
-            if (entry is not null) await _sessions.CloseAsync(entry);
-        }
+        // Close the exact OpenSession this tab owns; identifying by
+        // ConnectionId would dispose the wrong session when duplicate tabs are
+        // open against the same connection.
+        if (args.Tab.Tag is OpenSession os)
+            await _sessions.CloseAsync(os);
         sender.TabItems.Remove(args.Tab);
     }
 }
