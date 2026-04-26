@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sibling project for the WinForms-hosted Microsoft RDP ActiveX backend.
+    Lives outside NexusRDM (the WinUI 3 project) because UseWindowsForms=true
+    pulls in WPF MarkupCompile targets that conflict with WinUI XAML. Keeping
+    Forms here lets the host project stay clean.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- No <Platforms> override: the consumer (NexusRDM.csproj) builds
+         dependent project references with Platform=AnyCPU, expecting output
+         under bin\Debug\. Forcing x64 here would put output under
+         bin\x64\Debug\ and break MetadataFile resolution. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusRDM.Core\NexusRDM.Core.csproj" />
+  </ItemGroup>
+
+</Project>

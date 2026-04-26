@@ -38,6 +38,11 @@ public sealed class SshSessionFixture : IDisposable
         var exe = LocateAppExe();
         if (exe is null) { Available = false; return; }
 
+        // Wait for any leftover NexusRDM.exe processes from prior fixtures to
+        // exit before spawning a new one — competing instances race for
+        // foreground focus and break UIA element resolution.
+        WaitForNoNexusRDM(TimeSpan.FromSeconds(5));
+
         var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
         // Only set on the child process — keeps other test fixtures (which
         // launch their own NexusRDM.exe) running against the user's real data
@@ -77,6 +82,20 @@ public sealed class SshSessionFixture : IDisposable
         ctx.Connections.Add(profile);
         ctx.SaveChanges();
         return profile;
+    }
+
+    /// <summary>Block (briefly) until no NexusRDM.exe is still running.
+    /// Each fixture's Dispose force-kills its child, but Windows takes a
+    /// moment to release the process; a fresh launch on top of a dying one
+    /// breaks UIA window resolution.</summary>
+    internal static void WaitForNoNexusRDM(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (Process.GetProcessesByName("NexusRDM").Length == 0) return;
+            Thread.Sleep(200);
+        }
     }
 
     private static string? LocateAppExe()
@@ -135,7 +154,15 @@ public sealed class SshSessionFixture : IDisposable
 
     public void Dispose()
     {
-        try { App?.Close(); } catch { /* best effort */ }
+        // Force-kill, not graceful: graceful close can hang behind TabView
+        // teardown / async session disposal, leaving NexusRDM.exe alive
+        // long enough to interfere with the next fixture's app launch.
+        if (App is not null)
+        {
+            int pid = App.ProcessId;
+            try { App.Kill(); } catch { /* may already be exiting */ }
+            try { Process.GetProcessById(pid)?.WaitForExit(5000); } catch { /* gone */ }
+        }
         Automation?.Dispose();
         App?.Dispose();
         Server.Dispose();

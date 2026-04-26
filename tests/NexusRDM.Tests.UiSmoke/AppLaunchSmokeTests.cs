@@ -10,6 +10,7 @@ namespace NexusRDM.Tests.UiSmoke;
 /// when no built NexusRDM.exe is found, so CI / `dotnet test` on a machine
 /// without the WinUI build green still pass.
 /// </summary>
+[Collection("UI smoke")]
 public sealed class AppLaunchSmokeTests : IClassFixture<NexusAppFixture>
 {
     private readonly NexusAppFixture _fx;

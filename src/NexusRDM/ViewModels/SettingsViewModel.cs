@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using NexusRDM.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,6 +16,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int    _defaultSshPort  = 22;
     [ObservableProperty] private int    _defaultRdpPort  = 3389;
     [ObservableProperty] private bool   _saveWindowSize  = true;
+
+    /// <summary>0 = Mstsc (separate process), 1 = MstscAx (in-proc ActiveX),
+    /// 2 = FreeRDP (not yet implemented). The order matches the ComboBox in
+    /// SettingsPage.xaml — index also matches the underlying enum value.</summary>
+    [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.Mstsc;
 
     /// <summary>Safe for unpackaged apps — Package.Current throws without identity.</summary>
     public string AppVersion
@@ -40,6 +46,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("SshPort",     out var sp)) DefaultSshPort = Convert.ToInt32(sp);
         if (s.TryGetValue("RdpPort",     out var rp)) DefaultRdpPort = Convert.ToInt32(rp);
         if (s.TryGetValue("SaveWinSize", out var sw)) SaveWindowSize = Convert.ToBoolean(sw);
+        if (s.TryGetValue("RdpMode",     out var rm)) RdpModeIndex   = Convert.ToInt32(rm);
     }
 
     [RelayCommand]
@@ -52,6 +59,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["SshPort"]     = DefaultSshPort,
             ["RdpPort"]     = DefaultRdpPort,
             ["SaveWinSize"] = SaveWindowSize,
+            ["RdpMode"]     = RdpModeIndex,
         });
 
         var theme = ThemeIndex switch
@@ -69,8 +77,25 @@ public sealed partial class SettingsViewModel : ObservableObject
 /// Reads/writes app settings. Uses Windows.Storage.ApplicationData when the app has package
 /// identity; otherwise falls back to %LocalAppData%\NexusRDM\settings.json (unpackaged mode).
 /// </summary>
-internal static class SettingsStore
+public static class SettingsStore
 {
+    /// <summary>Resolve the persisted RDP launch mode, defaulting to Mstsc.
+    /// Called by the RdpHandler dispatcher each time a session is opened so
+    /// changes from Settings take effect on the next new tab.</summary>
+    public static RdpLaunchMode ReadRdpMode()
+    {
+        var s = Read();
+        if (!s.TryGetValue("RdpMode", out var v)) return RdpLaunchMode.Mstsc;
+        try
+        {
+            var i = Convert.ToInt32(v);
+            return Enum.IsDefined(typeof(RdpLaunchMode), i)
+                ? (RdpLaunchMode)i
+                : RdpLaunchMode.Mstsc;
+        }
+        catch { return RdpLaunchMode.Mstsc; }
+    }
+
     private static readonly Lazy<bool> _packaged = new(() =>
     {
         try { _ = Windows.Storage.ApplicationData.Current.LocalSettings.Values; return true; }
@@ -95,11 +120,31 @@ internal static class SettingsStore
         {
             if (!File.Exists(FilePath)) return new Dictionary<string, object>();
             using var stream = File.OpenRead(FilePath);
-            return JsonSerializer.Deserialize<Dictionary<string, object>>(stream)
-                   ?? new Dictionary<string, object>();
+            // Deserialize as JsonElement so we can flatten each value to its
+            // underlying primitive. Plain Dictionary<string, object> would
+            // hand back JsonElement instances — which Convert.ToInt32/ToBoolean
+            // can't handle (JsonElement isn't IConvertible), causing every
+            // numeric setting to silently fall back to its default.
+            var raw = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(stream);
+            if (raw is null) return new Dictionary<string, object>();
+            var dict = new Dictionary<string, object>(raw.Count);
+            foreach (var kv in raw) dict[kv.Key] = Unwrap(kv.Value);
+            return dict;
         }
         catch { return new Dictionary<string, object>(); }
     }
+
+    private static object Unwrap(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.Number when e.TryGetInt32(out var i) => i,
+        JsonValueKind.Number when e.TryGetInt64(out var l) => l,
+        JsonValueKind.Number => e.GetDouble(),
+        JsonValueKind.True   => true,
+        JsonValueKind.False  => false,
+        JsonValueKind.String => e.GetString() ?? string.Empty,
+        JsonValueKind.Null   => string.Empty,
+        _                    => e.ToString(),
+    };
 
     public static void Write(IDictionary<string, object> values)
     {

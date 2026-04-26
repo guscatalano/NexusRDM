@@ -7,19 +7,21 @@ namespace NexusRDM.Core.Protocols;
 /// <summary>
 /// RDP session implementation.
 ///
-/// Phase 1 (M3): Launches mstsc.exe as a child process and reparents its
-///   window into our HWND host. This works on all Windows versions without
-///   any extra COM registration.
+/// Phase 1 (M3): Launches mstsc.exe as a separate top-level window. We tried
+///   reparenting mstsc into our XAML panel, but mstsc shows a credential
+///   prompt before its main window appears — the reparent grabbed the
+///   prompt, stripped its title bar, and locked it inside the panel
+///   undismissable. Until Phase 2 lands, the standalone mstsc window is the
+///   working UX; the RdpSessionView overlay tells the user where to look.
 ///
 /// Phase 2 (future): Replace with AxMSTSCLib for true in-process embedding,
 ///   clipboard/drive redirect, and programmatic control.
 /// </summary>
-public sealed class RdpSession : IRdpSession
+public sealed class MstscRdpSession : IRdpSession
 {
     private readonly ConnectionProfile _profile;
     private readonly string            _username;
     private Process?                   _proc;
-    private nint                       _mstscHwnd;
 
     public Guid ConnectionId { get; }
     public bool IsConnected  => _proc is { HasExited: false };
@@ -28,7 +30,7 @@ public sealed class RdpSession : IRdpSession
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? FatalError;
 
-    internal RdpSession(ConnectionProfile profile, string username)
+    internal MstscRdpSession(ConnectionProfile profile, string username)
     {
         ConnectionId = profile.Id;
         _profile     = profile;
@@ -48,17 +50,19 @@ public sealed class RdpSession : IRdpSession
 
         _proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start mstsc.exe");
 
-        // Wait for the mstsc window to appear, then reparent it
+        // Phase 1: leave mstsc as its own top-level window. The previous code
+        // tried to reparent the first visible mstsc window into our panel,
+        // but mstsc shows a credential prompt before its main window —
+        // FindMstscWindow grabbed *that* dialog, ReparentWindow stripped its
+        // title bar and pinned it inside our panel, leaving the user unable
+        // to dismiss it. The RdpSessionView overlay tells the user where to
+        // find the standalone Remote Desktop window. Phase 2 will replace
+        // this with AxMSTSCLib for real in-process embedding.
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(1500);   // give mstsc time to paint its window
-                _mstscHwnd = FindMstscWindow(_proc.Id);
-                if (_mstscHwnd != 0 && hwndParent != 0)
-                    ReparentWindow(_mstscHwnd, hwndParent, x, y, width, height);
                 Connected?.Invoke(this, EventArgs.Empty);
-
                 await _proc.WaitForExitAsync();
                 Disconnected?.Invoke(this, "mstsc exited");
             }
@@ -68,7 +72,7 @@ public sealed class RdpSession : IRdpSession
             }
             finally
             {
-                File.Delete(rdpPath);
+                try { File.Delete(rdpPath); } catch { /* best effort */ }
             }
         });
     }
@@ -80,15 +84,28 @@ public sealed class RdpSession : IRdpSession
 
     public void Resize(int x, int y, int width, int height)
     {
-        if (_mstscHwnd != 0)
-            NativeMethods.SetWindowPos(_mstscHwnd, 0, x, y, width, height,
-                NativeMethods.SWP_NOZORDER);
+        // No-op: mstsc owns its own window in Phase 1, so it manages its
+        // own size. Kept on the interface so a future AxMSTSCLib-based
+        // implementation can use it.
     }
 
     public void SendCtrlAltDel()
     {
         // mstsc handles this internally via the toolbar button; no API needed
     }
+
+    public void BringToFront()
+    {
+        // Phase 1 mstsc is a child process — we don't track its top-level
+        // window, so foregrounding it isn't supported here. The user can
+        // alt-tab to it.
+    }
+
+    public void SetVisible(bool visible)             { /* mstsc child process — N/A */ }
+    public void ToggleFullScreen()                   { /* mstsc child process — N/A */ }
+    public void PopOut()                             { /* mstsc child process — N/A */ }
+    public void SetSmartSizing(bool enabled)         { /* mstsc child process — N/A */ }
+    public void SetResolution(int width, int height) { /* mstsc child process — N/A */ }
 
     public void Dispose() => _proc?.Dispose();
 
@@ -112,71 +129,43 @@ public sealed class RdpSession : IRdpSession
         return sb.ToString();
     }
 
-    private static nint FindMstscWindow(int pid)
-    {
-        nint found = 0;
-        NativeMethods.EnumWindows((hwnd, _) =>
-        {
-            NativeMethods.GetWindowThreadProcessId(hwnd, out uint wpid);
-            if (wpid == (uint)pid && NativeMethods.IsWindowVisible(hwnd))
-            {
-                found = hwnd;
-                return false;
-            }
-            return true;
-        }, 0);
-        return found;
-    }
-
-    private static void ReparentWindow(nint child, nint parent, int x, int y, int w, int h)
-    {
-        // Remove title bar / border so mstsc fills our panel
-        int style = NativeMethods.GetWindowLong(child, NativeMethods.GWL_STYLE);
-        style &= ~(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME);
-        NativeMethods.SetWindowLong(child, NativeMethods.GWL_STYLE, style);
-
-        NativeMethods.SetParent(child, parent);
-        NativeMethods.SetWindowPos(child, 0, x, y, w, h,
-            NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
-    }
 }
 
+/// <summary>
+/// Dispatches <see cref="IRdpSession"/> creation to the configured backend
+/// (<see cref="RdpLaunchMode"/>). The mode is resolved at session-open time —
+/// switching modes in Settings affects new tabs without a restart. Backends
+/// that live in the UI project (e.g. mstscax/AxHost) are injected as
+/// factories so this class can stay in Core.
+/// </summary>
 public sealed class RdpHandler : IRdpHandler
 {
-    public IRdpSession CreateSession(ConnectionProfile profile, string username, string password) =>
-        new RdpSession(profile, username);
-}
+    private readonly Func<RdpLaunchMode> _modeProvider;
+    private readonly Func<ConnectionProfile, string, string, IRdpSession>? _mstscAxFactory;
+    private readonly Func<ConnectionProfile, string, string, IRdpSession>? _freeRdpFactory;
 
-/// <summary>P/Invoke surface for window management.</summary>
-internal static class NativeMethods
-{
-    public const int GWL_STYLE     = -16;
-    public const int WS_CAPTION    = 0x00C00000;
-    public const int WS_THICKFRAME = 0x00040000;
-    public const int SWP_NOZORDER  = 0x0004;
-    public const int SWP_NOMOVE    = 0x0002;
-    public const int SWP_FRAMECHANGED = 0x0020;
+    public RdpHandler(
+        Func<RdpLaunchMode>? modeProvider = null,
+        Func<ConnectionProfile, string, string, IRdpSession>? mstscAxFactory = null,
+        Func<ConnectionProfile, string, string, IRdpSession>? freeRdpFactory = null)
+    {
+        _modeProvider   = modeProvider   ?? (() => RdpLaunchMode.Mstsc);
+        _mstscAxFactory = mstscAxFactory;
+        _freeRdpFactory = freeRdpFactory;
+    }
 
-    public delegate bool EnumWindowsProc(nint hwnd, nint lParam);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc cb, nint lParam);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(nint hwnd);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern nint SetParent(nint child, nint newParent);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int w, int h, int flags);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern int GetWindowLong(nint hwnd, int index);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    public static extern int SetWindowLong(nint hwnd, int index, int value);
+    public IRdpSession CreateSession(ConnectionProfile profile, string username, string password)
+    {
+        var mode = _modeProvider();
+        return mode switch
+        {
+            RdpLaunchMode.MstscAx when _mstscAxFactory is not null
+                => _mstscAxFactory(profile, username, password),
+            RdpLaunchMode.FreeRdp when _freeRdpFactory is not null
+                => _freeRdpFactory(profile, username, password),
+            RdpLaunchMode.FreeRdp
+                => throw new NotImplementedException("FreeRDP backend is not yet implemented; pick Mstsc or MstscAx in Settings."),
+            _   => new MstscRdpSession(profile, username),
+        };
+    }
 }

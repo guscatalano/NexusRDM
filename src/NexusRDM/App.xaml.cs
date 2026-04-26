@@ -3,10 +3,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using NexusRDM.Core.Interfaces;
+using NexusRDM.Core.Models;
 using NexusRDM.Core.Protocols;
 using NexusRDM.Core.Services;
 using NexusRDM.Data;
 using NexusRDM.Data.Context;
+using NexusRDM.RdpAx;
 using NexusRDM.Services;
 using NexusRDM.ViewModels;
 using Serilog;
@@ -84,7 +86,12 @@ public partial class App : Application
         services.AddSingleton<ICredentialVault, CredentialVault>();
         services.AddScoped<IConnectionService,  ConnectionService>();
         services.AddSingleton<ISshHandler,      SshHandler>();
-        services.AddSingleton<IRdpHandler,      RdpHandler>();
+        // RDP backend is a dispatcher that picks Mstsc / MstscAx / FreeRdp at
+        // session-open time based on the user's setting. The MstscAx factory
+        // lives in this project (Forms host); Core stays UI-agnostic.
+        services.AddSingleton<IRdpHandler>(_ => new RdpHandler(
+            modeProvider:    SettingsStore.ReadRdpMode,
+            mstscAxFactory:  (profile, user, pass) => new MstscAxRdpSession(profile, user, pass)));
         services.AddSingleton<SessionManager>();
 
         services.AddTransient<MainViewModel>();
