@@ -47,11 +47,34 @@ public sealed partial class SshSessionView : UserControl
         Loaded += OnLoaded;
     }
 
+    /// <summary>
+    /// Track the main window's content height and stretch RootGrid to match
+    /// it (minus chrome). The TabView's content host hugs the UserControl's
+    /// DesiredSize, so layout-only "Stretch" can't fill the tab area —
+    /// we have to push an explicit Height down.
+    /// </summary>
+    private void HookSizeTracking()
+    {
+        if (App.MainWin?.Content is not FrameworkElement root) return;
+
+        void Update()
+        {
+            // Subtract title bar (32) + tab strip (~40) + small bottom margin.
+            var available = root.ActualHeight - 80;
+            if (available > 200) RootGrid.Height = available;
+        }
+
+        Update();
+        root.SizeChanged += (_, _) => DispatcherQueue.TryEnqueue(Update);
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         // Always reclaim focus when the tab is shown — TabView re-attaches
         // content on activation and focus drifts to the tab strip otherwise.
         Focus(FocusState.Programmatic);
+
+        HookSizeTracking();
 
         // Connect exactly once per tab lifetime.
         if (_connectStarted) return;
