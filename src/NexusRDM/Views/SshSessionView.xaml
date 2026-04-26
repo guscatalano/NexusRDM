@@ -8,10 +8,11 @@
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch">
 
-    <!-- HorizontalContentAlignment/VerticalContentAlignment must be Stretch:
-         WinUI 3 ContentControl defaults them to Center, which causes the
-         inner Grid to render at its DesiredSize (~half the tab area). -->
-    <Grid RowDefinitions="30,*,22"
+    <!-- The TabView's content host hugs the UserControl's DesiredSize, so a
+         pure XAML "Stretch" doesn't actually fill the tab area. Code-behind
+         (OnLoaded) tracks the main window's content height and pushes it onto
+         RootGrid.Height; MinHeight stays as a sane floor before that runs. -->
+    <Grid x:Name="RootGrid" RowDefinitions="30,*,22"
           HorizontalAlignment="Stretch"
           VerticalAlignment="Stretch"
           MinHeight="400">
