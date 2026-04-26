@@ -107,6 +107,37 @@
                     </Grid>
                 </Border>
 
+                <!-- RDP Defaults section -->
+                <TextBlock Text="RDP DEFAULTS"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Launch mode" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Mstsc launches Remote Desktop as a separate process. MstscAx hosts the RDP ActiveX control in-process. FreeRDP is reserved for a future cross-platform backend." />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.RdpModeIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="160"
+                                  VerticalAlignment="Top">
+                            <ComboBoxItem Content="Mstsc (separate process)" />
+                            <ComboBoxItem Content="MstscAx (in-process ActiveX)" />
+                            <ComboBoxItem Content="FreeRDP (not yet implemented)" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
                 <!-- Save -->
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
                     <Button Command="{x:Bind ViewModel.SaveCommand}"

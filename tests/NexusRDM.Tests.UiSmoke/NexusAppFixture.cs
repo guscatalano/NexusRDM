@@ -22,6 +22,9 @@ public sealed class NexusAppFixture : IDisposable
         var exe = LocateAppExe();
         if (exe is null) return;
 
+        // Wait for any leftover NexusRDM.exe from prior fixtures to exit.
+        SshSessionFixture.WaitForNoNexusRDM(TimeSpan.FromSeconds(5));
+
         App        = Application.Launch(new ProcessStartInfo(exe) { UseShellExecute = false });
         Automation = new UIA3Automation();
         MainWindow = App.GetMainWindow(Automation, TimeSpan.FromSeconds(20));
@@ -48,7 +51,15 @@ public sealed class NexusAppFixture : IDisposable
 
     public void Dispose()
     {
-        try { App?.Close(); } catch { /* best effort */ }
+        // Force-kill instead of graceful close — keeps subsequent UI smoke
+        // fixtures (SSH / MstscAx) from racing with a still-shutting-down
+        // NexusRDM.exe for foreground focus and the WinUI dispatcher.
+        if (App is not null)
+        {
+            int pid = App.ProcessId;
+            try { App.Kill(); } catch { /* may already be exiting */ }
+            try { Process.GetProcessById(pid)?.WaitForExit(5000); } catch { /* gone */ }
+        }
         Automation?.Dispose();
         App?.Dispose();
     }

@@ -7,14 +7,17 @@
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch">
 
-    <Grid RowDefinitions="30,*,22">
+    <Grid x:Name="RootGrid" RowDefinitions="30,*,22"
+          HorizontalAlignment="Stretch"
+          VerticalAlignment="Stretch"
+          MinHeight="400">
 
         <!-- Session toolbar -->
         <Border Grid.Row="0"
                 Background="{StaticResource NxBg1}"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" Margin="10,0">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0">
                 <Ellipse Grid.Column="0" Width="7" Height="7"
                          Fill="{StaticResource NxRdp}"
                          VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -22,7 +25,56 @@
                            FontSize="12"
                            Foreground="{StaticResource NxTx2}"
                            VerticalAlignment="Center" />
-                <Button Grid.Column="3"
+                <!-- SmartSizing checkbox: when checked, the remote desktop
+                     scales to fit the host window. When unchecked, the
+                     OCX renders at its negotiated resolution and you get
+                     scrollbars if it's larger than the host. -->
+                <CheckBox Grid.Column="3"
+                          IsChecked="{x:Bind ViewModel.SmartSizing, Mode=TwoWay}"
+                          Content="Fit to window"
+                          ToolTipService.ToolTip="When unchecked the remote desktop renders at its native resolution (with scrollbars)."
+                          FontSize="11"
+                          Foreground="{StaticResource NxTx2}"
+                          VerticalAlignment="Center"
+                          Margin="0,0,10,0" />
+                <!-- Resolution dropdown: live-resizes the remote session via
+                     IMsRdpClient9.UpdateSessionDisplaySettings without
+                     reconnecting. Empty by default so the initial
+                     negotiated size (DesktopWidth/Height) wins. -->
+                <ComboBox Grid.Column="4"
+                          ItemsSource="{x:Bind ViewModel.Resolutions}"
+                          SelectedItem="{x:Bind ViewModel.SelectedResolution, Mode=TwoWay}"
+                          PlaceholderText="Resolution"
+                          ToolTipService.ToolTip="Renegotiate the remote session resolution"
+                          FontSize="11"
+                          MinWidth="120"
+                          VerticalAlignment="Center"
+                          Margin="0,0,6,0" />
+                <Button Grid.Column="5"
+                        Click="FullScreen_Click"
+                        Background="{StaticResource NxBg2}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8,2"
+                        FontSize="11"
+                        Foreground="{StaticResource NxTx2}"
+                        ToolTipService.ToolTip="Full screen (Ctrl+Alt+Break to exit)"
+                        Content="Full screen"
+                        Margin="0,0,6,0" />
+                <Button Grid.Column="6"
+                        Click="PopOut_Click"
+                        Background="{StaticResource NxBg2}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8,2"
+                        FontSize="11"
+                        Foreground="{StaticResource NxTx2}"
+                        ToolTipService.ToolTip="Detach into its own resizable window"
+                        Content="Pop out"
+                        Margin="0,0,6,0" />
+                <Button Grid.Column="7"
                         Click="SendCtrlAltDel_Click"
                         Background="{StaticResource NxBg2}"
                         BorderBrush="{StaticResource NxBrd}"
@@ -33,7 +85,7 @@
                         Foreground="{StaticResource NxTx2}"
                         Content="Ctrl+Alt+Del"
                         Margin="0,0,6,0" />
-                <Button Grid.Column="4"
+                <Button Grid.Column="8"
                         Command="{x:Bind ViewModel.DisconnectCommand}"
                         Background="{StaticResource NxBg2}"
                         BorderBrush="{StaticResource NxBrd}"
@@ -46,18 +98,20 @@
             </Grid>
         </Border>
 
-        <!-- RDP HWND host — black panel, mstsc reparents on top of it.
-             The status overlay sits underneath so it's visible during the
-             1.5s mstsc spin-up and also remains as a fallback if reparenting
-             fails (mstsc Phase 1 is brittle — see RdpSession.cs). -->
+        <!-- Follow-the-window tab body: the embedded mstscax form is a
+             top-level window pinned over RdpHostPanel's screen rect by a
+             50 ms poll in code-behind. RdpHostPanel itself is just a
+             placeholder so XAML knows where the form should sit. The
+             status overlay only shows while IsConnecting flips. -->
         <Grid Grid.Row="1">
             <Border x:Name="RdpHostPanel"
-                    Background="#000000"
+                    Background="#0F0F12"
                     SizeChanged="RdpHostPanel_SizeChanged" />
             <StackPanel HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Spacing="10"
-                        IsHitTestVisible="False">
+                        IsHitTestVisible="False"
+                        Visibility="{x:Bind ViewModel.IsConnecting, Mode=OneWay}">
                 <ProgressRing IsActive="{x:Bind ViewModel.IsConnecting, Mode=OneWay}"
                               Width="28" Height="28"
                               Foreground="{StaticResource NxAccent}" />
@@ -65,12 +119,6 @@
                            FontSize="13"
                            Foreground="{StaticResource NxTx2}"
                            HorizontalAlignment="Center" />
-                <TextBlock Text="If the desktop doesn't appear here, look for the Remote Desktop window in the taskbar."
-                           FontSize="11"
-                           Foreground="{StaticResource NxTx3}"
-                           TextWrapping="Wrap"
-                           MaxWidth="360"
-                           TextAlignment="Center" />
             </StackPanel>
         </Grid>
 

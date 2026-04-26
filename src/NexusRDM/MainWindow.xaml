@@ -74,11 +74,11 @@
 
                     <Border Height="1" Background="{StaticResource NxBrd}" Margin="8,4" />
 
-                    <!-- Settings (bottom) -->
+                    <!-- Settings -->
                     <Button x:Name="BtnNavSettings"
                             Click="BtnNavSettings_Click"
                             Width="36" Height="36"
-                            Margin="4,2,4,4"
+                            Margin="4,2,4,2"
                             Padding="0"
                             Background="Transparent"
                             BorderThickness="0"
@@ -87,6 +87,32 @@
                         <FontIcon Glyph="&#xE713;"
                                   FontSize="15"
                                   Foreground="{StaticResource NxTx3}" />
+                    </Button>
+
+                    <!-- Copy XAML visual tree (diagnostic). Sits in the
+                         sidebar so clicking it doesn't change which view
+                         is active — the dump captures the current tree as
+                         the user is seeing it. -->
+                    <Button x:Name="BtnCopyVisualTree"
+                            Click="BtnCopyVisualTree_Click"
+                            Width="36" Height="36"
+                            Margin="4,2,4,4"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Copy visual tree (clipboard)">
+                        <FontIcon Glyph="&#xE8C8;"
+                                  FontSize="15"
+                                  Foreground="{StaticResource NxTx3}" />
+                        <Button.Flyout>
+                            <Flyout x:Name="CopyVisualTreeFlyout">
+                                <TextBlock x:Name="CopyVisualTreeStatus"
+                                           Text=""
+                                           FontSize="12"
+                                           Foreground="{StaticResource NxTx1}" />
+                            </Flyout>
+                        </Button.Flyout>
                     </Button>
                 </StackPanel>
             </Border>

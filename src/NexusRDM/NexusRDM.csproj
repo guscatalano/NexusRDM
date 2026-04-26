@@ -35,6 +35,7 @@
   <ItemGroup>
     <ProjectReference Include="..\NexusRDM.Core\NexusRDM.Core.csproj" />
     <ProjectReference Include="..\NexusRDM.Data\NexusRDM.Data.csproj" />
+    <ProjectReference Include="..\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj" />
   </ItemGroup>
 
 </Project>

@@ -38,8 +38,24 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         SetTitleBarColors();
         ConnectionsPane.ConnectRequested += OnConnectRequested;
+        // RDP sessions own a top-level Win32 form pinned over their host
+        // tab. WinUI 3 TabView doesn't unload the inactive tab's content
+        // reliably (so RdpSessionView.Unloaded isn't the right signal),
+        // but SelectionChanged fires every time the selected tab changes.
+        // Hide every RDP form except the one whose tab is now selected.
+        SessionTabs.SelectionChanged += OnSessionTabsSelectionChanged;
 
         AddWelcomeTab();
+    }
+
+    private void OnSessionTabsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var selected = SessionTabs.SelectedItem as TabViewItem;
+        foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
+        {
+            if (item.Tag is OpenSession os && os.RdpSession is { } rdp)
+                rdp.SetVisible(ReferenceEquals(item, selected));
+        }
     }
 
     private void SetTitleBarColors()
@@ -193,6 +209,25 @@ public sealed partial class MainWindow : Window
     private void BtnNavConn_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Connections);
     private void BtnNavAudit_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Audit);
     private void BtnNavSettings_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Settings);
+
+    private void BtnCopyVisualTree_Click(object sender, RoutedEventArgs e)
+    {
+        // Dump the current visual tree to the clipboard for diagnostic use.
+        // The Window itself isn't a UIElement; its Content is the root we
+        // want to walk. Lives in the sidebar (not on the Settings page) so
+        // clicking it doesn't navigate the user away and mutate the very
+        // tree they're trying to capture.
+        var tree = NexusRDM.Services.VisualTreeDump.Build(Content as DependencyObject);
+        var rdp  = NexusRDM.Services.VisualTreeDump.DumpRdpWindows();
+        var dump = tree + Environment.NewLine + rdp;
+
+        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        pkg.SetText(dump);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+
+        CopyVisualTreeStatus.Text = $"Copied {dump.Length:N0} chars to clipboard.";
+        CopyVisualTreeFlyout.ShowAt(BtnCopyVisualTree);
+    }
 
     private void ShowNav(NavSection nav)
     {

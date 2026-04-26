@@ -13,6 +13,7 @@ namespace NexusRDM.Tests.UiSmoke;
 /// types a key and verifies the byte arrived at the SSH server. Proves the
 /// keyboard → ViewModel → ShellStream pipeline works headed.
 /// </summary>
+[Collection("UI smoke")]
 public sealed class SshTypingSmokeTests : IClassFixture<SshSessionFixture>
 {
     private readonly SshSessionFixture _fx;
@@ -23,7 +24,11 @@ public sealed class SshTypingSmokeTests : IClassFixture<SshSessionFixture>
     {
         Skip.IfNot(_fx.Available, "NexusRDM.exe not built — run `dotnet build src/NexusRDM` first.");
         var win = _fx.MainWindow!;
+        // Explicit Win32 foregrounding — UIA Focus() alone isn't enough when a
+        // prior UI smoke fixture left another window in the foreground.
+        BringToForeground(win);
         win.Focus();
+        Thread.Sleep(250);
 
         // 1. Wait for the connection to populate, then invoke it. Prefer the
         // actual TreeViewItem (which raises ItemInvoked) over its inner
@@ -183,20 +188,24 @@ public sealed class SshTypingSmokeTests : IClassFixture<SshSessionFixture>
 
     private static AutomationElement? TryInvokeAndWaitForConnectButton(Window win, AutomationElement node)
     {
+        // Be patient — when multiple UI smoke fixtures launch back-to-back,
+        // the system is busy and the credential dialog can take a few
+        // seconds to materialise after each invocation strategy.
+
         // Strategy 1: single click. WinUI3 TreeView typically raises ItemInvoked here.
         node.Click();
-        var btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(3));
+        var btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(6));
         if (btn is not null) return btn;
 
         // Strategy 2: double-click. Some configurations require it.
         node.DoubleClick();
-        btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(3));
+        btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(6));
         if (btn is not null) return btn;
 
         // Strategy 3: keyboard invoke (Focus + Enter).
         node.Focus();
         Keyboard.Press(FlaUI.Core.WindowsAPI.VirtualKeyShort.RETURN);
-        btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(3));
+        btn = WaitFor(() => FindConnectButton(win), TimeSpan.FromSeconds(6));
         return btn;
     }
 
