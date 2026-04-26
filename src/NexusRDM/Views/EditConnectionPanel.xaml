@@ -122,15 +122,38 @@
                                       ItemsSource="{x:Bind ViewModel.SshAuthOptions}"
                                       DisplayMemberPath="Display"
                                       SelectedItem="{x:Bind ViewModel.SelectedSshAuthOption, Mode=TwoWay}" />
-                            <PasswordBox Header="Password"
-                                         Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}, ConverterParameter=Invert}" />
+                            <!-- Password — masked PasswordBox + plaintext TextBox toggle.
+                                 Both bound to ViewModel.Password so the value
+                                 stays in sync regardless of which is visible. -->
+                            <Grid Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}, ConverterParameter=Invert}">
+                                <PasswordBox Header="Password"
+                                             Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Visibility="{x:Bind ViewModel.PasswordBoxVisibility, Mode=OneWay}" />
+                                <TextBox Header="Password"
+                                         Text="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         FontFamily="Cascadia Code, Consolas, Courier New"
+                                         Visibility="{x:Bind ViewModel.PasswordTextBoxVisibility, Mode=OneWay}" />
+                            </Grid>
+                            <CheckBox Content="Show password"
+                                      IsChecked="{x:Bind ViewModel.ShowPassword, Mode=TwoWay}"
+                                      Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}, ConverterParameter=Invert}" />
                             <TextBox Header="Private key path (.pem / .ppk)"
                                      PlaceholderText="C:\Users\you\.ssh\id_rsa"
                                      Text="{x:Bind ViewModel.PrivateKeyPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      Visibility="{x:Bind ViewModel.SshAuthMethod, Mode=OneWay, Converter={StaticResource PrivKeyVisibilityConverter}}" />
-                            <CheckBox Content="Save to Windows Credential Manager"
-                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
+
+                            <!-- Credential storage status + save toggle.
+                                 The status line tells the user whether a password
+                                 is currently in the Windows Credential Manager;
+                                 the checkbox controls whether saving happens on
+                                 the next Save click. -->
+                            <TextBlock Text="{x:Bind ViewModel.CredentialStatusText, Mode=OneWay}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource NxTx2}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0" />
+                            <CheckBox Content="Don't save — prompt at connect time"
+                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}" />
                             <NumberBox Header="Keep-alive interval (seconds)" Minimum="0" Maximum="300"
                                        SpinButtonPlacementMode="Compact"
                                        Value="{x:Bind ViewModel.KeepAliveSeconds, Mode=TwoWay}" />
@@ -147,10 +170,24 @@
                                      Text="{x:Bind ViewModel.RdpDomain, Mode=TwoWay}" />
                             <TextBox Header="Username"
                                      Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                            <PasswordBox Header="Password"
-                                         Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                            <CheckBox Content="Save to Windows Credential Manager"
-                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay}" />
+                            <Grid>
+                                <PasswordBox Header="Password"
+                                             Password="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Visibility="{x:Bind ViewModel.PasswordBoxVisibility, Mode=OneWay}" />
+                                <TextBox Header="Password"
+                                         Text="{x:Bind ViewModel.Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         FontFamily="Cascadia Code, Consolas, Courier New"
+                                         Visibility="{x:Bind ViewModel.PasswordTextBoxVisibility, Mode=OneWay}" />
+                            </Grid>
+                            <CheckBox Content="Show password"
+                                      IsChecked="{x:Bind ViewModel.ShowPassword, Mode=TwoWay}" />
+                            <TextBlock Text="{x:Bind ViewModel.CredentialStatusText, Mode=OneWay}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource NxTx2}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0" />
+                            <CheckBox Content="Don't save — prompt at connect time"
+                                      IsChecked="{x:Bind ViewModel.SaveCredential, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}" />
 
                             <TextBlock Text="DISPLAY"
                                        FontSize="10" FontWeight="SemiBold"

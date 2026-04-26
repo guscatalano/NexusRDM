@@ -31,8 +31,38 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
     [ObservableProperty] private string  _username       = string.Empty;
     [ObservableProperty] private string  _password       = string.Empty;
-    [ObservableProperty] private bool    _saveCredential = true;
+
+    /// <summary>True (default) → password gets persisted to Windows Credential
+    /// Manager on Save. The editor exposes only the inverse opt-out toggle
+    /// ("Don't save — prompt at connect time") to keep the common path
+    /// frictionless; flip via that checkbox.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CredentialStatusText))]
+    private bool _saveCredential = true;
+
     [ObservableProperty] private string? _credentialKey;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PasswordBoxVisibility))]
+    [NotifyPropertyChangedFor(nameof(PasswordTextBoxVisibility))]
+    private bool _showPassword;
+
+    /// <summary>True iff the existing profile already has credentials in the
+    /// Windows Credential Manager. Drives the "currently saved" status line
+    /// in the editor so the user knows whether a password is on file.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CredentialStatusText))]
+    private bool _credentialSaved;
+
+    public Visibility PasswordBoxVisibility     => ShowPassword ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility PasswordTextBoxVisibility => ShowPassword ? Visibility.Visible    : Visibility.Collapsed;
+
+    public string CredentialStatusText => SaveCredential
+        ? (CredentialSaved
+            ? "Password is saved in Windows Credential Manager."
+            : "Password will be saved to Windows Credential Manager.")
+        : "Nexus won't save the password — it will prompt at connect time.";
+
 
     [ObservableProperty] private SshAuthMethod _sshAuthMethod    = SshAuthMethod.Password;
     [ObservableProperty] private string        _privateKeyPath   = string.Empty;
@@ -111,20 +141,24 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         GroupId       = existing.GroupId;
         CredentialKey = existing.CredentialKey;
 
-        // Reflect whether a credential is currently in the vault rather than
-        // always defaulting to true.
+        // SaveCredential defaults to true (the common case). Only opt out
+        // when the existing profile is explicitly configured for prompts —
+        // i.e. it has no key persisted, indicating "no saved credential".
         SaveCredential = !string.IsNullOrEmpty(existing.CredentialKey);
 
         // Hydrate username/password from the vault if a key was previously saved,
         // so the user can see (and tweak) what was stored rather than re-typing.
+        // Also flips CredentialSaved iff a vault entry actually exists, which
+        // drives the "currently saved" status line in the editor.
         if (vault is not null && !string.IsNullOrEmpty(CredentialKey))
         {
             try
             {
                 if (vault.Load(CredentialKey) is { } cred)
                 {
-                    Username = cred.Username;
-                    Password = cred.Password;
+                    Username        = cred.Username;
+                    Password        = cred.Password;
+                    CredentialSaved = true;
                 }
             }
             catch { /* missing/corrupt entry — leave fields empty, user can re-enter */ }
