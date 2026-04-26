@@ -41,9 +41,25 @@ public sealed class SshSession : ISshSession
 
     public async Task SendAsync(byte[] data, CancellationToken ct = default)
     {
-        if (_shell is null) return;
-        await _shell.WriteAsync(data, 0, data.Length, ct);
-        await _shell.FlushAsync(ct);
+        // The shell stream may be torn down by Disconnect/Dispose between the
+        // time the user pressed a key and when this runs. Treat that as a
+        // silent no-op rather than crashing the UI thread.
+        if (_disposed || _shell is null || !_client.IsConnected) return;
+
+        // SSH.NET's ShellStream overrides synchronous Write/Flush but inherits
+        // the base Stream.WriteAsync/FlushAsync — those defaults deadlock here,
+        // so we explicitly bounce to the sync API on the thread pool.
+        var shell = _shell;
+        try
+        {
+            await Task.Run(() =>
+            {
+                shell.Write(data, 0, data.Length);
+                shell.Flush();
+            }, ct);
+        }
+        catch (ObjectDisposedException) { /* stream torn down mid-write */ }
+        catch (System.IO.IOException)   { /* connection dropped */ }
     }
 
     public Task ResizeAsync(int columns, int rows, CancellationToken ct = default)
@@ -75,7 +91,11 @@ public sealed class SshSession : ISshSession
         {
             while (!ct.IsCancellationRequested && _shell is not null)
             {
-                int read = await _shell.ReadAsync(buf, 0, buf.Length, ct);
+                var shell = _shell;
+                // Same async-fallback hazard as SendAsync: ShellStream doesn't
+                // override ReadAsync, and the inherited default deadlocks under
+                // load. Use the synchronous Read on the thread pool instead.
+                int read = await Task.Run(() => shell.Read(buf, 0, buf.Length), ct);
                 if (read > 0)
                 {
                     var chunk = new byte[read];

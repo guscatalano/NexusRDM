@@ -19,7 +19,9 @@ public partial class App : Application
     public static MainWindow        MainWin  { get; private set; } = null!;
 
     private static string AppDataDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NexusRDM");
+        Environment.GetEnvironmentVariable("NEXUSRDM_DATA_DIR") is { Length: > 0 } overrideDir
+            ? overrideDir
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NexusRDM");
 
     private static string DbPath => Path.Combine(AppDataDir, "connections.db");
 
