@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
@@ -100,18 +101,46 @@ public sealed class SshTypingSmokeTests : IClassFixture<SshSessionFixture>
         var beforeLen = _fx.Server.ReceivedBytes.Length;
         Keyboard.Type("z");
 
-        // 5. Wait for 'z' to land on the server side.
-        var arrived = WaitForCondition(() =>
-        {
-            var bytes = _fx.Server.ReceivedBytes;
-            return bytes.Length > beforeLen && Array.IndexOf(bytes, (byte)'z', beforeLen) >= 0;
-        }, TimeSpan.FromSeconds(10));
-
-        Assert.True(arrived,
+        // 5. Wait for 'z' to land on the server side — exactly one byte. The
+        // SshSessionView and TerminalControl both subscribe to keyboard input,
+        // so a regression on the dedup logic shows up as duplicate bytes
+        // ("zz" instead of "z"). Asserting an exact match catches that.
+        var oneByteArrived = WaitForCondition(
+            () => _fx.Server.ReceivedBytes.Length >= beforeLen + 1,
+            TimeSpan.FromSeconds(10));
+        Assert.True(oneByteArrived,
             $"Server never received 'z' from the UI. Total received so far: " +
             $"{_fx.Server.ReceivedBytes.Length} bytes ('{Sanitize(_fx.Server.ReceivedText)}').\n" +
             $"App status: '{TryReadStatusMessage(win)}'\n" +
             _fx.DumpAppDiagnostics());
+        // Settle: give any duplicate sends a chance to land before we measure.
+        Thread.Sleep(300);
+        var afterZ = _fx.Server.ReceivedBytes.Length - beforeLen;
+        Assert.True(afterZ == 1,
+            $"Expected exactly 1 byte for 'z' keystroke, got {afterZ}. " +
+            $"Likely cause: SshSessionView + TerminalControl both forwarding the same event.");
+
+        // 6. Click around inside the SshSessionView — toolbar status box, then
+        // back into the terminal — and type "abc". Each keystroke must produce
+        // exactly one byte regardless of focus shuffling. This is the
+        // regression test for "clicking re-subscribes and 'a' types as 'aa'".
+        var checkpoint = _fx.Server.ReceivedBytes.Length;
+        var statusBox = win.FindAllDescendants(c => c.ByControlType(ControlType.Edit))
+            .FirstOrDefault(e => (e.AsTextBox().Text ?? "").StartsWith("Connected"));
+        statusBox?.Click();
+        Thread.Sleep(150);
+        ClickIntoTerminalArea(win);
+        Thread.Sleep(200);
+
+        Keyboard.Type("abc");
+        var threeArrived = WaitForCondition(
+            () => _fx.Server.ReceivedBytes.Length >= checkpoint + 3,
+            TimeSpan.FromSeconds(5));
+        Assert.True(threeArrived,
+            $"Only got {_fx.Server.ReceivedBytes.Length - checkpoint} bytes after typing 'abc'.");
+        Thread.Sleep(300);  // catch any late duplicates
+        var typed = _fx.Server.ReceivedBytes.Skip(checkpoint).ToArray();
+        Assert.Equal("abc", Encoding.UTF8.GetString(typed));
     }
 
     private static string TryReadStatusMessage(Window win)

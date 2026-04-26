@@ -73,6 +73,11 @@ public sealed partial class SshSessionView : UserControl
 
     private async void OnAnyKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // handledEventsToo:true on the AddHandler means we *also* see events
+        // that the TerminalControl already handled — but it sent the bytes,
+        // so we must not send them a second time. Without this guard, every
+        // keystroke duplicates ("a" → "aa") whenever the terminal has focus.
+        if (e.Handled) return;
         var bytes = Terminal.TranslateSpecialKeyForView(e.Key);
         if (bytes is { Length: > 0 })
         {
@@ -83,6 +88,7 @@ public sealed partial class SshSessionView : UserControl
 
     private async void OnAnyCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs e)
     {
+        if (e.Handled) return;  // see OnAnyKeyDown — same dedup rule
         if (e.Character < 0x20 || e.Character == 0x7F) return;
         await ViewModel.SendInputAsync(Encoding.UTF8.GetBytes(new[] { e.Character }));
         e.Handled = true;
