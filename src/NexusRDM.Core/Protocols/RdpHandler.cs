@@ -35,7 +35,7 @@ public sealed class RdpSession : IRdpSession
         _username    = username;
     }
 
-    public void Connect(nint hwndParent, int width, int height)
+    public void Connect(nint hwndParent, int x, int y, int width, int height)
     {
         // Write a temporary .rdp file so we can pass all settings to mstsc
         var rdpPath = Path.Combine(Path.GetTempPath(), $"nexus_{ConnectionId:N}.rdp");
@@ -56,7 +56,7 @@ public sealed class RdpSession : IRdpSession
                 await Task.Delay(1500);   // give mstsc time to paint its window
                 _mstscHwnd = FindMstscWindow(_proc.Id);
                 if (_mstscHwnd != 0 && hwndParent != 0)
-                    ReparentWindow(_mstscHwnd, hwndParent, width, height);
+                    ReparentWindow(_mstscHwnd, hwndParent, x, y, width, height);
                 Connected?.Invoke(this, EventArgs.Empty);
 
                 await _proc.WaitForExitAsync();
@@ -78,11 +78,11 @@ public sealed class RdpSession : IRdpSession
         if (_proc is { HasExited: false }) _proc.Kill();
     }
 
-    public void Resize(int width, int height)
+    public void Resize(int x, int y, int width, int height)
     {
         if (_mstscHwnd != 0)
-            NativeMethods.SetWindowPos(_mstscHwnd, 0, 0, 0, width, height,
-                NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOMOVE);
+            NativeMethods.SetWindowPos(_mstscHwnd, 0, x, y, width, height,
+                NativeMethods.SWP_NOZORDER);
     }
 
     public void SendCtrlAltDel()
@@ -128,7 +128,7 @@ public sealed class RdpSession : IRdpSession
         return found;
     }
 
-    private static void ReparentWindow(nint child, nint parent, int w, int h)
+    private static void ReparentWindow(nint child, nint parent, int x, int y, int w, int h)
     {
         // Remove title bar / border so mstsc fills our panel
         int style = NativeMethods.GetWindowLong(child, NativeMethods.GWL_STYLE);
@@ -136,7 +136,7 @@ public sealed class RdpSession : IRdpSession
         NativeMethods.SetWindowLong(child, NativeMethods.GWL_STYLE, style);
 
         NativeMethods.SetParent(child, parent);
-        NativeMethods.SetWindowPos(child, 0, 0, 0, w, h,
+        NativeMethods.SetWindowPos(child, 0, x, y, w, h,
             NativeMethods.SWP_NOZORDER | NativeMethods.SWP_FRAMECHANGED);
     }
 }

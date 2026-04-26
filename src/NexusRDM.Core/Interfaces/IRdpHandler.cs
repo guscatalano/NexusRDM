@@ -15,9 +15,14 @@ public interface IRdpSession : IDisposable
     event EventHandler<string>? Disconnected;   // arg = reason string
     event EventHandler<string>? FatalError;
 
-    void Connect(nint hwndParent, int width, int height);
+    /// <summary>Reparent the RDP child window into <paramref name="hwndParent"/>
+    /// at offset (<paramref name="x"/>,<paramref name="y"/>) within the parent's
+    /// client area. The position matters because the child is reparented into
+    /// the *window* HWND, not into the XAML host element directly, so we have
+    /// to translate the panel's bounds into window coordinates ourselves.</summary>
+    void Connect(nint hwndParent, int x, int y, int width, int height);
     void Disconnect();
-    void Resize(int width, int height);
+    void Resize(int x, int y, int width, int height);
     void SendCtrlAltDel();
 }
 

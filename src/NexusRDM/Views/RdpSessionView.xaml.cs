@@ -25,20 +25,38 @@ public sealed partial class RdpSessionView : UserControl
         if (_connected) return;
         _connected = true;
 
-        // Get the HWND of our host panel via the window interop helper.
-        // The mstsc child window will be reparented into this HWND.
-        var hwnd = GetPanelHwnd();
-        var w    = (int)RdpHostPanel.ActualWidth;
-        var h    = (int)RdpHostPanel.ActualHeight;
-
+        var hwnd        = GetPanelHwnd();
+        var (x, y, w, h) = GetPanelBoundsInWindow();
         if (hwnd != 0 && w > 0 && h > 0)
-            ViewModel.StartConnection(hwnd, w, h);
+            ViewModel.StartConnection(hwnd, x, y, w, h);
     }
 
     private void RdpHostPanel_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!_connected) return;
-        ViewModel.Resize((int)e.NewSize.Width, (int)e.NewSize.Height);
+        var (x, y, w, h) = GetPanelBoundsInWindow();
+        ViewModel.Resize(x, y, w, h);
+    }
+
+    /// <summary>Convert RdpHostPanel's bounds to coordinates inside the main
+    /// window's client area — the mstsc child gets reparented into the window
+    /// HWND, so (0,0) of SetWindowPos is the window's top-left, not the
+    /// panel's. Without this translation mstsc lands over the title bar /
+    /// sidebar and the user sees a black panel and "nothing happening".</summary>
+    private (int X, int Y, int W, int H) GetPanelBoundsInWindow()
+    {
+        try
+        {
+            var rootContent = App.MainWin.Content as UIElement ?? RdpHostPanel;
+            var transform   = RdpHostPanel.TransformToVisual(rootContent);
+            var topLeft     = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
+            return ((int)topLeft.X, (int)topLeft.Y,
+                    (int)RdpHostPanel.ActualWidth, (int)RdpHostPanel.ActualHeight);
+        }
+        catch
+        {
+            return (0, 0, (int)RdpHostPanel.ActualWidth, (int)RdpHostPanel.ActualHeight);
+        }
     }
 
     private void SendCtrlAltDel_Click(object sender, RoutedEventArgs e) =>

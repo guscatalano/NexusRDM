@@ -4,8 +4,13 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:NexusRDM.Controls"
-    Background="{StaticResource NxBg0}">
+    Background="{StaticResource NxBg0}"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch">
 
+    <!-- HorizontalContentAlignment/VerticalContentAlignment must be Stretch:
+         WinUI 3 ContentControl defaults them to Center, which causes the
+         inner Grid to render at its DesiredSize (~half the tab area). -->
     <Grid RowDefinitions="30,*,22"
           HorizontalAlignment="Stretch"
           VerticalAlignment="Stretch"
@@ -66,8 +71,7 @@
                                   FontSize="13"
                                   Background="#0d0d0e"
                                   HorizontalAlignment="Stretch"
-                                  VerticalAlignment="Stretch"
-                                  MinHeight="300" />
+                                  VerticalAlignment="Stretch" />
 
         <!-- Status bar -->
         <Border Grid.Row="2"

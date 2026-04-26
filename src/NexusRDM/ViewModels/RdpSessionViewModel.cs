@@ -32,10 +32,10 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         _session.FatalError   += (_, msg)    => { IsConnected = false; IsConnecting = false; StatusMessage = $"Error: {msg}"; };
     }
 
-    public void StartConnection(nint hwndParent, int width, int height) =>
-        _session.Connect(hwndParent, width, height);
+    public void StartConnection(nint hwndParent, int x, int y, int width, int height) =>
+        _session.Connect(hwndParent, x, y, width, height);
 
-    public void Resize(int width, int height) => _session.Resize(width, height);
+    public void Resize(int x, int y, int width, int height) => _session.Resize(x, y, width, height);
 
     public void SendCtrlAltDel() => _session.SendCtrlAltDel();
 
