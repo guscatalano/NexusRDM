@@ -18,6 +18,14 @@
     <PackageReference Include="FlaUI.Core" Version="5.0.0" />
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
     <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+    <PackageReference Include="FxSsh" Version="1.3.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\NexusRDM.Core\NexusRDM.Core.csproj" />
+    <ProjectReference Include="..\..\src\NexusRDM.Data\NexusRDM.Data.csproj" />
   </ItemGroup>
 
   <ItemGroup>
