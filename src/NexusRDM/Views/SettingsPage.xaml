@@ -53,19 +53,17 @@
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0">
                             <TextBlock Text="Theme" FontSize="12" Foreground="{StaticResource NxTx1}" />
-                            <TextBlock Text="Color scheme" FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                            <TextBlock Text="Color palette — applied immediately for live preview." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                         <ComboBox Grid.Column="1"
-                                  SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}"
+                                  ItemsSource="{x:Bind ViewModel.Themes}"
+                                  SelectedItem="{x:Bind ViewModel.SelectedTheme, Mode=TwoWay}"
+                                  DisplayMemberPath="DisplayName"
                                   Background="{StaticResource NxBg2}"
                                   BorderBrush="{StaticResource NxBrd}"
                                   Foreground="{StaticResource NxTx1}"
                                   FontSize="12"
-                                  MinWidth="120">
-                            <ComboBoxItem Content="Dark" />
-                            <ComboBoxItem Content="Light" />
-                            <ComboBoxItem Content="System" />
-                        </ComboBox>
+                                  MinWidth="180" />
                     </Grid>
                 </Border>
 
