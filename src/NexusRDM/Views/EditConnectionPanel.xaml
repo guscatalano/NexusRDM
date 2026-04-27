@@ -52,7 +52,7 @@
                 <ScrollViewer Grid.Row="1"
                               VerticalScrollBarVisibility="Auto"
                               Padding="20,16,20,16">
-                    <StackPanel Spacing="6">
+                    <StackPanel x:Name="BodyStack" Spacing="6">
 
                         <!-- Error banner: selectable so the user can copy the message. -->
                         <Border Visibility="{x:Bind ViewModel.ErrorVisibility, Mode=OneWay}"
@@ -203,26 +203,136 @@
                                            SpinButtonPlacementMode="Compact"
                                            Value="{x:Bind ViewModel.RdpHeight, Mode=TwoWay}" />
                             </Grid>
-                            <CheckBox Content="Full screen"           IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
-                            <CheckBox Content="Redirect clipboard"    IsChecked="{x:Bind ViewModel.RdpClipboard,  Mode=TwoWay}" />
-                            <CheckBox Content="Redirect local drives" IsChecked="{x:Bind ViewModel.RdpDrives,     Mode=TwoWay}" />
+                            <CheckBox Content="Full screen" IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
+                            <ComboBox Header="Color depth" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.RdpColorDepthOptions}"
+                                      DisplayMemberPath="Display"
+                                      SelectedItem="{x:Bind ViewModel.SelectedRdpColorDepthOption, Mode=TwoWay}" />
+
+                            <TextBlock Text="REDIRECTIONS"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,12,0,2" />
+                            <CheckBox Content="Clipboard"        IsChecked="{x:Bind ViewModel.RdpClipboard,  Mode=TwoWay}" />
+                            <CheckBox Content="Local drives"     IsChecked="{x:Bind ViewModel.RdpDrives,     Mode=TwoWay}" />
+                            <CheckBox Content="Printers"         IsChecked="{x:Bind ViewModel.RdpPrinters,   Mode=TwoWay}" />
+                            <CheckBox Content="Smart cards"      IsChecked="{x:Bind ViewModel.RdpSmartCards, Mode=TwoWay}" />
+                            <CheckBox Content="Serial / COM ports" IsChecked="{x:Bind ViewModel.RdpPorts,    Mode=TwoWay}" />
+                            <CheckBox Content="Plug-and-play devices (cameras, phones)" IsChecked="{x:Bind ViewModel.RdpDevices,    Mode=TwoWay}" />
+                            <CheckBox Content="Point-of-sale devices" IsChecked="{x:Bind ViewModel.RdpPosDevices, Mode=TwoWay}" />
+
+                            <TextBlock Text="AUDIO"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,12,0,2" />
+                            <ComboBox Header="Playback" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.RdpAudioOptions}"
+                                      DisplayMemberPath="Display"
+                                      SelectedItem="{x:Bind ViewModel.SelectedRdpAudioOption, Mode=TwoWay}" />
+                            <CheckBox Content="Redirect microphone" IsChecked="{x:Bind ViewModel.RdpAudioCapture, Mode=TwoWay}" />
+
+                            <TextBlock Text="GATEWAY"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,12,0,2" />
+                            <ComboBox Header="Usage" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.RdpGatewayUsageOptions}"
+                                      DisplayMemberPath="Display"
+                                      SelectedItem="{x:Bind ViewModel.SelectedRdpGatewayUsageOption, Mode=TwoWay}" />
+                            <TextBox Header="Gateway server"   PlaceholderText="rdgw.example.com"
+                                     Text="{x:Bind ViewModel.RdpGatewayServer,   Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Header="Gateway username" PlaceholderText="(blank to use session creds)"
+                                     Text="{x:Bind ViewModel.RdpGatewayUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Header="Gateway domain"
+                                     Text="{x:Bind ViewModel.RdpGatewayDomain,   Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <!-- Advanced — every remaining knob the OCX
+                                 surfaces. Collapsed by default so the
+                                 panel doesn't intimidate first-time
+                                 users. -->
+                            <Expander Header="Advanced"
+                                      HorizontalAlignment="Stretch"
+                                      HorizontalContentAlignment="Stretch"
+                                      Margin="0,12,0,0">
+                                <StackPanel Spacing="6" Padding="0,4,0,0">
+
+                                    <TextBlock Text="AUTHENTICATION"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource NxTx3}" />
+                                    <ComboBox Header="Server-auth strictness" HorizontalAlignment="Stretch"
+                                              ItemsSource="{x:Bind ViewModel.RdpAuthLevelOptions}"
+                                              DisplayMemberPath="Display"
+                                              SelectedItem="{x:Bind ViewModel.SelectedRdpAuthLevelOption, Mode=TwoWay}" />
+                                    <CheckBox Content="Enable Network-Level Auth (CredSSP)" IsChecked="{x:Bind ViewModel.RdpEnableCredSsp,   Mode=TwoWay}" />
+                                    <CheckBox Content="Always prompt for credentials"        IsChecked="{x:Bind ViewModel.RdpPromptForCreds,  Mode=TwoWay}" />
+                                    <CheckBox Content="Connect to admin / console session"   IsChecked="{x:Bind ViewModel.RdpAdminConsole,    Mode=TwoWay}" />
+
+                                    <TextBlock Text="PERFORMANCE"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource NxTx3}"
+                                               Margin="0,8,0,2" />
+                                    <ComboBox Header="Network connection type" HorizontalAlignment="Stretch"
+                                              ItemsSource="{x:Bind ViewModel.RdpNetworkOptions}"
+                                              DisplayMemberPath="Display"
+                                              SelectedItem="{x:Bind ViewModel.SelectedRdpNetworkOption, Mode=TwoWay}" />
+                                    <CheckBox Content="Show desktop background"   IsChecked="{x:Bind ViewModel.RdpDesktopBackground,  Mode=TwoWay}" />
+                                    <CheckBox Content="Visual styles (themes)"    IsChecked="{x:Bind ViewModel.RdpVisualStyles,       Mode=TwoWay}" />
+                                    <CheckBox Content="Font smoothing"            IsChecked="{x:Bind ViewModel.RdpFontSmoothing,      Mode=TwoWay}" />
+                                    <CheckBox Content="Menu / window animations" IsChecked="{x:Bind ViewModel.RdpMenuAnimations,     Mode=TwoWay}" />
+                                    <CheckBox Content="Show window contents while dragging" IsChecked="{x:Bind ViewModel.RdpWindowDrag, Mode=TwoWay}" />
+                                    <CheckBox Content="Desktop composition (Aero)" IsChecked="{x:Bind ViewModel.RdpDesktopComposition, Mode=TwoWay}" />
+                                    <CheckBox Content="Persistent bitmap cache"    IsChecked="{x:Bind ViewModel.RdpBitmapCaching,      Mode=TwoWay}" />
+
+                                    <TextBlock Text="KEYBOARD"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource NxTx3}"
+                                               Margin="0,8,0,2" />
+                                    <ComboBox Header="Windows key combos go to" HorizontalAlignment="Stretch"
+                                              ItemsSource="{x:Bind ViewModel.RdpKeyboardHookOptions}"
+                                              DisplayMemberPath="Display"
+                                              SelectedItem="{x:Bind ViewModel.SelectedRdpKeyboardHookOption, Mode=TwoWay}" />
+
+                                    <TextBlock Text="CONNECTION BAR"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource NxTx3}"
+                                               Margin="0,8,0,2" />
+                                    <CheckBox Content="Show connection bar (full screen)" IsChecked="{x:Bind ViewModel.RdpConnectionBar,    Mode=TwoWay}" />
+                                    <CheckBox Content="Pin connection bar"                IsChecked="{x:Bind ViewModel.RdpPinConnectionBar, Mode=TwoWay}" />
+
+                                    <TextBlock Text="MISC"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{StaticResource NxTx3}"
+                                               Margin="0,8,0,2" />
+                                    <CheckBox Content="Auto-reconnect on transient drop" IsChecked="{x:Bind ViewModel.RdpAutoReconnect, Mode=TwoWay}" />
+                                    <TextBox Header="Load-balance info (broker token)"
+                                             PlaceholderText="tsv://MS Terminal Services Plugin.1.RDPSession"
+                                             Text="{x:Bind ViewModel.RdpLoadBalanceInfo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </Expander>
                         </StackPanel>
 
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- Footer -->
+                <!-- Footer: setting-search box on the left, action buttons on the right. -->
                 <Border Grid.Row="2"
                         Background="{StaticResource NxBg1}"
                         BorderBrush="{StaticResource NxBrd}"
                         BorderThickness="0,1,0,0"
                         Padding="20,12,20,14">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-                        <Button Content="Cancel" Click="OnCancelClick" />
-                        <Button Content="Save"   Click="OnSaveClick"
-                                Style="{StaticResource AccentButtonStyle}"
-                                IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
-                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <TextBox Grid.Column="0"
+                                 x:Name="SearchBox"
+                                 PlaceholderText="Filter settings…"
+                                 TextChanged="OnSearchTextChanged"
+                                 VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <Button Content="Cancel" Click="OnCancelClick" />
+                            <Button Content="Save"   Click="OnSaveClick"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
+                        </StackPanel>
+                    </Grid>
                 </Border>
 
             </Grid>

@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using System.Collections.ObjectModel;
@@ -71,8 +72,24 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     public async Task DeleteConnectionAsync(ConnectionTreeNode? node)
     {
         if (node?.Profile is null) return;
-        await _svc.DeleteAsync(node.Profile.Id);
+        var warning = await _svc.DeleteAsync(node.Profile.Id);
         await LoadAsync();
+
+        // Surface vault-cleanup failures to the user — the DB row is gone
+        // but the credential lingers, and silent log-only is too easy to
+        // miss. Best effort: if MainWin isn't around (tests), skip.
+        if (!string.IsNullOrEmpty(warning) && App.MainWin?.Content is FrameworkElement root)
+        {
+            var dlg = new ContentDialog
+            {
+                Title             = "Credential not removed",
+                Content           = warning,
+                CloseButtonText   = "OK",
+                DefaultButton     = ContentDialogButton.Close,
+                XamlRoot          = root.XamlRoot,
+            };
+            try { await dlg.ShowAsync(); } catch { /* dialog host gone */ }
+        }
     }
 
     [RelayCommand]

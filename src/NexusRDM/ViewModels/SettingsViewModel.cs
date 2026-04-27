@@ -26,7 +26,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>0 = Mstsc (separate process), 1 = MstscAx (in-proc ActiveX),
     /// 2 = FreeRDP (not yet implemented). The order matches the ComboBox in
     /// SettingsPage.xaml — index also matches the underlying enum value.</summary>
-    [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.Mstsc;
+    [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.MstscAx;
 
     /// <summary>Default desktop resolution applied at connect time. Index
     /// matches the SettingsPage ComboBox and the <see cref="RdpDefaultResolution"/>
@@ -38,6 +38,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// confirmation only fires once per top-level close action — closing
     /// the window suppresses per-tab confirmations during teardown.</summary>
     [ObservableProperty] private bool _confirmCloseActive = true;
+
+    /// <summary>When on, surface developer-facing surfaces that are
+    /// usually hidden — currently the "Copy visual tree" sidebar button.
+    /// Off by default; flip it on while debugging UI bugs.</summary>
+    [ObservableProperty] private bool _debugMode = false;
+    partial void OnDebugModeChanged(bool value) => SettingsStore.ApplyDebugMode(value);
 
     /// <summary>Safe for unpackaged apps — Package.Current throws without identity.</summary>
     public string AppVersion
@@ -66,6 +72,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("RdpMode",     out var rm)) RdpModeIndex   = Convert.ToInt32(rm);
         if (s.TryGetValue("RdpRes",      out var rr)) RdpResolutionIndex = Convert.ToInt32(rr);
         if (s.TryGetValue("ConfirmCloseActive", out var cc)) ConfirmCloseActive = Convert.ToBoolean(cc);
+        if (s.TryGetValue("DebugMode",          out var dm)) DebugMode          = Convert.ToBoolean(dm);
     }
 
     [RelayCommand]
@@ -81,6 +88,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["RdpMode"]     = RdpModeIndex,
             ["RdpRes"]      = RdpResolutionIndex,
             ["ConfirmCloseActive"] = ConfirmCloseActive,
+            ["DebugMode"]          = DebugMode,
         });
 
         ThemeService.Apply(SelectedTheme);
@@ -110,15 +118,37 @@ public static class SettingsStore
     public static RdpLaunchMode ReadRdpMode()
     {
         var s = Read();
-        if (!s.TryGetValue("RdpMode", out var v)) return RdpLaunchMode.Mstsc;
+        if (!s.TryGetValue("RdpMode", out var v)) return RdpLaunchMode.MstscAx;
         try
         {
             var i = Convert.ToInt32(v);
             return Enum.IsDefined(typeof(RdpLaunchMode), i)
                 ? (RdpLaunchMode)i
-                : RdpLaunchMode.Mstsc;
+                : RdpLaunchMode.MstscAx;
         }
-        catch { return RdpLaunchMode.Mstsc; }
+        catch { return RdpLaunchMode.MstscAx; }
+    }
+
+    /// <summary>Persisted debug-mode flag — false by default. Read from
+    /// MainWindow startup so the "Copy visual tree" button is hidden on
+    /// fresh installs and only revealed when the user opts in.</summary>
+    public static bool ReadDebugMode()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DebugMode", out var v)) return false;
+        try { return Convert.ToBoolean(v); }
+        catch { return false; }
+    }
+
+    /// <summary>Toggle debug-mode-driven UI on the live main window.
+    /// Looks up the named developer affordances by their <c>x:Name</c>
+    /// and flips Visibility — kept here so the toggle reacts instantly
+    /// instead of waiting for the next launch.</summary>
+    public static void ApplyDebugMode(bool on)
+    {
+        if (App.MainWin?.Content is not Microsoft.UI.Xaml.FrameworkElement root) return;
+        if (root.FindName("BtnCopyVisualTree") is Microsoft.UI.Xaml.UIElement btn)
+            btn.Visibility = on ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
     }
 
     /// <summary>Persisted preference for prompting the user before

@@ -58,6 +58,7 @@ public sealed class FakeConnectionService : IConnectionService
     public Task UpdateGroupAsync(Group group, CancellationToken ct = default) => Task.CompletedTask;
     public Task DeleteGroupAsync(Guid id, CancellationToken ct = default) => Task.CompletedTask;
     public Task RecordConnectedAsync(Guid connectionId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RecordDisconnectedAsync(Guid connectionId, string? reason = null, CancellationToken ct = default) => Task.CompletedTask;
     public Task RecordFailedAsync(Guid connectionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<ConnectionProfile>> SearchAsync(string query, CancellationToken ct = default) =>

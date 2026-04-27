@@ -159,7 +159,7 @@ public sealed class RdpHandler : IRdpHandler
         Func<ConnectionProfile, string, string, IRdpSession>? mstscAxFactory = null,
         Func<ConnectionProfile, string, string, IRdpSession>? freeRdpFactory = null)
     {
-        _modeProvider   = modeProvider   ?? (() => RdpLaunchMode.Mstsc);
+        _modeProvider   = modeProvider   ?? (() => RdpLaunchMode.MstscAx);
         _mstscAxFactory = mstscAxFactory;
         _freeRdpFactory = freeRdpFactory;
     }
@@ -175,6 +175,9 @@ public sealed class RdpHandler : IRdpHandler
                 => _freeRdpFactory(profile, username, password),
             RdpLaunchMode.FreeRdp
                 => throw new NotImplementedException("FreeRDP backend is not yet implemented; pick Mstsc or MstscAx in Settings."),
+            RdpLaunchMode.MstscAx
+                => throw new InvalidOperationException(
+                    "MstscAx backend factory not registered. Pick Mstsc in Settings or wire up the factory."),
             _   => new MstscRdpSession(profile, username),
         };
     }
