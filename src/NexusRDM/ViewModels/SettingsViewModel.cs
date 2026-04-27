@@ -11,7 +11,9 @@ namespace NexusRDM.ViewModels;
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
-    [ObservableProperty] private int    _themeIndex      = 0; // 0=System 1=Light 2=Dark
+    // Index order MUST match the SettingsPage ComboBox: 0=Dark, 1=Light, 2=System.
+    [ObservableProperty] private int    _themeIndex      = 0;
+    partial void OnThemeIndexChanged(int value) => ApplyTheme(value);
     [ObservableProperty] private string _defaultSshUser  = string.Empty;
     [ObservableProperty] private int    _defaultSshPort  = 22;
     [ObservableProperty] private int    _defaultRdpPort  = 3389;
@@ -21,6 +23,17 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// 2 = FreeRDP (not yet implemented). The order matches the ComboBox in
     /// SettingsPage.xaml — index also matches the underlying enum value.</summary>
     [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.Mstsc;
+
+    /// <summary>Default desktop resolution applied at connect time. Index
+    /// matches the SettingsPage ComboBox and the <see cref="RdpDefaultResolution"/>
+    /// enum. Defaults to "match current monitor".</summary>
+    [ObservableProperty] private int _rdpResolutionIndex = (int)RdpDefaultResolution.MatchMonitor;
+
+    /// <summary>Prompt the user before closing the app, the main window,
+    /// or a session tab while at least one session is still live. The
+    /// confirmation only fires once per top-level close action — closing
+    /// the window suppresses per-tab confirmations during teardown.</summary>
+    [ObservableProperty] private bool _confirmCloseActive = true;
 
     /// <summary>Safe for unpackaged apps — Package.Current throws without identity.</summary>
     public string AppVersion
@@ -47,6 +60,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("RdpPort",     out var rp)) DefaultRdpPort = Convert.ToInt32(rp);
         if (s.TryGetValue("SaveWinSize", out var sw)) SaveWindowSize = Convert.ToBoolean(sw);
         if (s.TryGetValue("RdpMode",     out var rm)) RdpModeIndex   = Convert.ToInt32(rm);
+        if (s.TryGetValue("RdpRes",      out var rr)) RdpResolutionIndex = Convert.ToInt32(rr);
+        if (s.TryGetValue("ConfirmCloseActive", out var cc)) ConfirmCloseActive = Convert.ToBoolean(cc);
     }
 
     [RelayCommand]
@@ -60,16 +75,50 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["RdpPort"]     = DefaultRdpPort,
             ["SaveWinSize"] = SaveWindowSize,
             ["RdpMode"]     = RdpModeIndex,
+            ["RdpRes"]      = RdpResolutionIndex,
+            ["ConfirmCloseActive"] = ConfirmCloseActive,
         });
 
-        var theme = ThemeIndex switch
+        ApplyTheme(ThemeIndex);
+    }
+
+    /// <summary>Pushes the theme to every open WinUI window. Called both
+    /// from Save (so the persisted value takes effect after restart) and
+    /// from <c>OnThemeIndexChanged</c> for instant feedback. WinUI 3
+    /// doesn't propagate <c>ElementTheme</c> across windows, so we have
+    /// to walk every secondary window too — without this the RDP-events
+    /// pop-up would stay on the previous theme until reopened.</summary>
+    private static void ApplyTheme(int idx)
+    {
+        // Index → ElementTheme: 0=Dark, 1=Light, 2=System.
+        var theme = idx switch
         {
             1 => ElementTheme.Light,
-            2 => ElementTheme.Dark,
-            _ => ElementTheme.Default
+            2 => ElementTheme.Default,
+            _ => ElementTheme.Dark,
         };
-        if (App.MainWin.Content is FrameworkElement root)
-            root.RequestedTheme = theme;
+
+        void Apply(Window? w)
+        {
+            if (w?.Content is FrameworkElement fe) fe.RequestedTheme = theme;
+        }
+
+        // Guarded — Load() runs before MainWin is assigned during DI build.
+        if (App.MainWin is not null) Apply(App.MainWin);
+        foreach (var w in App.SecondaryWindows.ToArray()) Apply(w);
+    }
+
+    /// <summary>Reads the persisted theme index from disk and applies it
+    /// to the main window. Called from App startup right after MainWin
+    /// is created so the chosen theme is in effect from the first frame
+    /// instead of only after the user visits the Settings page.</summary>
+    public static void ApplyPersistedTheme()
+    {
+        var s = SettingsStore.Read();
+        if (s.TryGetValue("ThemeIndex", out var t))
+        {
+            try { ApplyTheme(Convert.ToInt32(t)); } catch { /* corrupt — fall through */ }
+        }
     }
 }
 
@@ -94,6 +143,32 @@ public static class SettingsStore
                 : RdpLaunchMode.Mstsc;
         }
         catch { return RdpLaunchMode.Mstsc; }
+    }
+
+    /// <summary>Persisted preference for prompting the user before
+    /// closing while a session is live. Defaults to <c>true</c>.</summary>
+    public static bool ReadConfirmCloseActive()
+    {
+        var s = Read();
+        if (!s.TryGetValue("ConfirmCloseActive", out var v)) return true;
+        try { return Convert.ToBoolean(v); }
+        catch { return true; }
+    }
+
+    /// <summary>Reads the persisted default-resolution preference, falling
+    /// back to "match the current monitor" if missing or invalid.</summary>
+    public static RdpDefaultResolution ReadRdpDefaultResolution()
+    {
+        var s = Read();
+        if (!s.TryGetValue("RdpRes", out var v)) return RdpDefaultResolution.MatchMonitor;
+        try
+        {
+            var i = Convert.ToInt32(v);
+            return Enum.IsDefined(typeof(RdpDefaultResolution), i)
+                ? (RdpDefaultResolution)i
+                : RdpDefaultResolution.MatchMonitor;
+        }
+        catch { return RdpDefaultResolution.MatchMonitor; }
     }
 
     private static readonly Lazy<bool> _packaged = new(() =>

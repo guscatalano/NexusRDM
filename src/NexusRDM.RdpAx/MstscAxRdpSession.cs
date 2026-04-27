@@ -37,6 +37,11 @@ public sealed class MstscAxRdpSession : IRdpSession
     private Rectangle                  _bounds;
     private bool                       _disposed;
     private bool                       _isPoppedOut;
+    /// <summary>Right-side margin (raw pixels) reserved for the WinUI
+    /// edit-connection slide-over. When non-zero, <see cref="Resize"/>
+    /// shrinks the form's width by this much so the slide-over (which
+    /// paints inside the WinUI window's HWND) remains uncovered.</summary>
+    private int                        _rightInsetPx;
     // Cached HWND — Form.Handle / IsHandleCreated are thread-affine. Set
     // on HandleCreated (form's STA thread), cleared on FormClosed.
     private nint                       _formHwnd;
@@ -90,12 +95,22 @@ public sealed class MstscAxRdpSession : IRdpSession
         }
     }
 
-    public MstscAxRdpSession(ConnectionProfile profile, string username, string password)
+    /// <summary>Resolves the desktop resolution for this session at
+    /// connect time. Args: (ownerHwnd, panelClientSize). Returning a
+    /// (0, 0) tuple means "use panel size" (the default).</summary>
+    private readonly Func<nint, System.Drawing.Size, System.Drawing.Size>? _resolutionResolver;
+
+    public MstscAxRdpSession(
+        ConnectionProfile profile,
+        string            username,
+        string            password,
+        Func<nint, System.Drawing.Size, System.Drawing.Size>? resolutionResolver = null)
     {
-        ConnectionId = profile.Id;
-        _profile     = profile;
-        _username    = username;
-        _password    = password;
+        ConnectionId        = profile.Id;
+        _profile            = profile;
+        _username           = username;
+        _password           = password;
+        _resolutionResolver = resolutionResolver;
     }
 
     public void Connect(nint hwndParent, int x, int y, int width, int height)
@@ -219,8 +234,20 @@ public sealed class MstscAxRdpSession : IRdpSession
                     // form, even with SmartSizing scaling. Use the form's
                     // current client size so the session matches what
                     // the user actually sees.
-                    ocx.DesktopWidth                           = Math.Max(800, form.ClientSize.Width);
-                    ocx.DesktopHeight                          = Math.Max(600, form.ClientSize.Height);
+                    // Pick the negotiated desktop dims:
+                    //   - Resolver may return an explicit size (Match
+                    //     Monitor / 1920x1080 / etc.).
+                    //   - A (0,0) reply means fall back to the panel.
+                    //   - Floor at 800×600 so SmartSizing doesn't dock
+                    //     into a postage-stamp render.
+                    var panelSize  = form.ClientSize;
+                    var picked     = _resolutionResolver?.Invoke(_ownerHwnd, panelSize)
+                                     ?? System.Drawing.Size.Empty;
+                    var deskW      = picked.Width  > 0 ? picked.Width  : panelSize.Width;
+                    var deskH      = picked.Height > 0 ? picked.Height : panelSize.Height;
+                    ocx.DesktopWidth                           = Math.Max(800, deskW);
+                    ocx.DesktopHeight                          = Math.Max(600, deskH);
+                    Log("Resolution", $"{ocx.DesktopWidth}x{ocx.DesktopHeight}");
                     if (!string.IsNullOrEmpty(rdp.Domain))
                         ocx.Domain = rdp.Domain;
 
@@ -330,14 +357,27 @@ public sealed class MstscAxRdpSession : IRdpSession
         if (_isHidden || _isPoppedOut) return;
         try
         {
+            // Apply the right-inset (edit-panel slide-over) by shrinking
+            // the visible form width. Floor at 200 px so we never collapse
+            // to a sliver during teardown.
+            var visW = Math.Max(200, _bounds.Width - _rightInsetPx);
             // Re-stack just above the owner each tick — clicking back into
             // the WinUI window doesn't push the form behind. SWP_NOACTIVATE
             // so we don't steal keyboard focus.
             SetWindowPos(hwnd, _ownerHwnd,
-                         _bounds.X, _bounds.Y, _bounds.Width, _bounds.Height,
+                         _bounds.X, _bounds.Y, visW, _bounds.Height,
                          SWP_NOACTIVATE);
         }
         catch { /* tearing down */ }
+    }
+
+    public void SetRightInset(int rightInsetPx)
+    {
+        _rightInsetPx = Math.Max(0, rightInsetPx);
+        // Re-apply current bounds with the new inset so the form
+        // narrows / restores immediately, without waiting for the next
+        // 50ms poll-tick.
+        Resize(_bounds.X, _bounds.Y, _bounds.Width, _bounds.Height);
     }
 
     public void SendCtrlAltDel()

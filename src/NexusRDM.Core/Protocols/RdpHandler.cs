@@ -115,6 +115,7 @@ public sealed class MstscRdpSession : IRdpSession
     public void PopOut()                             { /* mstsc child process — N/A */ }
     public void SetSmartSizing(bool enabled)         { /* mstsc child process — N/A */ }
     public void SetResolution(int width, int height) { /* mstsc child process — N/A */ }
+    public void SetRightInset(int rightInsetPx)      { /* mstsc child process — N/A */ }
 
     public void Dispose() => _proc?.Dispose();
 

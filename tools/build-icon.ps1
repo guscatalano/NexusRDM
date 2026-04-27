@@ -24,76 +24,73 @@ $ssh    = [System.Drawing.Color]::FromArgb(255,  61, 214, 140)
 $rdp    = [System.Drawing.Color]::FromArgb(255,  77, 166, 255)
 
 function New-IconBitmap([int]$size) {
-    $bmp = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $bmp = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g   = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode    = 'AntiAlias'
     $g.InterpolationMode= 'HighQualityBicubic'
     $g.PixelOffsetMode  = 'HighQuality'
 
-    # Rounded-square background.
-    $r       = [Math]::Max(2, [int]($size * 0.18))
-    $rect    = New-Object System.Drawing.RectangleF(0.5, 0.5, $size-1, $size-1)
-    $path    = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $path.AddArc($rect.X, $rect.Y, $r*2, $r*2, 180, 90)                       | Out-Null
-    $path.AddArc($rect.Right - $r*2, $rect.Y, $r*2, $r*2, 270, 90)            | Out-Null
-    $path.AddArc($rect.Right - $r*2, $rect.Bottom - $r*2, $r*2, $r*2, 0, 90)  | Out-Null
-    $path.AddArc($rect.X, $rect.Bottom - $r*2, $r*2, $r*2, 90, 90)            | Out-Null
+    [single]$sz   = $size
+    [single]$rArc = [Math]::Max(2.0, $sz * 0.18)
+    [single]$x0   = 0.5
+    [single]$y0   = 0.5
+    [single]$w    = $sz - 1
+    [single]$h    = $sz - 1
+    $rect = [System.Drawing.RectangleF]::new($x0, $y0, $w, $h)
+
+    $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+    $path.AddArc($rect.X,                   $rect.Y,                   $rArc*2, $rArc*2, 180, 90) | Out-Null
+    $path.AddArc($rect.Right - $rArc*2,     $rect.Y,                   $rArc*2, $rArc*2, 270, 90) | Out-Null
+    $path.AddArc($rect.Right - $rArc*2,     $rect.Bottom - $rArc*2,    $rArc*2, $rArc*2, 0,   90) | Out-Null
+    $path.AddArc($rect.X,                   $rect.Bottom - $rArc*2,    $rArc*2, $rArc*2, 90,  90) | Out-Null
     $path.CloseAllFigures()
 
-    $bgBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $bg, $panel, 90)
+    $bgBrush = [System.Drawing.Drawing2D.LinearGradientBrush]::new($rect, $bg, $panel, [single]90)
     $g.FillPath($bgBrush, $path)
     $bgBrush.Dispose()
 
-    # Three nodes arranged like an "N": top-left, bottom-left, top-right.
-    # The diagonal edge from top-left → bottom-right (running through the
-    # bottom node toward the top-right) gives the "N" silhouette.
-    $nodeR   = [Math]::Max(1.0, $size * 0.11)
-    $pad     = $size * 0.26
-    $tl      = New-Object System.Drawing.PointF($pad,           $pad)
-    $bl      = New-Object System.Drawing.PointF($pad,           $size - $pad)
-    $tr      = New-Object System.Drawing.PointF($size - $pad,   $pad)
-    $br      = New-Object System.Drawing.PointF($size - $pad,   $size - $pad)
+    [single]$nodeR = [Math]::Max(1.0, $sz * 0.11)
+    [single]$pad   = $sz * 0.26
+    $tl = [System.Drawing.PointF]::new($pad,        $pad)
+    $bl = [System.Drawing.PointF]::new($pad,        $sz - $pad)
+    $tr = [System.Drawing.PointF]::new($sz - $pad,  $pad)
+    $br = [System.Drawing.PointF]::new($sz - $pad,  $sz - $pad)
 
-    # Edges.
-    $edgeWidth = [Math]::Max(1.0, $size * 0.06)
-    $edgePen   = New-Object System.Drawing.Pen($accent, $edgeWidth)
+    [single]$edgeWidth = [Math]::Max(1.0, $sz * 0.06)
+    $edgePen = [System.Drawing.Pen]::new($accent, $edgeWidth)
     $edgePen.StartCap = 'Round'
     $edgePen.EndCap   = 'Round'
 
     $g.DrawLine($edgePen, $tl, $bl)         # left vertical
     $g.DrawLine($edgePen, $bl, $tr)         # diagonal (the N stroke)
     $g.DrawLine($edgePen, $tr, $br)         # right vertical
-
     $edgePen.Dispose()
 
-    # Nodes — color-coded: top-left = accent, top-right = RDP blue,
-    # bottom-left = SSH green. Reads as "manager of multiple protocols".
-    function Draw-Node($p, $color) {
-        $glow = New-Object System.Drawing.Drawing2D.GraphicsPath
+    function Draw-Node($g, $p, $color, [single]$nodeR) {
+        $glow = [System.Drawing.Drawing2D.GraphicsPath]::new()
         $glow.AddEllipse($p.X - $nodeR*1.45, $p.Y - $nodeR*1.45, $nodeR*2.9, $nodeR*2.9) | Out-Null
-        $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush($glow)
-        $pgb.CenterColor   = $color
-        $pgb.SurroundColors= ,([System.Drawing.Color]::FromArgb(0, $color.R, $color.G, $color.B))
+        $pgb = [System.Drawing.Drawing2D.PathGradientBrush]::new($glow)
+        $pgb.CenterColor    = $color
+        $pgb.SurroundColors = ,([System.Drawing.Color]::FromArgb(0, $color.R, $color.G, $color.B))
         $g.FillPath($pgb, $glow)
         $pgb.Dispose()
         $glow.Dispose()
 
-        $core = New-Object System.Drawing.RectangleF($p.X - $nodeR, $p.Y - $nodeR, $nodeR*2, $nodeR*2)
-        $coreBrush = New-Object System.Drawing.SolidBrush($color)
+        $core = [System.Drawing.RectangleF]::new([single]($p.X - $nodeR), [single]($p.Y - $nodeR), [single]($nodeR*2), [single]($nodeR*2))
+        $coreBrush = [System.Drawing.SolidBrush]::new($color)
         $g.FillEllipse($coreBrush, $core)
         $coreBrush.Dispose()
 
-        # Inner highlight for depth.
-        $hlR = $nodeR * 0.45
-        $hl  = New-Object System.Drawing.RectangleF($p.X - $nodeR*0.4, $p.Y - $nodeR*0.6, $hlR*2, $hlR*2)
-        $hlBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160, 255, 255, 255))
+        [single]$hlR = $nodeR * 0.45
+        $hl = [System.Drawing.RectangleF]::new([single]($p.X - $nodeR*0.4), [single]($p.Y - $nodeR*0.6), [single]($hlR*2), [single]($hlR*2))
+        $hlBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(160, 255, 255, 255))
         $g.FillEllipse($hlBrush, $hl)
         $hlBrush.Dispose()
     }
 
-    Draw-Node $tl $accent2
-    Draw-Node $tr $rdp
-    Draw-Node $bl $ssh
+    Draw-Node $g $tl $accent2 $nodeR
+    Draw-Node $g $tr $rdp     $nodeR
+    Draw-Node $g $bl $ssh     $nodeR
 
     $g.Dispose()
     return $bmp

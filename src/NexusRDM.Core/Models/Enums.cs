@@ -43,3 +43,29 @@ public enum RdpLaunchMode
     MstscAx = 1,
     FreeRdp = 2,
 }
+
+/// <summary>
+/// Default resolution policy applied when an RDP session opens. Drives
+/// the value passed to <c>IMsRdpClient.DesktopWidth/DesktopHeight</c>
+/// before <c>Connect</c>.
+/// </summary>
+/// <remarks>
+/// Index order matches the ComboBox in SettingsPage.xaml. Adding entries
+/// is fine; reordering will silently change persisted preferences.
+/// </remarks>
+public enum RdpDefaultResolution
+{
+    /// <summary>Use the dimensions of the monitor currently hosting the
+    /// app window. Best fit for full-screen / pop-out use.</summary>
+    MatchMonitor = 0,
+    /// <summary>Use the host tab's panel size at connect time. Cleanest
+    /// when SmartSizing is on and you want a 1:1 in-tab render.</summary>
+    MatchPanel   = 1,
+    Res1024x768  = 2,
+    Res1280x720  = 3,
+    Res1366x768  = 4,
+    Res1600x900  = 5,
+    Res1920x1080 = 6,
+    Res2560x1440 = 7,
+    Res3840x2160 = 8,
+}

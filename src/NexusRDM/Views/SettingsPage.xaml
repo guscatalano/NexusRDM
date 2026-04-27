@@ -138,6 +138,59 @@
                     </Grid>
                 </Border>
 
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Default resolution" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Desktop size negotiated at connect time. 'Match current monitor' uses the monitor hosting the app window. The toolbar dropdown overrides this for an open session." />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.RdpResolutionIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="200"
+                                  VerticalAlignment="Top">
+                            <ComboBoxItem Content="Match current monitor" />
+                            <ComboBoxItem Content="Match panel size" />
+                            <ComboBoxItem Content="1024 × 768" />
+                            <ComboBoxItem Content="1280 × 720" />
+                            <ComboBoxItem Content="1366 × 768" />
+                            <ComboBoxItem Content="1600 × 900" />
+                            <ComboBoxItem Content="1920 × 1080" />
+                            <ComboBoxItem Content="2560 × 1440" />
+                            <ComboBoxItem Content="3840 × 2160" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="SAFETY"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Confirm close while connected" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Prompt before closing a tab or the app while a session is still live. Disable for fast tear-down." />
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1"
+                                      IsOn="{x:Bind ViewModel.ConfirmCloseActive, Mode=TwoWay}"
+                                      OnContent=""
+                                      OffContent="" />
+                    </Grid>
+                </Border>
+
                 <!-- Save -->
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
                     <Button Command="{x:Bind ViewModel.SaveCommand}"

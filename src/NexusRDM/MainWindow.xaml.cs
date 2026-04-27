@@ -37,6 +37,16 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SetTitleBarColors();
+
+        // Title bar / taskbar icon. Path is relative to the app's base
+        // dir; AppIcon.ico is copied next to NexusRDM.dll via the csproj
+        // Content entry. SetIcon silently no-ops if the file's missing.
+        try
+        {
+            var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
+            if (System.IO.File.Exists(iconPath)) AppWindow.SetIcon(iconPath);
+        }
+        catch { /* non-fatal — falls back to default icon */ }
         ConnectionsPane.ConnectRequested += OnConnectRequested;
         // RDP sessions own a top-level Win32 form pinned over their host
         // tab. WinUI 3 TabView doesn't unload the inactive tab's content
@@ -44,6 +54,7 @@ public sealed partial class MainWindow : Window
         // but SelectionChanged fires every time the selected tab changes.
         // Hide every RDP form except the one whose tab is now selected.
         SessionTabs.SelectionChanged += OnSessionTabsSelectionChanged;
+        HookCloseConfirmation();
 
         AddWelcomeTab();
     }
@@ -236,6 +247,32 @@ public sealed partial class MainWindow : Window
         AuditPage.Visibility       = nav == NavSection.Audit       ? Visibility.Visible : Visibility.Collapsed;
         SettingsPageView.Visibility = nav == NavSection.Settings    ? Visibility.Visible : Visibility.Collapsed;
 
+        // Hide every embedded RDP form when leaving the Connections
+        // section — the forms are top-level Win32 windows owned by the
+        // WinUI window and otherwise stay pinned over their (now-hidden)
+        // host panel, painting on top of Audit / Settings. When we come
+        // back, OnSessionTabsSelectionChanged restores only the form
+        // that belongs to the currently selected tab.
+        if (nav != NavSection.Connections)
+        {
+            foreach (var s in _sessions.Sessions)
+            {
+                try { s.RdpSession?.SetVisible(false); } catch { /* best effort */ }
+            }
+        }
+        else
+        {
+            var selected = SessionTabs.SelectedItem as TabViewItem;
+            foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
+            {
+                if (item.Tag is OpenSession os && os.RdpSession is { } rdp)
+                {
+                    try { rdp.SetVisible(ReferenceEquals(item, selected)); }
+                    catch { /* best effort */ }
+                }
+            }
+        }
+
         var accentBg = (SolidColorBrush)Application.Current.Resources["NxBg3"];
         var clear    = new SolidColorBrush(Colors.Transparent);
         BtnNavConn.Background     = nav == NavSection.Connections ? accentBg : clear;
@@ -353,16 +390,21 @@ public sealed partial class MainWindow : Window
         OverlayHost.Children.Add(panel);
         OverlayHost.Visibility = Visibility.Visible;
 
-        // Hide every embedded RDP form while the edit panel is up — the
-        // forms are top-level Win32 windows owned by the WinUI window, so
-        // they paint above any in-app overlay (which is just XAML inside
-        // the same HWND). Park them offscreen for the duration; restore
-        // when the panel closes.
-        var hidden = new List<IRdpSession>();
+        // Edit-connection is a 440-DIP right-anchored slide-over. Each
+        // embedded RDP form is a top-level Win32 window owned by the
+        // WinUI app, so it paints above the slide-over. Instead of
+        // hiding the live session, narrow every form by 440 DIPs (in
+        // raw pixels) so the slide-over occupies that strip on the
+        // right while the user keeps watching the session.
+        var dpi      = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var scale    = dpi <= 0 ? 1.0 : dpi / 96.0;
+        var insetPx  = (int)(440 * scale);
+
+        var inset    = new List<IRdpSession>();
         foreach (var s in _sessions.Sessions)
             if (s.RdpSession is { } rdp)
             {
-                try { rdp.SetVisible(false); hidden.Add(rdp); }
+                try { rdp.SetRightInset(insetPx); inset.Add(rdp); }
                 catch { /* best effort */ }
             }
 
@@ -375,9 +417,86 @@ public sealed partial class MainWindow : Window
             OverlayHost.Visibility = Visibility.Collapsed;
             OverlayHost.Children.Clear();
 
-            // Restore visibility on whichever session is in the active
-            // tab; the rest stay hidden until that tab is selected (the
-            // SelectionChanged handler manages per-tab visibility).
+            foreach (var rdp in inset)
+            {
+                try { rdp.SetRightInset(0); } catch { /* best effort */ }
+            }
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint hWnd);
+
+    private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    {
+        // Close the exact OpenSession this tab owns; identifying by
+        // ConnectionId would dispose the wrong session when duplicate tabs are
+        // open against the same connection.
+        if (args.Tab.Tag is OpenSession os)
+        {
+            // Skip per-tab confirmation when the user already confirmed
+            // an app-wide close — we don't want to prompt N times during
+            // teardown.
+            if (!_suppressTabConfirm
+                && SettingsStore.ReadConfirmCloseActive()
+                && IsSessionActive(os))
+            {
+                var ok = await ConfirmCloseAsync(
+                    "Close active session?",
+                    $"'{os.DisplayName}' is still connected. Close it anyway?");
+                if (!ok) return;
+            }
+            await _sessions.CloseAsync(os);
+        }
+        sender.TabItems.Remove(args.Tab);
+    }
+
+    /// <summary>True while an app-wide close is unwinding so per-tab
+    /// close handlers don't prompt again.</summary>
+    private bool _suppressTabConfirm;
+    private bool _confirmedClose;
+
+    private static bool IsSessionActive(OpenSession s) =>
+        (s.SshSession?.IsConnected ?? false) ||
+        (s.RdpSession?.IsConnected ?? false);
+
+    private bool AnyActiveSession() =>
+        _sessions.Sessions.Any(IsSessionActive);
+
+    private async Task<bool> ConfirmCloseAsync(string title, string body)
+    {
+        // ContentDialog renders inside the WinUI HWND; the embedded RDP
+        // forms are top-level owned windows that paint above it (the
+        // same airspace problem as the edit-connection slide-over). Park
+        // every form offscreen for the duration of the dialog so the
+        // user can actually click the buttons.
+        var hidden = new List<IRdpSession>();
+        foreach (var s in _sessions.Sessions)
+            if (s.RdpSession is { } rdp)
+            {
+                try { rdp.SetVisible(false); hidden.Add(rdp); }
+                catch { /* best effort */ }
+            }
+
+        try
+        {
+            var dlg = new ContentDialog
+            {
+                Title             = title,
+                Content           = body,
+                PrimaryButtonText = "Close",
+                CloseButtonText   = "Cancel",
+                DefaultButton     = ContentDialogButton.Close,
+                XamlRoot          = Content.XamlRoot,
+            };
+            var result = await dlg.ShowAsync();
+            return result == ContentDialogResult.Primary;
+        }
+        finally
+        {
+            // Restore only the form attached to the active tab; other
+            // tabs remain hidden until selected (the SelectionChanged
+            // handler manages per-tab visibility).
             var selected = SessionTabs.SelectedItem as TabViewItem;
             foreach (var rdp in hidden)
             {
@@ -390,13 +509,25 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void SessionTabs_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    /// <summary>Hook AppWindow.Closing so we can prompt before the window
+    /// actually goes away. Wired from the constructor.</summary>
+    private void HookCloseConfirmation()
     {
-        // Close the exact OpenSession this tab owns; identifying by
-        // ConnectionId would dispose the wrong session when duplicate tabs are
-        // open against the same connection.
-        if (args.Tab.Tag is OpenSession os)
-            await _sessions.CloseAsync(os);
-        sender.TabItems.Remove(args.Tab);
+        AppWindow.Closing += async (_, args) =>
+        {
+            if (_confirmedClose) return;
+            if (!SettingsStore.ReadConfirmCloseActive()) return;
+            if (!AnyActiveSession())                     return;
+
+            args.Cancel = true;
+            var ok = await ConfirmCloseAsync(
+                "Close Nexus RDM?",
+                "There are active sessions. Closing will disconnect all of them.");
+            if (!ok) return;
+
+            _confirmedClose      = true;
+            _suppressTabConfirm  = true;
+            Close();
+        };
     }
 }
