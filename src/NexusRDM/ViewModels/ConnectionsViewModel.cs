@@ -32,7 +32,8 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         NexusRDM.Services.SessionManager sessions,
         NexusRDM.Services.PingService pingService,
         NexusRDM.Services.ProxmoxSyncService proxmoxSync,
-        NexusRDM.Services.NetworkDiscoveryService discovery)
+        NexusRDM.Services.NetworkDiscoveryService discovery,
+        NexusRDM.Services.HyperVSyncService hyperVSync)
     {
         _svc      = svc;
         _sessions = sessions;
@@ -57,6 +58,28 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         // also fire ScanCompleted but Inserted will be 0; LoadAsync is
         // a cheap no-op in that case.
         discovery.ScanCompleted += (_, _) => RefreshTreeFromBackground();
+
+        // And for the Hyper-V integration — same shape, same refresh.
+        hyperVSync.SyncCompleted += (_, _) => RefreshTreeFromBackground();
+
+        // Display-only Proxmox toggle (power-state icon). Not a sync;
+        // just push the new flag into every existing node so the icon
+        // hides/shows without waiting for the cluster.
+        SettingsStore.ProxmoxDisplaySettingsChanged += (_, _) => ApplyProxmoxDisplaySettings();
+    }
+
+    private void ApplyProxmoxDisplaySettings()
+    {
+        var show = SettingsStore.ReadProxmoxShowPowerState();
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
+                       ?? App.MainWin?.DispatcherQueue;
+        void Apply()
+        {
+            foreach (var n in EnumerateProfileNodes(RootItems))
+                n.ShowPowerState = show;
+        }
+        if (dispatcher is null) Apply();
+        else dispatcher.TryEnqueue(Apply);
     }
 
     private void RefreshTreeFromBackground()
@@ -245,6 +268,12 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         if (string.Equals(g.Name, NexusRDM.Services.NetworkDiscoveryService.DiscoveredGroupName,
                           StringComparison.Ordinal))
             node.IsDiscoveryRoot = true;
+        // Hyper-V root: same auto-managed treatment as the Discovered
+        // folder (italic + AUTO badge, undeletable from the tree —
+        // disable the integration in Settings instead).
+        if (string.Equals(g.Name, NexusRDM.Services.HyperVSyncService.HyperVGroupName,
+                          StringComparison.Ordinal))
+            node.IsHyperVRoot = true;
         foreach (var p in all.Where(p => p.GroupId == g.Id).OrderBy(p => p.DisplayName))
             node.Children.Add(new ConnectionTreeNode(p));
         foreach (var child in g.Children.OrderBy(x => x.SortOrder))
@@ -468,6 +497,45 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     [NotifyPropertyChangedFor(nameof(LatencyVisibility))]
     private bool _pingEnabled;
 
+    // ── Proxmox power state (running / stopped / paused glyph) ───────────
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PowerStateGlyph))]
+    [NotifyPropertyChangedFor(nameof(PowerStateColor))]
+    [NotifyPropertyChangedFor(nameof(PowerStateVisibility))]
+    private NexusRDM.Services.ProxmoxPowerState _powerState = NexusRDM.Services.ProxmoxPowerState.Unknown;
+
+    /// <summary>Mirrors <c>ProxmoxShowPowerState</c> — pushed in by
+    /// ConnectionsViewModel when the user toggles the option so the
+    /// icon hides/shows without waiting for the next sync.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PowerStateVisibility))]
+    private bool _showPowerState = true;
+
+    public string PowerStateGlyph => PowerState switch
+    {
+        // Segoe Fluent Icons.
+        NexusRDM.Services.ProxmoxPowerState.Running => "", // Play
+        NexusRDM.Services.ProxmoxPowerState.Stopped => "", // Stop
+        NexusRDM.Services.ProxmoxPowerState.Paused  => "", // Pause
+        _ => string.Empty,
+    };
+
+    public Color PowerStateColor => PowerState switch
+    {
+        NexusRDM.Services.ProxmoxPowerState.Running => Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C),
+        NexusRDM.Services.ProxmoxPowerState.Stopped => Color.FromArgb(0xFF, 0xA0, 0xA0, 0xB0),
+        NexusRDM.Services.ProxmoxPowerState.Paused  => Color.FromArgb(0xFF, 0xF0, 0xA7, 0x32),
+        _ => Color.FromArgb(0, 0, 0, 0),
+    };
+
+    public Visibility PowerStateVisibility =>
+        Profile is not null
+        && IsManaged
+        && ShowPowerState
+        && PowerState != NexusRDM.Services.ProxmoxPowerState.Unknown
+            ? Visibility.Visible : Visibility.Collapsed;
+
     public Color PingIconColor => PingState switch
     {
         NexusRDM.Services.PingState.Ok      => Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C),
@@ -504,6 +572,24 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         BadgeVisibility = Visibility.Visible;
         IsManaged       = p.IsManaged;
         SeedPingState(p.Id);
+        SeedPowerState(p.Id);
+    }
+
+    /// <summary>Pull last-known Proxmox power state so the tree's
+    /// running/stopped/paused glyph survives reloads. Same mechanism
+    /// as <see cref="SeedPingState"/>.</summary>
+    private void SeedPowerState(Guid connectionId)
+    {
+        try
+        {
+            if (App.Services?.GetService(typeof(NexusRDM.Services.ProxmoxSyncService))
+                is NexusRDM.Services.ProxmoxSyncService sync)
+            {
+                _powerState = sync.GetPowerState(connectionId);
+            }
+            _showPowerState = SettingsStore.ReadProxmoxShowPowerState();
+        }
+        catch { /* tests / pre-DI — defaults are fine */ }
     }
 
     public ConnectionTreeNode(Group g)
@@ -597,9 +683,17 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
     private bool _isDiscoveryRoot;
 
+    /// <summary>Set on the auto-created <c>Hyper-V</c> group. Same
+    /// undeletable + AUTO-badge treatment as the Discovered folder.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsExternallyManaged))]
+    [NotifyPropertyChangedFor(nameof(AutoManagedBadgeVisibility))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
+    private bool _isHyperVRoot;
+
     /// <summary>True when this group is owned by an external system
-    /// (Proxmox sync or auto-discovery) and should not be deletable
-    /// from the tree's right-click menu. Centralised so new auto-
-    /// managed group types can hook in without touching the menu.</summary>
-    public bool IsExternallyManaged => IsProxmoxSourceRoot || IsDiscoveryRoot;
+    /// (Proxmox sync, auto-discovery, Hyper-V sync) and should not be
+    /// deletable from the tree's right-click menu. Centralised so new
+    /// auto-managed group types can hook in without touching the menu.</summary>
+    public bool IsExternallyManaged => IsProxmoxSourceRoot || IsDiscoveryRoot || IsHyperVRoot;
 }

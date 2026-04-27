@@ -29,6 +29,33 @@ public sealed class ProxmoxSyncService
     /// whether to fully reload or do a delta.</summary>
     public event EventHandler<Guid>? SourceSynced;
 
+    /// <summary>Last-known power state per managed connection.
+    /// Populated on every sync from <c>cluster/resources.status</c>;
+    /// <see cref="ConnectionTreeNode"/> seeds itself from this so the
+    /// tree's power glyph survives reloads. In-memory only — no DB
+    /// migration needed since the cluster is the source of truth and
+    /// the next sync (or app start) re-fetches.</summary>
+    private readonly Dictionary<Guid, ProxmoxPowerState> _powerStates = new();
+    private readonly object _powerLock = new();
+
+    public ProxmoxPowerState GetPowerState(Guid connectionId)
+    {
+        lock (_powerLock)
+            return _powerStates.TryGetValue(connectionId, out var v) ? v : ProxmoxPowerState.Unknown;
+    }
+
+    private void SetPowerState(Guid connectionId, string? rawStatus)
+    {
+        var state = (rawStatus ?? "").ToLowerInvariant() switch
+        {
+            "running" => ProxmoxPowerState.Running,
+            "stopped" => ProxmoxPowerState.Stopped,
+            "paused"  => ProxmoxPowerState.Paused,
+            _         => ProxmoxPowerState.Unknown,
+        };
+        lock (_powerLock) _powerStates[connectionId] = state;
+    }
+
     public async Task<SyncResult> SyncAsync(Guid sourceId, CancellationToken ct = default)
     {
         using var scope = _services.CreateScope();
@@ -134,11 +161,12 @@ public sealed class ProxmoxSyncService
                 row.Host        = host;
                 row.GroupId     = source.RootGroupId;
                 row.IsManaged   = true;
+                SetPowerState(row.Id, r.Status);
                 updated++;
             }
             else
             {
-                db.Connections.Add(new ConnectionProfile
+                var newProfile = new ConnectionProfile
                 {
                     Id               = Guid.NewGuid(),
                     DisplayName      = name,
@@ -150,7 +178,9 @@ public sealed class ProxmoxSyncService
                     ExternalId       = extId,
                     IsManaged        = true,
                     Tags             = r.Tags ?? string.Empty,
-                });
+                };
+                db.Connections.Add(newProfile);
+                SetPowerState(newProfile.Id, r.Status);
                 inserted++;
             }
         }
@@ -472,4 +502,16 @@ public readonly record struct SyncResult(int Inserted, int Updated, int Deleted,
         Note is { Length: > 0 }
             ? $"({Note})"
             : $"+{Inserted} ✎{Updated} −{Deleted} ⤼{Skipped}";
+}
+
+/// <summary>VM power state from Proxmox's <c>cluster/resources.status</c>.
+/// Surfaced as a colored glyph in the connections tree when the user
+/// has enabled the option in Settings → Proxmox sources.</summary>
+public enum ProxmoxPowerState
+{
+    /// <summary>Never synced or status field was empty/unknown.</summary>
+    Unknown = 0,
+    Running = 1,
+    Stopped = 2,
+    Paused  = 3,
 }
