@@ -37,6 +37,11 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <!-- WMI access for the Hyper-V integration (root\virtualization\v2).
+         Windows-only by design — System.Management isn't part of the
+         framework on non-Windows targets, and Hyper-V doesn't exist
+         there anyway. -->
+    <PackageReference Include="System.Management" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

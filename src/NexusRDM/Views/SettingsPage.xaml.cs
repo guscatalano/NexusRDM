@@ -179,6 +179,55 @@ public sealed partial class SettingsPage : Page
         catch (Exception ex) { DiscoveryStatus.Text = $"Clear failed — {ex.Message}"; }
     }
 
+    // ── Hyper-V (local) ──────────────────────────────────────────────────
+
+    private async void HyperVTest_Click(object sender, RoutedEventArgs e)
+    {
+        HyperVStatus.Text = "Testing…";
+        var client = App.Services.GetRequiredService<NexusRDM.Services.HyperVClient>();
+        try
+        {
+            var d = await client.DiagnoseAccessAsync();
+            HyperVStatus.Text = (d.IsSuccess ? "OK — " : "Failed — ") + d.Message;
+        }
+        catch (Exception ex) { HyperVStatus.Text = $"Failed — {ex.Message}"; }
+    }
+
+    private async void HyperVSyncNow_Click(object sender, RoutedEventArgs e)
+    {
+        HyperVStatus.Text = "Syncing…";
+        var svc = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
+        try
+        {
+            var r = await svc.SyncAsync();
+            HyperVStatus.Text = r.IsSuccess ? $"Done — {r}" : $"Failed — {r.Error}";
+        }
+        catch (Exception ex) { HyperVStatus.Text = $"Failed — {ex.Message}"; }
+    }
+
+    private async void HyperVClear_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = new ContentDialog
+        {
+            Title             = "Clear imported VMs?",
+            Content           = "Removes every Hyper-V row inside the 'Hyper-V' folder and its saved credentials. The folder stays — the next sync can repopulate it.",
+            PrimaryButtonText = "Clear",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+            XamlRoot          = XamlRoot,
+        };
+        if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
+            return;
+
+        var svc = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
+        try
+        {
+            var n = await svc.ClearManagedAsync();
+            HyperVStatus.Text = n == 0 ? "Nothing to clear." : $"Cleared {n} VM(s).";
+        }
+        catch (Exception ex) { HyperVStatus.Text = $"Clear failed — {ex.Message}"; }
+    }
+
     private async Task ShowErrorAsync(string title, string body)
     {
         var dlg = new ContentDialog

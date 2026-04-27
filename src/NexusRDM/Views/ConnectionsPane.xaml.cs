@@ -128,6 +128,29 @@ public sealed partial class ConnectionsPane : UserControl
             {
                 menu.Items.Add(new MenuFlyoutSeparator());
 
+                if (IsHyperV(node))
+                {
+                    // Hyper-V branch: WMI RequestStateChange power
+                    // semantics. vmconnect.exe is the equivalent of
+                    // the Proxmox web console.
+                    var hvPower = new MenuFlyoutSubItem { Text = "Power" };
+                    AddHyperVPowerItem(hvPower, node, "Start",                 NexusRDM.Services.HyperVPowerAction.Start);
+                    AddHyperVPowerItem(hvPower, node, "Shutdown (graceful)",   NexusRDM.Services.HyperVPowerAction.Shutdown);
+                    AddHyperVPowerItem(hvPower, node, "Reboot (hard reset)",   NexusRDM.Services.HyperVPowerAction.Reboot);
+                    AddHyperVPowerItem(hvPower, node, "Stop (hard power-off)", NexusRDM.Services.HyperVPowerAction.Stop, danger: true);
+                    AddHyperVPowerItem(hvPower, node, "Save state",            NexusRDM.Services.HyperVPowerAction.Save);
+                    menu.Items.Add(hvPower);
+
+                    var vmconnect = new MenuFlyoutItem { Text = "Open in vmconnect" };
+                    vmconnect.Click += (_, _) => OpenVmConnect(node);
+                    menu.Items.Add(vmconnect);
+
+                    var hvDetach = new MenuFlyoutItem { Text = "Detach from Hyper-V" };
+                    hvDetach.Click += async (_, _) => await DetachManagedAsync(node);
+                    menu.Items.Add(hvDetach);
+                    goto AfterManaged;
+                }
+
                 // Power actions live in a sub-menu so they don't crowd
                 // out Edit/Delete on the top level. Cluster-side errors
                 // (403 if the token lacks VM.PowerMgmt, 500 if PVE
@@ -155,6 +178,8 @@ public sealed partial class ConnectionsPane : UserControl
                 };
                 detach.Click += async (_, _) => await DetachManagedAsync(node);
                 menu.Items.Add(detach);
+
+                AfterManaged: ;
             }
         }
         else
@@ -174,6 +199,19 @@ public sealed partial class ConnectionsPane : UserControl
                     Icon = new SymbolIcon(Symbol.Sync),
                 };
                 sync.Click += async (_, _) => await SyncProxmoxRootAsync(node);
+                menu.Items.Add(sync);
+            }
+            else if (node.IsHyperVRoot)
+            {
+                // Hyper-V root group: Sync-now triggers the local WMI
+                // enumeration. Mirrors the Proxmox root behaviour.
+                menu.Items.Add(new MenuFlyoutSeparator());
+                var sync = new MenuFlyoutItem
+                {
+                    Text = "Sync now (Hyper-V)",
+                    Icon = new SymbolIcon(Symbol.Sync),
+                };
+                sync.Click += async (_, _) => await SyncHyperVRootAsync();
                 menu.Items.Add(sync);
             }
             else if (!node.IsExternallyManaged)
@@ -314,6 +352,131 @@ public sealed partial class ConnectionsPane : UserControl
         }
 
         await ViewModel.LoadAsync();
+    }
+
+    // ── Hyper-V right-click helpers ──────────────────────────────────────
+
+    private static bool IsHyperV(ConnectionTreeNode node) =>
+        node.Profile is { ExternalId: { } id }
+        && id.StartsWith("hyperv:", StringComparison.Ordinal);
+
+    private void AddHyperVPowerItem(MenuFlyoutSubItem parent, ConnectionTreeNode node,
+        string label, NexusRDM.Services.HyperVPowerAction action, bool danger = false)
+    {
+        var item = new MenuFlyoutItem { Text = label };
+        item.Click += async (_, _) => await RunHyperVPowerAsync(node, action, danger);
+        parent.Items.Add(item);
+    }
+
+    private async Task RunHyperVPowerAsync(
+        ConnectionTreeNode node, NexusRDM.Services.HyperVPowerAction action, bool danger)
+    {
+        if (node.Profile is not { ExternalId: { } extId } profile) return;
+        var vmId = extId.StartsWith("hyperv:") ? extId.Substring("hyperv:".Length) : extId;
+
+        if (danger)
+        {
+            var confirm = new ContentDialog
+            {
+                Title             = $"{action} \"{profile.DisplayName}\"?",
+                Content           = "Hard power-off cuts the VM without giving the guest a chance to flush. Use Shutdown unless the guest is unresponsive.",
+                PrimaryButtonText = action.ToString(),
+                CloseButtonText   = "Cancel",
+                DefaultButton     = ContentDialogButton.Close,
+                XamlRoot          = XamlRoot,
+            };
+            if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
+                return;
+        }
+
+        var client = App.Services.GetRequiredService<NexusRDM.Services.HyperVClient>();
+        try
+        {
+            var rv = await client.RequestStateChangeAsync(vmId, action);
+            // Per the spec: 0 = completed synchronously, 4096 = job
+            // started (the guest will transition shortly). Anything
+            // else is a Hyper-V error code; surfacing it lets advanced
+            // users grep MSDN if they care.
+            var msg = rv switch
+            {
+                0    => $"{action} completed.",
+                4096 => $"{action} job started.",
+                _    => $"{action} returned WMI code {rv}.",
+            };
+            await NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = $"{action} {profile.DisplayName}",
+                Content         = msg,
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
+        catch (Exception ex)
+        {
+            await NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = $"{action} failed",
+                Content         = ex.Message,
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
+    }
+
+    /// <summary>Launches Microsoft's bundled <c>vmconnect.exe</c>
+    /// pointed at the VM. The Hyper-V Manager equivalent of the
+    /// Proxmox web console — works regardless of guest IP / network.</summary>
+    private void OpenVmConnect(ConnectionTreeNode node)
+    {
+        if (node.Profile is not { } profile) return;
+        try
+        {
+            // vmconnect takes <server> <vm-name>; localhost since this
+            // build is local-only. Quoting the name handles spaces.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "vmconnect.exe",
+                Arguments       = $"localhost \"{profile.DisplayName}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _ = NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = "Could not open vmconnect",
+                Content         = ex.Message + "\n\nvmconnect.exe ships with the Hyper-V tools — install 'Hyper-V Management Tools' if it's missing.",
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
+    }
+
+    private async Task SyncHyperVRootAsync()
+    {
+        var svc = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
+        try
+        {
+            var r = await svc.SyncAsync();
+            var dlg = new ContentDialog
+            {
+                Title           = "Hyper-V sync complete",
+                Content         = r.IsSuccess ? r.ToString() : (r.Error ?? "Unknown error"),
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            };
+            await NexusRDM.Services.DialogHost.ShowAsync(dlg);
+        }
+        catch (Exception ex)
+        {
+            await NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = "Hyper-V sync failed",
+                Content         = ex.Message,
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
     }
 
     private async Task OpenWebConsoleAsync(ConnectionTreeNode node)

@@ -216,6 +216,35 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>TCP-probe ports 22 / 3389 during Proxmox sync to pick
     /// the right protocol. Off → ostype/tag heuristic only.</summary>
     [ObservableProperty] private bool   _proxmoxProbeProtocol     = true;
+
+    /// <summary>Show running/stopped/paused glyph next to each
+    /// Proxmox-managed VM in the tree. Toggling fires
+    /// <see cref="SettingsStore.PingSettingsChanged"/> equivalent so
+    /// the connections VM can push the new value into every node.</summary>
+    [ObservableProperty] private bool   _proxmoxShowPowerState    = true;
+    partial void OnProxmoxShowPowerStateChanged(bool value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseProxmoxDisplaySettingsChanged();
+    }
+
+    /// <summary>Local Hyper-V integration. Off by default — when on,
+    /// the sync service enumerates VMs via WMI and projects them
+    /// under the auto-managed "Hyper-V" group.</summary>
+    [ObservableProperty] private bool _hyperVEnabled            = false;
+    [ObservableProperty] private int  _hyperVSyncIntervalMinutes = 15;
+    [ObservableProperty] private bool _hyperVProbeProtocol      = true;
+    partial void OnHyperVEnabledChanged(bool value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseHyperVSettingsChanged();
+    }
+    partial void OnHyperVSyncIntervalMinutesChanged(int value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseHyperVSettingsChanged();
+    }
+    partial void OnHyperVProbeProtocolChanged(bool value)         => SettingsStore.RaiseHyperVSettingsChanged();
     // Persist BEFORE raising. The base OnPropertyChanged (which calls
     // PersistAll) runs AFTER source-generator partial methods, so a
     // subscriber that re-reads SettingsStore — like
@@ -342,6 +371,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("DiscoveryReverseDns",       out var dr))  DiscoveryReverseDns      = Convert.ToBoolean(dr);
         if (s.TryGetValue("DiscoveryShortHostname",    out var dsh)) DiscoveryShortHostname   = Convert.ToBoolean(dsh);
         if (s.TryGetValue("ProxmoxProbeProtocol",      out var pp))  ProxmoxProbeProtocol     = Convert.ToBoolean(pp);
+        if (s.TryGetValue("ProxmoxShowPowerState",     out var ps))  ProxmoxShowPowerState    = Convert.ToBoolean(ps);
+        if (s.TryGetValue("HyperVEnabled",             out var he))  HyperVEnabled            = Convert.ToBoolean(he);
+        if (s.TryGetValue("HyperVSyncIntervalMinutes", out var hi))  HyperVSyncIntervalMinutes = Math.Clamp(Convert.ToInt32(hi), 1, 1440);
+        if (s.TryGetValue("HyperVProbeProtocol",       out var hp))  HyperVProbeProtocol      = Convert.ToBoolean(hp);
     }
 
     [RelayCommand]
@@ -401,6 +434,10 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["DiscoveryReverseDns"]       = DiscoveryReverseDns,
             ["DiscoveryShortHostname"]    = DiscoveryShortHostname,
             ["ProxmoxProbeProtocol"]      = ProxmoxProbeProtocol,
+            ["ProxmoxShowPowerState"]     = ProxmoxShowPowerState,
+            ["HyperVEnabled"]             = HyperVEnabled,
+            ["HyperVSyncIntervalMinutes"] = HyperVSyncIntervalMinutes,
+            ["HyperVProbeProtocol"]       = HyperVProbeProtocol,
         });
     }
 
@@ -639,6 +676,51 @@ public static class SettingsStore
     {
         var s = Read();
         if (!s.TryGetValue("ProxmoxProbeProtocol", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
+    }
+
+    /// <summary>Whether the connections tree shows a colored
+    /// running/stopped/paused glyph next to each Proxmox-managed VM.
+    /// Default on — the icon is the at-a-glance "is this VM up?"
+    /// signal and most users want it.</summary>
+    public static bool ReadProxmoxShowPowerState()
+    {
+        var s = Read();
+        if (!s.TryGetValue("ProxmoxShowPowerState", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
+    }
+
+    /// <summary>Fires when display-only Proxmox settings change
+    /// (currently just the power-state icon toggle). The connections
+    /// VM listens and pushes the new value into every tree node so
+    /// the icon hides/shows live without waiting for a sync.</summary>
+    public static event EventHandler? ProxmoxDisplaySettingsChanged;
+    public static void RaiseProxmoxDisplaySettingsChanged() =>
+        ProxmoxDisplaySettingsChanged?.Invoke(null, EventArgs.Empty);
+
+    /// <summary>Mirrors <see cref="DiscoverySettingsChanged"/>:
+    /// HyperVSyncService listens to re-arm its timer when the user
+    /// toggles the integration or changes the interval.</summary>
+    public static event EventHandler? HyperVSettingsChanged;
+    public static void RaiseHyperVSettingsChanged() =>
+        HyperVSettingsChanged?.Invoke(null, EventArgs.Empty);
+
+    public static bool ReadHyperVEnabled()
+    {
+        var s = Read();
+        if (!s.TryGetValue("HyperVEnabled", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+    public static int ReadHyperVSyncIntervalMinutes()
+    {
+        var s = Read();
+        if (!s.TryGetValue("HyperVSyncIntervalMinutes", out var v)) return 15;
+        try { return Math.Clamp(Convert.ToInt32(v), 1, 1440); } catch { return 15; }
+    }
+    public static bool ReadHyperVProbeProtocol()
+    {
+        var s = Read();
+        if (!s.TryGetValue("HyperVProbeProtocol", out var v)) return true;
         try { return Convert.ToBoolean(v); } catch { return true; }
     }
 

@@ -141,6 +141,18 @@
                                            FontSize="10"
                                            Foreground="{StaticResource NxTx3}" />
                             </Border>
+                            <!-- Power-state glyph (running / stopped /
+                                 paused) for Proxmox-managed rows.
+                                 Hidden for non-managed rows or when
+                                 the user disables the setting. -->
+                            <FontIcon Glyph="{x:Bind PowerStateGlyph, Mode=OneWay}"
+                                      Visibility="{x:Bind PowerStateVisibility, Mode=OneWay}"
+                                      FontSize="11"
+                                      VerticalAlignment="Center">
+                                <FontIcon.Foreground>
+                                    <SolidColorBrush Color="{x:Bind PowerStateColor, Mode=OneWay}" />
+                                </FontIcon.Foreground>
+                            </FontIcon>
                             <!-- "P" pill for connections imported from a
                                  Proxmox sync. Lets the user tell managed
                                  rows from manual ones at a glance — paired

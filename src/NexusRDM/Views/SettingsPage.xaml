@@ -48,6 +48,7 @@
                     <ListBoxItem Content="Database"          Tag="DATABASE" />
                     <ListBoxItem Content="Proxmox sources"   Tag="PROXMOX SOURCES" />
                     <ListBoxItem Content="Network discovery" Tag="NETWORK DISCOVERY" />
+                    <ListBoxItem Content="Hyper-V"           Tag="HYPER-V" />
                     <ListBoxItem Content="About"             Tag="ABOUT" />
                 </ListBox>
             </StackPanel>
@@ -559,6 +560,9 @@
                         <CheckBox Content="TCP-probe ports 22 / 3389 to pick protocol on import"
                                   IsChecked="{x:Bind ViewModel.ProxmoxProbeProtocol, Mode=TwoWay}"
                                   ToolTipService.ToolTip="On: more reliable but touches guest sockets. Off: ostype/tag heuristic only — faster, no guest probe." />
+                        <CheckBox Content="Show power state icon (running / stopped / paused) in tree"
+                                  IsChecked="{x:Bind ViewModel.ProxmoxShowPowerState, Mode=TwoWay}"
+                                  ToolTipService.ToolTip="Updates on every sync. Hide if the icon clutters narrow trees." />
 
                         <ItemsControl x:Name="ProxmoxSourcesList"
                                       ItemsSource="{x:Bind ProxmoxVm.Sources, Mode=OneWay}">
@@ -699,12 +703,78 @@
                                     Foreground="{StaticResource NxRed}"
                                     Content="Clear discovered devices"
                                     ToolTipService.ToolTip="Removes every connection inside the Discovered folder (and its credentials). The folder itself stays so future scans can repopulate." />
-                            <TextBlock x:Name="DiscoveryStatus"
-                                       Text=""
-                                       FontSize="11"
-                                       Foreground="{StaticResource NxTx3}"
-                                       VerticalAlignment="Center" />
                         </StackPanel>
+                        <TextBlock x:Name="DiscoveryStatus"
+                                   Text=""
+                                   FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Hyper-V (local) -->
+                <TextBlock Text="HYPER-V"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,24,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Auto-import VMs from the local Hyper-V host. Sync runs on the configured interval; missing VMs are hard-deleted on the next pass. Requires the user to be in the local 'Hyper-V Administrators' group (or running elevated)."
+                                   FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap" />
+
+                        <ToggleSwitch Header="Enable Hyper-V sync"
+                                      IsOn="{x:Bind ViewModel.HyperVEnabled, Mode=TwoWay}" />
+
+                        <NumberBox Header="Sync every (minutes)"
+                                   Minimum="1" Maximum="1440"
+                                   SpinButtonPlacementMode="Inline"
+                                   Value="{x:Bind ViewModel.HyperVSyncIntervalMinutes, Mode=TwoWay}" />
+
+                        <CheckBox Content="TCP-probe ports 22 / 3389 to pick protocol on import"
+                                  IsChecked="{x:Bind ViewModel.HyperVProbeProtocol, Mode=TwoWay}" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Button Click="HyperVTest_Click"
+                                    Background="{StaticResource NxBg2}"
+                                    BorderBrush="{StaticResource NxBrd}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,4"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxTx2}"
+                                    Content="Test connection" />
+                            <Button Click="HyperVSyncNow_Click"
+                                    Background="{StaticResource NxAccent}"
+                                    BorderBrush="{StaticResource NxAccent}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,4"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxTx1}"
+                                    Content="Sync now" />
+                            <Button Click="HyperVClear_Click"
+                                    Background="#33FF6B6B"
+                                    BorderBrush="#80FF6B6B"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,4"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxRed}"
+                                    Content="Clear imported VMs" />
+                        </StackPanel>
+                        <!-- Status on its own row so the long
+                             elevation/group-membership diagnostic
+                             actually wraps. In a Horizontal StackPanel
+                             children get unconstrained width and
+                             TextWrapping is silently ignored. -->
+                        <TextBlock x:Name="HyperVStatus"
+                                   Text=""
+                                   FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
 
