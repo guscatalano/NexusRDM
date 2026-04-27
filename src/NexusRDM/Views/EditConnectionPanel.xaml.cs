@@ -44,6 +44,17 @@ public sealed partial class EditConnectionPanel : UserControl
     private void OnPanelTapped(object sender, TappedRoutedEventArgs e) =>
         e.Handled = true;
 
+    private void IconChoice_Click(object sender, RoutedEventArgs e)
+    {
+        // Each icon button stamps its glyph (Segoe Fluent codepoint)
+        // into Tag — copy it to the ViewModel so Save persists it.
+        if (sender is Button { Tag: string glyph })
+            ViewModel.IconGlyph = glyph;
+    }
+
+    private void IconNone_Click(object sender, RoutedEventArgs e) =>
+        ViewModel.IconGlyph = string.Empty;
+
     // Tracks every element the search filter has hidden so we can restore
     // exactly those, leaving alone things that bindings (e.g. SSH/RDP
     // protocol-section visibility) had collapsed independently.

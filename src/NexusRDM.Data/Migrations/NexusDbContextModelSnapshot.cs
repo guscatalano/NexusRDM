@@ -74,6 +74,9 @@ namespace NexusRDM.Data.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("IconGlyph")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("LastConnectedAt")
                         .HasColumnType("TEXT");
 

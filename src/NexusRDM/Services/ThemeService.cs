@@ -90,6 +90,19 @@ public static class ThemeService
             Ssh: H("#50FA7B"),    Rdp:     H("#8BE9FD"),
             Red: H("#FF5555"),    Yellow:  H("#F1FA8C")),
 
+        // The "Custom" entry is a placeholder for the dropdown. Its
+        // colors aren't applied directly — when the user selects this
+        // theme, SettingsViewModel rebuilds a fresh NxTheme from the
+        // user-edited swatches and feeds that to ThemeService.Apply.
+        new NxTheme(
+            Id: "custom",  DisplayName: "Custom", IsLight: false,
+            Bg0: H("#1A1A1F"), Bg1: H("#22222A"), Bg2: H("#2A2A38"), Bg3: H("#2E2E3E"),
+            Brd: A(0x30, 0xFF, 0xFF, 0xFF),
+            Tx1: H("#E8E8F0"), Tx2: H("#808090"), Tx3: H("#404050"),
+            Accent: H("#7C6EF7"), Accent2: H("#A599FF"),
+            Ssh: H("#3DD68C"),    Rdp:     H("#4DA6FF"),
+            Red: H("#FF6B6B"),    Yellow:  H("#F0A732")),
+
         new NxTheme(
             Id: "monokai", DisplayName: "Monokai", IsLight: false,
             Bg0: H("#272822"), Bg1: H("#3B3A32"), Bg2: H("#49483E"), Bg3: H("#5A584D"),
@@ -100,7 +113,7 @@ public static class ThemeService
             Red: H("#F92672"),    Yellow:  H("#FD971F")),
     };
 
-    public static NxTheme Default => All[0];
+    public static NxTheme Default => ById("dracula");
 
     public static NxTheme ById(string? id)
     {

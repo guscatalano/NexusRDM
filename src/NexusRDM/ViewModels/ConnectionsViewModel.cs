@@ -23,13 +23,68 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     [ObservableProperty] private string _searchQuery = string.Empty;
     partial void OnSearchQueryChanged(string value) => _ = LoadAsync(value);
 
-    public ConnectionsViewModel(IConnectionService svc, NexusRDM.Services.SessionManager sessions)
+    private readonly NexusRDM.Services.PingService _ping;
+
+    public ConnectionsViewModel(
+        IConnectionService svc,
+        NexusRDM.Services.SessionManager sessions,
+        NexusRDM.Services.PingService pingService)
     {
         _svc      = svc;
         _sessions = sessions;
+        _ping     = pingService;
         // Tree-node dots reflect live session status — re-evaluate
         // every time the manager's session set mutates.
         _sessions.Sessions.CollectionChanged += (_, _) => RefreshConnectionStatus();
+
+        // Listen for ping results and update the matching node.
+        _ping.EntryUpdated += OnPingUpdated;
+
+        // Re-configure when the user flips the ping settings.
+        SettingsStore.PingSettingsChanged += (_, _) => ApplyPingSettings();
+    }
+
+    private void OnPingUpdated(object? sender, NexusRDM.Services.PingUpdate u)
+    {
+        // Hop back to the UI thread before mutating ObservableProperty values.
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
+                       ?? App.MainWin?.DispatcherQueue;
+        void Apply()
+        {
+            foreach (var n in EnumerateProfileNodes(RootItems))
+                if (n.Profile is { } p && p.Id == u.ConnectionId)
+                {
+                    n.PingState = u.State;
+                    n.LatencyMs = u.LatencyMs;
+                }
+        }
+        if (dispatcher is null) Apply();
+        else                    dispatcher.TryEnqueue(Apply);
+    }
+
+    private void ApplyPingSettings()
+    {
+        var enabled  = SettingsStore.ReadPingEnabled();
+        var interval = SettingsStore.ReadPingIntervalSeconds();
+        var show     = SettingsStore.ReadPingShowLatency();
+
+        // Push the latest globals onto every existing node so the tree
+        // reflects the current toggles immediately.
+        foreach (var n in EnumerateProfileNodes(RootItems))
+        {
+            n.PingEnabled = enabled;
+            n.ShowLatency = show;
+            if (!enabled)
+            {
+                n.PingState = NexusRDM.Services.PingState.Unknown;
+                n.LatencyMs = null;
+            }
+        }
+
+        var targets = EnumerateProfileNodes(RootItems)
+            .Where(n => n.Profile is not null)
+            .Select(n => (n.Profile!.Id, n.Profile.Host));
+        _ping.Configure(enabled, interval, targets);
     }
 
     /// <summary>Sweeps the tree and flips each node's IsLiveConnected
@@ -70,6 +125,10 @@ public sealed partial class ConnectionsViewModel : ObservableObject
             // Initial paint: reflect any sessions already open against
             // these profiles (e.g. tabs reopened from a prior search).
             RefreshConnectionStatus();
+            // Re-arm the ping service against the freshly-loaded set of
+            // hosts (Configure replaces the entire target set so adds
+            // and removes both flow through cleanly).
+            ApplyPingSettings();
         }
         finally { IsLoading = false; }
     }
@@ -82,6 +141,28 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         foreach (var child in g.Children.OrderBy(x => x.SortOrder))
             node.Children.Add(BuildGroupNode(child, all));
         return node;
+    }
+
+    /// <summary>Loads every group (including the synthetic "(none)"
+    /// option) for use in pickers — the New-Group dialog and the
+    /// edit-connection group selector both consume this.</summary>
+    public async Task<IReadOnlyList<GroupPickItem>> LoadGroupsForPickerAsync()
+    {
+        var list = new List<GroupPickItem> { new(null, "(none)") };
+        foreach (var g in (await _svc.GetGroupsAsync()).OrderBy(g => g.Name))
+            list.Add(new GroupPickItem(g.Id, g.Name));
+        return list;
+    }
+
+    /// <summary>Creates a new group and reloads the tree.</summary>
+    public async Task CreateGroupAsync(string name, Guid? parentId)
+    {
+        await _svc.CreateGroupAsync(new Core.Models.Group
+        {
+            Name     = name,
+            ParentId = parentId,
+        });
+        await LoadAsync();
     }
 
     [RelayCommand]
@@ -132,6 +213,10 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     private bool CanRefresh() => !IsLoading;
 }
 
+/// <summary>One option in a group ComboBox — either the synthetic
+/// "(none)" entry or a real group.</summary>
+public sealed record GroupPickItem(Guid? Id, string DisplayName);
+
 public sealed partial class ConnectionTreeNode : ObservableObject
 {
     // Status-driven dot colors. The protocol distinction lives on the
@@ -153,6 +238,59 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     public Color DotColor => Profile is null
         ? GroupColor
         : (IsLiveConnected ? ConnectedColor : DisconnectedColor);
+
+    /// <summary>Per-connection Segoe Fluent glyph. The glyph is
+    /// optional: when the profile has none picked, this returns empty
+    /// and <see cref="IconVisibility"/> collapses the FontIcon so the
+    /// row shows just the name.</summary>
+    public string IconGlyph =>
+        Profile is { IconGlyph: { Length: > 0 } g } ? g : string.Empty;
+
+    /// <summary>Hides the FontIcon when no glyph is picked, so the row
+    /// doesn't reserve empty space for a missing icon.</summary>
+    public Visibility IconVisibility =>
+        string.IsNullOrEmpty(IconGlyph) ? Visibility.Collapsed : Visibility.Visible;
+
+    // ── Ping status (drives a small icon next to the row) ────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PingIconColor))]
+    [NotifyPropertyChangedFor(nameof(PingIconVisibility))]
+    private NexusRDM.Services.PingState _pingState = NexusRDM.Services.PingState.Unknown;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LatencyText))]
+    private long? _latencyMs;
+
+    /// <summary>Mirrors the global "show latency" setting; toggled by
+    /// ConnectionsViewModel when the user flips it in Settings.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LatencyVisibility))]
+    private bool _showLatency;
+
+    /// <summary>Mirrors the global "ping enabled" setting; hides the
+    /// status icon entirely when ping is off.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PingIconVisibility))]
+    private bool _pingEnabled;
+
+    public Color PingIconColor => PingState switch
+    {
+        NexusRDM.Services.PingState.Ok      => Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C),
+        NexusRDM.Services.PingState.Failed  => Color.FromArgb(0xFF, 0xFF, 0x6B, 0x6B),
+        NexusRDM.Services.PingState.Pinging => Color.FromArgb(0xFF, 0xF0, 0xA7, 0x32),
+        _                                   => Color.FromArgb(0xFF, 0x60, 0x60, 0x70),
+    };
+
+    public Visibility PingIconVisibility =>
+        Profile is not null && PingEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+    public string LatencyText =>
+        LatencyMs is { } ms && PingState == NexusRDM.Services.PingState.Ok
+            ? $"{ms} ms" : string.Empty;
+
+    public Visibility LatencyVisibility =>
+        ShowLatency && !string.IsNullOrEmpty(LatencyText)
+            ? Visibility.Visible : Visibility.Collapsed;
 
     public ConnectionTreeNode(ConnectionProfile p)
     {

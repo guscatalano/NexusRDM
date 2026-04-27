@@ -4,7 +4,9 @@ using Microsoft.UI.Xaml.Shapes;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using NexusRDM.Services;
@@ -58,6 +60,7 @@ public sealed partial class MainWindow : Window
         // Hide every RDP form except the one whose tab is now selected.
         SessionTabs.SelectionChanged += OnSessionTabsSelectionChanged;
         HookCloseConfirmation();
+        RebuildHotkeys();
 
         AddWelcomeTab();
     }
@@ -233,6 +236,60 @@ public sealed partial class MainWindow : Window
 
     private bool _sidebarCollapsed;
 
+    /// <summary>Rebuilds the four global keyboard accelerators (next/prev
+    /// tab, toggle full screen, toggle pop out) from the current settings.
+    /// Called once at startup and re-called whenever the user edits a
+    /// hotkey on the Settings page.</summary>
+    public void RebuildHotkeys()
+    {
+        if (Content is not FrameworkElement root) return;
+        root.KeyboardAccelerators.Clear();
+
+        Add("HotkeyNextTab",    "Ctrl+Tab",       OnHotkeyNextTab);
+        Add("HotkeyPrevTab",    "Ctrl+Shift+Tab", OnHotkeyPrevTab);
+        Add("HotkeyFullScreen", "F11",            OnHotkeyToggleFullScreen);
+        Add("HotkeyPopOut",     "Ctrl+Shift+P",   OnHotkeyTogglePopOut);
+
+        void Add(string key, string fallback, TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
+        {
+            // Skip silently when the user has unticked the enable
+            // checkbox — letting the accelerator register would make the
+            // chord still "fire" with the default binding even after a
+            // user explicitly disabled it.
+            if (!SettingsStore.ReadHotkeyEnabled($"{key}Enabled")) return;
+            var parsed = SettingsStore.ParseHotkey(SettingsStore.ReadHotkey(key, fallback));
+            if (parsed is null) return;
+            var acc = new KeyboardAccelerator { Key = parsed.Value.Key, Modifiers = parsed.Value.Mods };
+            acc.Invoked += handler;
+            root.KeyboardAccelerators.Add(acc);
+        }
+    }
+
+    private void OnHotkeyNextTab(KeyboardAccelerator s, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        var n = SessionTabs.TabItems.Count;
+        if (n <= 1) return;
+        SessionTabs.SelectedIndex = (SessionTabs.SelectedIndex + 1) % n;
+    }
+    private void OnHotkeyPrevTab(KeyboardAccelerator s, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        var n = SessionTabs.TabItems.Count;
+        if (n <= 1) return;
+        SessionTabs.SelectedIndex = (SessionTabs.SelectedIndex - 1 + n) % n;
+    }
+    private void OnHotkeyToggleFullScreen(KeyboardAccelerator s, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        if (SessionTabs.SelectedItem is TabViewItem t && t.Content is ISessionView v) v.ToggleFullScreen();
+    }
+    private void OnHotkeyTogglePopOut(KeyboardAccelerator s, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        if (SessionTabs.SelectedItem is TabViewItem t && t.Content is ISessionView v) v.PopOut();
+    }
+
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
     {
         _sidebarCollapsed = !_sidebarCollapsed;
@@ -378,27 +435,39 @@ public sealed partial class MainWindow : Window
     /// the user can see when a connection actually came up or dropped —
     /// not just when the tab opened/closed. Fire-and-forget on a
     /// background task because the events arrive on arbitrary threads.</summary>
+    /// <summary>Marshal an audit-record call back to the UI thread and
+    /// catch any failure. Without this, the EF DbContext's app-wide
+    /// scope can be hit concurrently by session-thread events and UI
+    /// commands; the resulting concurrency exception goes silent under
+    /// fire-and-forget <c>_ = task</c>.</summary>
+    private void RecordAudit(Func<Task> call) => DispatcherQueue.TryEnqueue(async () =>
+    {
+        try { await call(); }
+        catch { /* never fault the UI thread for an audit miss */ }
+    });
+
     private void WireSessionAuditEvents(ConnectionProfile profile, ISshSession ssh)
     {
-        ssh.Disconnected += (_, _) =>
-            _ = _svc.RecordDisconnectedAsync(profile.Id, "session ended");
-        // SSH connect happens inside the VM via ConnectAsync; record from
-        // the same place — but we don't have a Connected event on
-        // ISshSession, so log on first DataReceived as a proxy.
+        // Run audit writes on the UI dispatcher (EF DbContext is shared
+        // app-wide and not thread-safe; the SSH read-loop thread firing
+        // simultaneously with the user's UI command was silently dropping
+        // the audit row via fire-and-forget exception swallowing).
+        ssh.Disconnected += (_, _) => RecordAudit(() =>
+            _svc.RecordDisconnectedAsync(profile.Id, "session ended"));
         var connectedLogged = false;
         ssh.DataReceived += (_, _) =>
         {
             if (connectedLogged) return;
             connectedLogged = true;
-            _ = _svc.RecordConnectedAsync(profile.Id);
+            RecordAudit(() => _svc.RecordConnectedAsync(profile.Id));
         };
     }
 
     private void WireSessionAuditEvents(ConnectionProfile profile, IRdpSession rdp)
     {
-        rdp.Connected    += (_, _)      => _ = _svc.RecordConnectedAsync(profile.Id);
-        rdp.Disconnected += (_, reason) => _ = _svc.RecordDisconnectedAsync(profile.Id, reason);
-        rdp.FatalError   += (_, msg)    => _ = _svc.RecordFailedAsync(profile.Id, msg);
+        rdp.Connected    += (_, _)      => RecordAudit(() => _svc.RecordConnectedAsync(profile.Id));
+        rdp.Disconnected += (_, reason) => RecordAudit(() => _svc.RecordDisconnectedAsync(profile.Id, reason));
+        rdp.FatalError   += (_, msg)    => RecordAudit(() => _svc.RecordFailedAsync(profile.Id, msg));
 
         // Pop-out close → form snapped back to the panel rect. If the
         // user is now on a different tab than they were when they popped

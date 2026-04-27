@@ -143,6 +143,7 @@ public partial class App : Application
                 profile, user, pass,
                 resolutionResolver: ResolveDesktopSize)));
         services.AddSingleton<SessionManager>();
+        services.AddSingleton<PingService>();
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();

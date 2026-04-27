@@ -7,8 +7,11 @@ using WinRT.Interop;
 
 namespace NexusRDM.Views;
 
-public sealed partial class RdpSessionView : UserControl
+public sealed partial class RdpSessionView : UserControl, ISessionView
 {
+    void ISessionView.ToggleFullScreen() => ViewModel.ToggleFullScreen();
+    void ISessionView.PopOut()           => ViewModel.PopOut();
+
     public RdpSessionViewModel ViewModel { get; }
 
     private bool                            _connected;
