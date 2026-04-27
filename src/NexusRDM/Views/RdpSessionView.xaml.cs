@@ -133,6 +133,21 @@ public sealed partial class RdpSessionView : UserControl
     private void PopOut_Click(object sender, RoutedEventArgs e) =>
         ViewModel.PopOut();
 
+    private RdpEventsWindow? _eventsWindow;
+
+    private void Events_Click(object sender, RoutedEventArgs e)
+    {
+        if (_eventsWindow is not null)
+        {
+            // Already open — bring forward instead of stacking duplicates.
+            _eventsWindow.Activate();
+            return;
+        }
+        _eventsWindow = new RdpEventsWindow(ViewModel.DisplayName, ViewModel.Events);
+        _eventsWindow.Closed += (_, _) => _eventsWindow = null;
+        _eventsWindow.Activate();
+    }
+
     /// <summary>Bounds of <c>RdpHostPanel</c> in absolute SCREEN coordinates,
     /// in raw display pixels. WinUI reports DIPs at 96 dpi; on a 200%
     /// display we have to multiply by 2 before handing the rect to

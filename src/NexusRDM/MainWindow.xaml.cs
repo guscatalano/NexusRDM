@@ -282,11 +282,14 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)
     {
-        var (username, _) = await ResolveCredentialsAsync(profile);
+        var (username, password) = await ResolveCredentialsAsync(profile);
         if (username is null) return;
-        var session = _rdp.CreateSession(profile, username, string.Empty);
+        // Pass the vault password through to the OCX (mstscax sets it on
+        // AdvancedSettings9.ClearTextPassword for silent auth). Without
+        // this the remote server always prompts even when creds are saved.
+        var session = _rdp.CreateSession(profile, username, password ?? string.Empty);
         var entry   = _sessions.AddRdp(profile, session);
-        var vm      = new RdpSessionViewModel(profile, session, _sessions);
+        var vm      = new RdpSessionViewModel(profile, session, _rdp, username, password ?? string.Empty, _sessions);
         AddSessionTab(profile, entry, Symbol.Remote, new RdpSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxRdp"]);
     }
@@ -349,6 +352,20 @@ public sealed partial class MainWindow : Window
         OverlayHost.Children.Clear();
         OverlayHost.Children.Add(panel);
         OverlayHost.Visibility = Visibility.Visible;
+
+        // Hide every embedded RDP form while the edit panel is up — the
+        // forms are top-level Win32 windows owned by the WinUI window, so
+        // they paint above any in-app overlay (which is just XAML inside
+        // the same HWND). Park them offscreen for the duration; restore
+        // when the panel closes.
+        var hidden = new List<IRdpSession>();
+        foreach (var s in _sessions.Sessions)
+            if (s.RdpSession is { } rdp)
+            {
+                try { rdp.SetVisible(false); hidden.Add(rdp); }
+                catch { /* best effort */ }
+            }
+
         try
         {
             return await panel.Result;
@@ -357,6 +374,19 @@ public sealed partial class MainWindow : Window
         {
             OverlayHost.Visibility = Visibility.Collapsed;
             OverlayHost.Children.Clear();
+
+            // Restore visibility on whichever session is in the active
+            // tab; the rest stay hidden until that tab is selected (the
+            // SelectionChanged handler manages per-tab visibility).
+            var selected = SessionTabs.SelectedItem as TabViewItem;
+            foreach (var rdp in hidden)
+            {
+                var visible = SessionTabs.TabItems.OfType<TabViewItem>()
+                    .Any(item => ReferenceEquals(item, selected)
+                              && item.Tag is OpenSession os
+                              && ReferenceEquals(os.RdpSession, rdp));
+                try { rdp.SetVisible(visible); } catch { /* best effort */ }
+            }
         }
     }
 

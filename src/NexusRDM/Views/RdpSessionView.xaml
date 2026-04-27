@@ -17,7 +17,7 @@
                 Background="{StaticResource NxBg1}"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto" Margin="10,0">
                 <Ellipse Grid.Column="0" Width="7" Height="7"
                          Fill="{StaticResource NxRdp}"
                          VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -86,7 +86,24 @@
                         Content="Ctrl+Alt+Del"
                         Margin="0,0,6,0" />
                 <Button Grid.Column="8"
+                        Click="Events_Click"
+                        Background="{StaticResource NxBg2}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8,2"
+                        FontSize="11"
+                        Foreground="{StaticResource NxTx2}"
+                        ToolTipService.ToolTip="Open the live event log for this session"
+                        Content="RDP events"
+                        Margin="0,0,6,0" />
+                <!-- Disconnect/Connect toggle: visibility flips on the
+                     ViewModel's IsDisconnected flag (= !IsConnected &&
+                     !IsConnecting). Both buttons live in the same column;
+                     only one is laid out at a time. -->
+                <Button Grid.Column="9"
                         Command="{x:Bind ViewModel.DisconnectCommand}"
+                        Visibility="{x:Bind ViewModel.IsActive, Mode=OneWay}"
                         Background="{StaticResource NxBg2}"
                         BorderBrush="{StaticResource NxBrd}"
                         BorderThickness="1"
@@ -95,6 +112,17 @@
                         FontSize="11"
                         Foreground="{StaticResource NxTx2}"
                         Content="Disconnect" />
+                <Button Grid.Column="9"
+                        Command="{x:Bind ViewModel.ConnectCommand}"
+                        Visibility="{x:Bind ViewModel.IsDisconnected, Mode=OneWay}"
+                        Background="{StaticResource NxBg2}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8,2"
+                        FontSize="11"
+                        Foreground="{StaticResource NxTx2}"
+                        Content="Connect" />
             </Grid>
         </Border>
 
@@ -102,7 +130,9 @@
              top-level window pinned over RdpHostPanel's screen rect by a
              50 ms poll in code-behind. RdpHostPanel itself is just a
              placeholder so XAML knows where the form should sit. The
-             status overlay only shows while IsConnecting flips. -->
+             status overlay only shows while IsConnecting flips; the
+             disconnected overlay shows when IsDisconnected (form has been
+             torn down, panel area is empty). -->
         <Grid Grid.Row="1">
             <Border x:Name="RdpHostPanel"
                     Background="#0F0F12"
@@ -119,6 +149,40 @@
                            FontSize="13"
                            Foreground="{StaticResource NxTx2}"
                            HorizontalAlignment="Center" />
+            </StackPanel>
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="14"
+                        Visibility="{x:Bind ViewModel.IsDisconnected, Mode=OneWay}">
+                <!-- Segoe Fluent Icons F384 = NetworkOffline. Big and dim
+                     so it reads as "this slot is empty" rather than an
+                     actionable error. -->
+                <FontIcon Glyph="&#xF384;"
+                          FontSize="56"
+                          Foreground="{StaticResource NxTx3}"
+                          HorizontalAlignment="Center" />
+                <TextBlock Text="Disconnected"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource NxTx1}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                           FontSize="12"
+                           Foreground="{StaticResource NxTx3}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           MaxWidth="420"
+                           TextAlignment="Center" />
+                <Button Command="{x:Bind ViewModel.ConnectCommand}"
+                        Background="{StaticResource NxAccent}"
+                        BorderThickness="0"
+                        CornerRadius="4"
+                        Padding="16,6"
+                        FontSize="12"
+                        Foreground="White"
+                        Content="Reconnect"
+                        HorizontalAlignment="Center"
+                        Margin="0,4,0,0" />
             </StackPanel>
         </Grid>
 

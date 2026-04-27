@@ -20,6 +20,12 @@ public partial class App : Application
     public static IServiceProvider Services { get; private set; } = null!;
     public static MainWindow        MainWin  { get; private set; } = null!;
 
+    /// <summary>Every secondary <see cref="Microsoft.UI.Xaml.Window"/> the
+    /// app opens (currently the RDP-events pop-up) registers itself here
+    /// so closing the main window can close them as a group. WinUI 3
+    /// doesn't enumerate windows for us.</summary>
+    public static readonly List<Microsoft.UI.Xaml.Window> SecondaryWindows = new();
+
     private static string AppDataDir =>
         Environment.GetEnvironmentVariable("NEXUSRDM_DATA_DIR") is { Length: > 0 } overrideDir
             ? overrideDir
@@ -58,6 +64,22 @@ public partial class App : Application
             using var scope = Services.CreateScope();
             scope.ServiceProvider.GetRequiredService<NexusDbContext>().Database.Migrate();
             MainWin = new MainWindow();
+            MainWin.Closed += (_, _) =>
+            {
+                // WinUI 3 keeps the process alive while any window is
+                // open. When the user closes the primary window, follow
+                // through and close every secondary one too — including
+                // the embedded mstscax forms, which run their own message
+                // loops on STA threads.
+                foreach (var w in SecondaryWindows.ToArray())
+                {
+                    try { w.Close(); } catch { /* already closed */ }
+                }
+                SecondaryWindows.Clear();
+
+                try { Services.GetRequiredService<Services.SessionManager>().Dispose(); }
+                catch { /* best effort */ }
+            };
             MainWin.Activate();
         }
         catch (Exception ex)

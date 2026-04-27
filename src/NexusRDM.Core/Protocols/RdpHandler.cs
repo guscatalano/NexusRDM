@@ -29,6 +29,10 @@ public sealed class MstscRdpSession : IRdpSession
     public event EventHandler?         Connected;
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? FatalError;
+    public event EventHandler<RdpEventEntry>? RdpEvent;
+
+    private void Log(string kind, string detail = "") =>
+        RdpEvent?.Invoke(this, new RdpEventEntry(DateTime.Now, kind, detail));
 
     internal MstscRdpSession(ConnectionProfile profile, string username)
     {
@@ -58,17 +62,22 @@ public sealed class MstscRdpSession : IRdpSession
         // to dismiss it. The RdpSessionView overlay tells the user where to
         // find the standalone Remote Desktop window. Phase 2 will replace
         // this with AxMSTSCLib for real in-process embedding.
+        Log("Connecting", $"{_profile.Host}:{_profile.Port} (mstsc.exe)");
+
         _ = Task.Run(async () =>
         {
             try
             {
                 Connected?.Invoke(this, EventArgs.Empty);
+                Log("Connected", $"{_profile.Host}:{_profile.Port}");
                 await _proc.WaitForExitAsync();
                 Disconnected?.Invoke(this, "mstsc exited");
+                Log("Disconnected", "mstsc exited");
             }
             catch (Exception ex)
             {
                 FatalError?.Invoke(this, ex.Message);
+                Log("FatalError", ex.Message);
             }
             finally
             {
