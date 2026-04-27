@@ -200,7 +200,7 @@ public sealed partial class ConnectionsViewModel : ObservableObject
                 DefaultButton     = ContentDialogButton.Close,
                 XamlRoot          = root.XamlRoot,
             };
-            try { await dlg.ShowAsync(); } catch { /* dialog host gone */ }
+            try { await NexusRDM.Services.DialogHost.ShowAsync(dlg); } catch { /* dialog host gone */ }
         }
     }
 
@@ -239,17 +239,31 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         ? GroupColor
         : (IsLiveConnected ? ConnectedColor : DisconnectedColor);
 
-    /// <summary>Per-connection Segoe Fluent glyph. The glyph is
-    /// optional: when the profile has none picked, this returns empty
-    /// and <see cref="IconVisibility"/> collapses the FontIcon so the
-    /// row shows just the name.</summary>
+    /// <summary>Per-row Segoe Fluent glyph. Groups always show a folder
+    /// glyph so they read as containers; connections show whatever the
+    /// user picked (or nothing, if they left the icon empty).</summary>
     public string IconGlyph =>
-        Profile is { IconGlyph: { Length: > 0 } g } ? g : string.Empty;
+        Profile is null
+            ? ""   // FolderHorizontal — distinct, immediately reads as "container"
+            : (Profile.IconGlyph is { Length: > 0 } g ? g : string.Empty);
 
-    /// <summary>Hides the FontIcon when no glyph is picked, so the row
-    /// doesn't reserve empty space for a missing icon.</summary>
+    /// <summary>Hides the FontIcon for connections that have no glyph
+    /// chosen. Groups always show theirs.</summary>
     public Visibility IconVisibility =>
         string.IsNullOrEmpty(IconGlyph) ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>Color for the row icon. Groups use a distinct amber so
+    /// they pop against connection rows; connections re-use the
+    /// status-driven palette (green=connected, red=otherwise).</summary>
+    public Color IconColor => Profile is null
+        ? Color.FromArgb(0xFF, 0xF0, 0xA7, 0x32)   // amber folder
+        : DotColor;
+
+    /// <summary>Bold name for groups so the hierarchy reads at a glance,
+    /// regular weight for connections.</summary>
+    public Windows.UI.Text.FontWeight DisplayNameFontWeight => Profile is null
+        ? new Windows.UI.Text.FontWeight(600)   // SemiBold
+        : new Windows.UI.Text.FontWeight(400);  // Normal
 
     // ── Ping status (drives a small icon next to the row) ────────────────
     [ObservableProperty]

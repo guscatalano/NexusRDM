@@ -39,11 +39,11 @@ public sealed class FakeConnectionService : IConnectionService
         return Task.CompletedTask;
     }
 
-    public Task DeleteAsync(Guid id, CancellationToken ct = default)
+    public Task<string?> DeleteAsync(Guid id, CancellationToken ct = default)
     {
         LastDeletedId = id;
         Profiles.RemoveAll(p => p.Id == id);
-        return Task.CompletedTask;
+        return Task.FromResult<string?>(null);
     }
 
     public Task<IReadOnlyList<Group>> GetGroupsAsync(CancellationToken ct = default) =>

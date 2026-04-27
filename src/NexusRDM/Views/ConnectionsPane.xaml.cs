@@ -66,7 +66,7 @@ public sealed partial class ConnectionsPane : UserControl
             DefaultButton     = ContentDialogButton.Primary,
             XamlRoot          = XamlRoot,
         };
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await NexusRDM.Services.DialogHost.ShowAsync(dlg) != ContentDialogResult.Primary) return;
 
         var name = nameBox.Text?.Trim();
         if (string.IsNullOrEmpty(name)) return;
@@ -115,7 +115,7 @@ public sealed partial class ConnectionsPane : UserControl
                     DefaultButton     = ContentDialogButton.Close,
                     XamlRoot          = XamlRoot
                 };
-                if (await dlg.ShowAsync() == ContentDialogResult.Primary)
+                if (await NexusRDM.Services.DialogHost.ShowAsync(dlg) == ContentDialogResult.Primary)
                     await ViewModel.DeleteConnectionCommand.ExecuteAsync(node);
             };
             menu.Items.Add(del);

@@ -26,12 +26,16 @@ public partial class App : Application
     /// doesn't enumerate windows for us.</summary>
     public static readonly List<Microsoft.UI.Xaml.Window> SecondaryWindows = new();
 
-    private static string AppDataDir =>
+    /// <summary>App-data root. Honors <c>NEXUSRDM_DATA_DIR</c> for tests
+    /// and isolated profiles; otherwise <c>%LocalAppData%\NexusRDM</c>.</summary>
+    public static string AppDataDir =>
         Environment.GetEnvironmentVariable("NEXUSRDM_DATA_DIR") is { Length: > 0 } overrideDir
             ? overrideDir
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NexusRDM");
 
-    private static string DbPath => Path.Combine(AppDataDir, "connections.db");
+    /// <summary>SQLite database location. Public so the Settings page can
+    /// surface it and the reset-database flow can delete it.</summary>
+    public static string DbPath => Path.Combine(AppDataDir, "connections.db");
 
     public App()
     {

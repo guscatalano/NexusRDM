@@ -252,6 +252,130 @@ public sealed class EditConnectionViewModelTests
         Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, vm.ErrorVisibility);
     }
 
+    // ── Validation surfacing (the per-field error/visibility properties) ─────
+
+    [Fact]
+    public async Task TrySave_NamesMissingFields_InErrorMessage()
+    {
+        // Recent fix: the banner used to say only "Please fix the
+        // highlighted fields", but stock TextBox doesn't visualize
+        // INotifyDataErrorInfo so users had no idea which were wrong.
+        // It now lists the offending field names.
+        var vm = new EditConnectionViewModel(new FakeConnectionService());
+        var ok = await vm.TrySaveAsync(new FakeCredentialVault());
+
+        Assert.False(ok);
+        Assert.Contains("Name", vm.ErrorMessage);
+        Assert.Contains("Host", vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task TrySave_PopulatesPerFieldErrorProperties()
+    {
+        var vm = new EditConnectionViewModel(new FakeConnectionService());
+
+        await vm.TrySaveAsync(new FakeCredentialVault());
+
+        Assert.True(vm.HasDisplayNameError);
+        Assert.True(vm.HasHostError);
+        Assert.NotEqual(string.Empty, vm.DisplayNameError);
+        Assert.NotEqual(string.Empty, vm.HostError);
+        Assert.Equal(Microsoft.UI.Xaml.Visibility.Visible, vm.DisplayNameErrorVisibility);
+        Assert.Equal(Microsoft.UI.Xaml.Visibility.Visible, vm.HostErrorVisibility);
+    }
+
+    [Fact]
+    public async Task TrySave_FixingFields_ClearsErrorVisibility()
+    {
+        var vm = new EditConnectionViewModel(new FakeConnectionService());
+        await vm.TrySaveAsync(new FakeCredentialVault()); // make errors appear
+
+        vm.DisplayName = "fixed";
+        vm.Host        = "fixed.local";
+
+        Assert.False(vm.HasDisplayNameError);
+        Assert.False(vm.HasHostError);
+        Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, vm.DisplayNameErrorVisibility);
+        Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, vm.HostErrorVisibility);
+    }
+
+    // ── Group selector (no-recursion fix) ────────────────────────────────────
+
+    [Fact]
+    public async Task SelectedGroupOption_AssigningSameValue_DoesNotLoop()
+    {
+        // Regression: the setter used to fire a manual OnPropertyChanged
+        // on SelectedGroupOption; the TwoWay ComboBox binding then
+        // re-entered the setter → infinite recursion → StackOverflow.
+        // Idempotent assignment + the [NotifyPropertyChangedFor] on
+        // GroupId is the fix.
+        var svc = new FakeConnectionService();
+        svc.Groups.Add(new Group { Id = Guid.NewGuid(), Name = "Lab" });
+        var vm = new EditConnectionViewModel(svc);
+        await vm.LoadGroupsAsync();
+
+        var lab = vm.GroupOptions.First(o => o.Id is not null);
+
+        // Assigning the same option many times must not blow the stack.
+        for (int i = 0; i < 1000; i++) vm.SelectedGroupOption = lab;
+
+        Assert.Equal(lab.Id, vm.GroupId);
+    }
+
+    [Fact]
+    public async Task SelectedGroupOption_TracksGroupIdChanges()
+    {
+        var labId = Guid.NewGuid();
+        var svc = new FakeConnectionService();
+        svc.Groups.Add(new Group { Id = labId, Name = "Lab" });
+        var vm = new EditConnectionViewModel(svc);
+        await vm.LoadGroupsAsync();
+
+        // Mutating the underlying field re-publishes the wrapper via the
+        // [NotifyPropertyChangedFor(nameof(SelectedGroupOption))] hookup.
+        vm.GroupId = labId;
+        Assert.Equal(labId, vm.SelectedGroupOption?.Id);
+
+        vm.GroupId = null;
+        Assert.Null(vm.SelectedGroupOption?.Id);
+    }
+
+    // ── Icon glyph round-trip ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Save_PersistsIconGlyph()
+    {
+        // Use  (Server) as a literal codepoint so the source-file
+        // encoding can't accidentally collapse the glyph.
+        var svc = new FakeConnectionService();
+        var vm = new EditConnectionViewModel(svc)
+        {
+            DisplayName = "n", Host = "h", Port = 22, Protocol = ConnectionProtocol.Ssh,
+            IconGlyph   = "",
+        };
+
+        await vm.TrySaveAsync(new FakeCredentialVault());
+
+        Assert.Equal("", svc.LastCreated!.IconGlyph);
+    }
+
+    [Fact]
+    public async Task Save_EmptyIconGlyph_PersistsAsNull()
+    {
+        // The model treats "no icon picked" as null — falling back to
+        // empty would leave a phantom string in the DB.
+        var svc = new FakeConnectionService();
+        var vm = new EditConnectionViewModel(svc)
+        {
+            DisplayName = "n", Host = "h", Port = 22, Protocol = ConnectionProtocol.Ssh,
+            IconGlyph   = "  ",
+        };
+
+        await vm.TrySaveAsync(new FakeCredentialVault());
+
+        Assert.Null(svc.LastCreated!.IconGlyph);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static ConnectionProfile MakeSsh(string name, string host, int port = 22) => new()

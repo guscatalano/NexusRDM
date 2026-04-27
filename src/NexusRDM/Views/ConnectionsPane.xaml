@@ -105,11 +105,12 @@
                                       FontSize="13"
                                       VerticalAlignment="Center">
                                 <FontIcon.Foreground>
-                                    <SolidColorBrush Color="{x:Bind DotColor, Mode=OneWay}" />
+                                    <SolidColorBrush Color="{x:Bind IconColor, Mode=OneWay}" />
                                 </FontIcon.Foreground>
                             </FontIcon>
                             <TextBlock Text="{x:Bind DisplayName}"
                                        FontSize="12"
+                                       FontWeight="{x:Bind DisplayNameFontWeight}"
                                        Foreground="{StaticResource NxTx1}"
                                        VerticalAlignment="Center" />
                             <Border Background="{StaticResource NxBg2}"
