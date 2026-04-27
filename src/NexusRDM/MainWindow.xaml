@@ -123,7 +123,7 @@
                 <!-- CONNECTIONS + TAB VIEW -->
                 <Grid x:Name="ConnView">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="640" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="900" />
                         <ColumnDefinition Width="4" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>

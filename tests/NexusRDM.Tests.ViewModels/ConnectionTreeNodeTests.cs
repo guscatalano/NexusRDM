@@ -100,8 +100,13 @@ public sealed class ConnectionTreeNodeTests
     }
 
     [Fact]
-    public void Ping_DefaultIsUnknown_NoLatencyShown()
+    public void Ping_DefaultIsUnknown_ShowsQuestionMark()
     {
+        // Contract changed: "no measurement yet" used to render an empty
+        // string; now it renders "?" so the latency cell never flickers
+        // between numbers and blanks as states cycle. Visibility (which
+        // is what actually controls whether the cell appears in the
+        // tree) is covered by LatencyVisibility_RequiresShowLatency...
         var node = new ConnectionTreeNode(new ConnectionProfile
         {
             DisplayName = "x",
@@ -112,7 +117,7 @@ public sealed class ConnectionTreeNodeTests
 
         Assert.Equal(NexusRDM.Services.PingState.Unknown, node.PingState);
         Assert.Null(node.LatencyMs);
-        Assert.Empty(node.LatencyText);
+        Assert.Equal("?", node.LatencyText);
     }
 
     [Fact]
@@ -132,10 +137,11 @@ public sealed class ConnectionTreeNodeTests
     }
 
     [Fact]
-    public void Ping_FailedSuppressesLatencyText()
+    public void Ping_FailedShowsQuestionMark()
     {
         // A failed ping shouldn't pretend to know latency even if a
-        // stale value is still on the node.
+        // stale value is still on the node — render "?" instead of the
+        // stored number.
         var node = new ConnectionTreeNode(new ConnectionProfile
         {
             DisplayName = "x",
@@ -146,12 +152,15 @@ public sealed class ConnectionTreeNodeTests
         node.LatencyMs = 99;
         node.PingState = NexusRDM.Services.PingState.Failed;
 
-        Assert.Empty(node.LatencyText);
+        Assert.Equal("?", node.LatencyText);
     }
 
     [Fact]
-    public void LatencyVisibility_RequiresShowLatencyAndText()
+    public void LatencyVisibility_RequiresShowLatencyAndPingEnabled()
     {
+        // Contract: visibility is independent of whether we have a
+        // measurement (the cell shows "?" when not). Required gates:
+        // ShowLatency, PingEnabled, and Profile != null.
         var node = new ConnectionTreeNode(new ConnectionProfile
         {
             DisplayName = "x",
@@ -160,16 +169,18 @@ public sealed class ConnectionTreeNodeTests
             Port        = 22,
         });
 
-        // Both off → collapsed.
-        Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, node.LatencyVisibility);
-
-        node.PingState   = NexusRDM.Services.PingState.Ok;
-        node.LatencyMs   = 5;
-        node.ShowLatency = false;
+        // Defaults: ShowLatency=false → collapsed.
         Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, node.LatencyVisibility);
 
         node.ShowLatency = true;
+        // PingEnabled still false → collapsed.
+        Assert.Equal(Microsoft.UI.Xaml.Visibility.Collapsed, node.LatencyVisibility);
+
+        node.PingEnabled = true;
         Assert.Equal(Microsoft.UI.Xaml.Visibility.Visible, node.LatencyVisibility);
+
+        // Even without a measurement, the cell stays Visible (renders "?").
+        Assert.Equal("?", node.LatencyText);
     }
 
     private static uint ToRgb(Color c) => (uint)((c.R << 16) | (c.G << 8) | c.B);
