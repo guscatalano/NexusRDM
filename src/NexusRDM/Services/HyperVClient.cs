@@ -20,22 +20,44 @@ namespace NexusRDM.Services;
 /// </summary>
 public sealed class HyperVClient
 {
-    private const string Scope = @"\\.\root\virtualization\v2";
+    private const string ScopePath = @"\\.\root\virtualization\v2";
+
+    /// <summary>WMI scope with explicit impersonation + packet
+    /// privacy. Default <see cref="ManagementScope"/> options run with
+    /// <c>ImpersonationLevel.Default</c>, which under UAC's filtered-
+    /// token model authenticates without the user's "Hyper-V
+    /// Administrators" membership — the query connects but returns
+    /// zero rows. Mirroring the options that PowerShell's
+    /// <c>Get-VM</c> and Hyper-V Manager use makes the call work as a
+    /// regular (non-elevated) member of that group.</summary>
+    private static ManagementScope BuildScope()
+    {
+        var options = new ConnectionOptions
+        {
+            Impersonation  = ImpersonationLevel.Impersonate,
+            Authentication = AuthenticationLevel.PacketPrivacy,
+            EnablePrivileges = true,
+        };
+        var scope = new ManagementScope(ScopePath, options);
+        scope.Connect();
+        return scope;
+    }
 
     public Task<IReadOnlyList<HyperVVm>> ListVmsAsync(CancellationToken ct = default) =>
         Task.Run<IReadOnlyList<HyperVVm>>(() =>
         {
             ct.ThrowIfCancellationRequested();
             var list = new List<HyperVVm>();
+            var scope = BuildScope();
             using var searcher = new ManagementObjectSearcher(
-                new ManagementScope(Scope),
+                scope,
                 new ObjectQuery("SELECT Name, ElementName, EnabledState FROM Msvm_ComputerSystem WHERE Caption='Virtual Machine'"));
             foreach (ManagementObject vm in searcher.Get())
             {
                 var id     = vm["Name"]        as string ?? "";
                 var name   = vm["ElementName"] as string ?? id;
                 var state  = Convert.ToUInt16(vm["EnabledState"]);
-                list.Add(new HyperVVm(id, name, MapState(state), TryReadIp(vm)));
+                list.Add(new HyperVVm(id, name, MapState(state), TryReadIp(vm, scope)));
             }
             return list;
         }, ct);
@@ -53,43 +75,44 @@ public sealed class HyperVClient
     public Task<HyperVDiagnosis> DiagnoseAccessAsync(CancellationToken ct = default) =>
         Task.Run(() =>
         {
-            // Prerequisites first — they explain a 0-VM result better
-            // than the WMI exception text would.
             var (isElevated, isHvAdmin) = IdentityChecks();
 
             try
             {
-                var s = new ManagementScope(Scope);
-                s.Connect();
-                if (!s.IsConnected) return new HyperVDiagnosis(false, "WMI scope did not connect.");
+                var scope = BuildScope();
+                if (!scope.IsConnected) return new HyperVDiagnosis(false, "WMI scope did not connect.");
 
-                using var searcher = new ManagementObjectSearcher(s,
+                using var searcher = new ManagementObjectSearcher(scope,
                     new ObjectQuery("SELECT Name FROM Msvm_ComputerSystem WHERE Caption='Virtual Machine'"));
                 var count = searcher.Get().Count;
 
                 if (count > 0)
                     return new HyperVDiagnosis(true, $"Connected. {count} VM(s) visible.");
 
-                // Zero VMs returned — disambiguate "really empty host"
-                // from "permission filter swallowed everything".
-                if (!isHvAdmin && !isElevated)
-                {
-                    return new HyperVDiagnosis(false,
-                        "Connected, but 0 VMs visible. Your user is NOT in the local " +
-                        "'Hyper-V Administrators' group AND the process is not elevated. " +
-                        "Add yourself to the group (computer restart required) or right-click " +
-                        "NexusRDM → Run as administrator.");
-                }
-                if (!isHvAdmin)
-                {
-                    return new HyperVDiagnosis(false,
-                        "Connected (running elevated), but your user is not in the local " +
-                        "'Hyper-V Administrators' group. WMI may still filter results — " +
-                        "add yourself to that group for the cleanest setup.");
-                }
-
-                return new HyperVDiagnosis(true,
-                    "Connected. No VMs configured on this host (or none visible to you).");
+                // Zero VMs returned with Impersonate + PacketPrivacy.
+                // We CAN'T tell from here whether the user is in
+                // Hyper-V Administrators: WindowsPrincipal.IsInRole
+                // reports the FILTERED token (UAC strips admin-
+                // equivalent group memberships from non-elevated
+                // processes), so a non-elevated user in the group
+                // shows up as not-in-the-group. Don't make a
+                // confident claim either way — list the real
+                // possibilities so the user can self-diagnose with
+                // `whoami /groups`.
+                var msg =
+                    "Connected, but 0 VMs visible. Most common causes:\n" +
+                    "  1. The host genuinely has no VMs (try `Get-VM` in PowerShell).\n" +
+                    "  2. You're in 'Hyper-V Administrators' but haven't signed out since " +
+                    "being added — group memberships only land in the access token at logon.\n" +
+                    "  3. You're not in 'Hyper-V Administrators' at all. Run `whoami /groups | findstr Hyper-V` " +
+                    "to check; add yourself with `Add-LocalGroupMember -Group \"Hyper-V Administrators\" -Member $env:USERNAME` " +
+                    "and sign out + back in.";
+                if (!isElevated && !isHvAdmin)
+                    msg += "\n\n(Note: NexusRDM is running unelevated, so we can't reliably " +
+                           "verify Hyper-V Administrators membership from here — the value above " +
+                           "may be a UAC-filtered-token false negative. PowerShell's `whoami /groups` " +
+                           "is authoritative.)";
+                return new HyperVDiagnosis(false, msg);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -150,7 +173,7 @@ public sealed class HyperVClient
         {
             ct.ThrowIfCancellationRequested();
             using var searcher = new ManagementObjectSearcher(
-                new ManagementScope(Scope),
+                BuildScope(),
                 new ObjectQuery($"SELECT * FROM Msvm_ComputerSystem WHERE Name='{vmId.Replace("'", "''")}'"));
             var vm = searcher.Get().Cast<ManagementObject>().FirstOrDefault()
                      ?? throw new InvalidOperationException($"Hyper-V VM '{vmId}' not found.");
@@ -194,13 +217,13 @@ public sealed class HyperVClient
     /// null when KVP isn't available (guest agent missing / off / Linux
     /// without hv_kvp_daemon). Errors bubble up as null too — IP is
     /// best-effort here, like Proxmox's qemu-agent path.</summary>
-    private static string? TryReadIp(ManagementObject vm)
+    private static string? TryReadIp(ManagementObject vm, ManagementScope scope)
     {
         try
         {
             var sysName = vm["Name"] as string ?? "";
             using var kvp = new ManagementObjectSearcher(
-                new ManagementScope(Scope),
+                scope,
                 new ObjectQuery(
                     "SELECT GuestIntrinsicExchangeItems FROM Msvm_KvpExchangeComponent " +
                     $"WHERE SystemName='{sysName.Replace("'", "''")}'"));
