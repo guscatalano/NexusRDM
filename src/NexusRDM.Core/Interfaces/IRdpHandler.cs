@@ -78,6 +78,13 @@ public interface IRdpSession : IDisposable
     /// remote server renegotiates display dimensions without dropping the
     /// connection. No-op without an OCX.</summary>
     void SetResolution(int width, int height);
+
+    /// <summary>Reserve <paramref name="rightInsetPx"/> raw pixels on the
+    /// right side of the form's tracked panel rect. Used by the in-app
+    /// edit-connection slide-over so the embedded RDP form narrows
+    /// instead of hiding entirely — the user sees the live session while
+    /// editing. Pass 0 to clear. No-op for non-embedded backends.</summary>
+    void SetRightInset(int rightInsetPx);
 }
 
 public interface IRdpHandler
