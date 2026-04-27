@@ -95,11 +95,6 @@
                                   Padding="0,2,8,2"
                                   MinHeight="28">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <!-- Per-connection glyph (status color still
-                                 lives on the icon's Foreground via the
-                                 same ConnectedColor/DisconnectedColor
-                                 logic the dot used). Optional — hides
-                                 entirely when the profile has no icon. -->
                             <FontIcon Glyph="{x:Bind IconGlyph, Mode=OneWay}"
                                       Visibility="{x:Bind IconVisibility, Mode=OneWay}"
                                       FontSize="13"

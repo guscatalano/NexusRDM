@@ -134,38 +134,77 @@
                                    FontSize="10" FontWeight="SemiBold"
                                    Foreground="{StaticResource NxTx3}"
                                    Margin="0,12,0,2" />
-                        <Button Click="IconNone_Click"
-                                Background="{StaticResource NxBg2}"
-                                BorderBrush="{StaticResource NxBrd}"
-                                BorderThickness="1"
-                                CornerRadius="4"
-                                Padding="6,2"
-                                FontSize="11"
-                                Foreground="{StaticResource NxTx2}"
-                                ToolTipService.ToolTip="No icon"
-                                Content="None"
-                                HorizontalAlignment="Left"
-                                Margin="0,0,0,6" />
-                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.IconChoices}"
+                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8" Margin="0,0,0,6">
+                            <Button Grid.Column="0"
+                                    Click="IconNone_Click"
+                                    Background="{StaticResource NxBg2}"
+                                    BorderBrush="{StaticResource NxBrd}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="6,2"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxTx2}"
+                                    ToolTipService.ToolTip="No icon"
+                                    Content="None" />
+
+                            <!-- Colour swatch + flyout. The button face
+                                 paints in the currently-picked colour
+                                 (or the default text colour when none),
+                                 so the user sees immediately what the
+                                 glyph will render as. -->
+                            <DropDownButton Grid.Column="1"
+                                            Background="{StaticResource NxBg2}"
+                                            BorderBrush="{StaticResource NxBrd}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Padding="6,2"
+                                            ToolTipService.ToolTip="Choose icon colour">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Border Width="14" Height="14"
+                                            CornerRadius="2"
+                                            Background="{x:Bind ViewModel.IconColorBrush, Mode=OneWay}"
+                                            BorderBrush="{StaticResource NxBrd}"
+                                            BorderThickness="1" />
+                                    <TextBlock Text="Colour" FontSize="11"
+                                               Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                                <DropDownButton.Flyout>
+                                    <Flyout>
+                                        <StackPanel Spacing="8">
+                                            <ColorPicker x:Name="IconColorPickerCtl"
+                                                         ColorChanged="IconColorChanged"
+                                                         ColorSpectrumShape="Box"
+                                                         IsAlphaEnabled="False"
+                                                         IsMoreButtonVisible="True" />
+                                            <Button Content="Use default (status colour)"
+                                                    Click="IconColorClear_Click"
+                                                    HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                    </Flyout>
+                                </DropDownButton.Flyout>
+                            </DropDownButton>
+                        </Grid>
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.IconItems}"
                                        xmlns:svc="using:NexusRDM.Services">
                             <ItemsRepeater.Layout>
                                 <UniformGridLayout MinItemWidth="40" MinItemHeight="40"
                                                    MinRowSpacing="6" MinColumnSpacing="6" />
                             </ItemsRepeater.Layout>
                             <ItemsRepeater.ItemTemplate>
-                                <DataTemplate x:DataType="svc:IconChoice">
+                                <DataTemplate x:DataType="svc:IconPickerItem">
                                     <Button Tag="{x:Bind Glyph}"
                                             ToolTipService.ToolTip="{x:Bind Name}"
                                             Click="IconChoice_Click"
-                                            Background="{StaticResource NxBg2}"
-                                            BorderBrush="{StaticResource NxBrd}"
-                                            BorderThickness="1"
+                                            Background="{x:Bind Background, Mode=OneWay}"
+                                            BorderBrush="{x:Bind BorderBrush, Mode=OneWay}"
+                                            BorderThickness="{x:Bind BorderThickness, Mode=OneWay}"
                                             CornerRadius="4"
                                             Width="36" Height="36"
                                             Padding="0">
                                         <FontIcon Glyph="{x:Bind Glyph}"
                                                   FontSize="14"
-                                                  Foreground="{StaticResource NxTx1}" />
+                                                  Foreground="{x:Bind GlyphBrush, Mode=OneWay}" />
                                     </Button>
                                 </DataTemplate>
                             </ItemsRepeater.ItemTemplate>

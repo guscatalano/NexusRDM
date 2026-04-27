@@ -152,13 +152,19 @@ public sealed class SshTypingSmokeTests : IClassFixture<SshSessionFixture>
     {
         try
         {
-            // The SshSessionView has a read-only TextBox bound to ViewModel.StatusMessage.
-            // Find any Edit element whose text starts with one of the known prefixes.
-            return win.FindAllDescendants(c => c.ByControlType(ControlType.Edit))
-                .Select(e => e.AsTextBox().Text ?? "")
-                .FirstOrDefault(t => t.StartsWith("Connected") || t.StartsWith("Connecting")
-                                     || t.StartsWith("Failed") || t.StartsWith("Disconnected"))
-                ?? "(status not found)";
+            // Status used to be a read-only TextBox (UIA Edit) but moved
+            // to a TextBlock (UIA Text) to drop trailing layout padding.
+            // Probe both so this stays robust either way.
+            string? hit = null;
+            foreach (var ct in new[] { ControlType.Edit, ControlType.Text })
+            {
+                hit = win.FindAllDescendants(c => c.ByControlType(ct))
+                    .Select(e => e.Name ?? string.Empty)
+                    .FirstOrDefault(t => t.StartsWith("Connected") || t.StartsWith("Connecting")
+                                      || t.StartsWith("Failed")    || t.StartsWith("Disconnected"));
+                if (hit is not null) return hit;
+            }
+            return "(status not found)";
         }
         catch (Exception ex) { return $"(probe threw: {ex.Message})"; }
     }

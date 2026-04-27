@@ -28,6 +28,12 @@ public class ConnectionProfile
     /// glyph. Null/empty falls back to a sensible protocol default.</summary>
     public string? IconGlyph       { get; set; }
 
+    /// <summary>Optional <c>#AARRGGBB</c> override for the row icon's
+    /// colour. When set, the connections tree paints the glyph in this
+    /// colour and surfaces connection state via a separate small dot;
+    /// when null the glyph itself remains status-coloured.</summary>
+    public string? IconColorHex    { get; set; }
+
     public string   Tags            { get; set; } = string.Empty; // comma-separated
     public DateTime CreatedAt       { get; set; } = DateTime.UtcNow;
     public DateTime? LastConnectedAt { get; set; }

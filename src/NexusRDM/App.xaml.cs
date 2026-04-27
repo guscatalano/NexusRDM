@@ -26,6 +26,11 @@ public partial class App : Application
     /// doesn't enumerate windows for us.</summary>
     public static readonly List<Microsoft.UI.Xaml.Window> SecondaryWindows = new();
 
+    /// <summary>Set when the main window starts closing. Lets late-firing
+    /// Closed handlers on secondary windows (e.g. the SSH pop-out) skip
+    /// work that would touch already-disposed XamlRoots.</summary>
+    public static bool IsShuttingDown { get; private set; }
+
     /// <summary>App-data root. Honors <c>NEXUSRDM_DATA_DIR</c> for tests
     /// and isolated profiles; otherwise <c>%LocalAppData%\NexusRDM</c>.</summary>
     public static string AppDataDir =>
@@ -39,12 +44,25 @@ public partial class App : Application
 
     public App()
     {
-        // Catch any unhandled exception on the UI thread and log it before crash
+        CrashLogger.Initialize(AppDataDir);
+
+        // Three layers of catch-all so nothing slips through:
+        //   1. WinUI dispatcher exceptions (the UI thread)
+        //   2. AppDomain — anything thrown on a non-UI managed thread
+        //   3. TaskScheduler — finalizer-thread observation of forgotten Tasks
         this.UnhandledException += (_, e) =>
         {
-            e.Handled = true;
-            var msg = $"[{DateTime.Now}] UNHANDLED: {e.Exception}\n";
-            File.AppendAllText(Path.Combine(AppDataDir, "crash.log"), msg);
+            CrashLogger.Log(e.Exception, "WinUI UnhandledException", fatal: true);
+            e.Handled = true; // keep the app alive when we can
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            CrashLogger.Log(e.ExceptionObject as Exception
+                ?? new Exception(e.ExceptionObject?.ToString() ?? "non-Exception throw"),
+                "AppDomain.UnhandledException", fatal: e.IsTerminating);
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            CrashLogger.Log(e.Exception, "TaskScheduler.UnobservedTaskException");
+            e.SetObserved();
         };
 
         try
@@ -54,9 +72,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Directory.CreateDirectory(AppDataDir);
-            File.AppendAllText(Path.Combine(AppDataDir, "crash.log"),
-                $"[{DateTime.Now}] CTOR CRASH: {ex}\n");
+            CrashLogger.Log(ex, "App ctor", fatal: true);
             throw;
         }
     }
@@ -94,6 +110,7 @@ public partial class App : Application
             catch { /* non-fatal — falls back to system mstscax */ }
             MainWin.Closed += (_, _) =>
             {
+                IsShuttingDown = true;
                 // WinUI 3 keeps the process alive while any window is
                 // open. When the user closes the primary window, follow
                 // through and close every secondary one too — including
@@ -101,19 +118,19 @@ public partial class App : Application
                 // loops on STA threads.
                 foreach (var w in SecondaryWindows.ToArray())
                 {
-                    try { w.Close(); } catch { /* already closed */ }
+                    try { w.Close(); }
+                    catch (Exception ex) { CrashLogger.Log(ex, "shutdown: close secondary window"); }
                 }
                 SecondaryWindows.Clear();
 
                 try { Services.GetRequiredService<Services.SessionManager>().Dispose(); }
-                catch { /* best effort */ }
+                catch (Exception ex) { CrashLogger.Log(ex, "shutdown: SessionManager.Dispose"); }
             };
             MainWin.Activate();
         }
         catch (Exception ex)
         {
-            File.AppendAllText(Path.Combine(AppDataDir, "crash.log"),
-                $"[{DateTime.Now}] LAUNCH CRASH: {ex}\n");
+            CrashLogger.Log(ex, "OnLaunched", fatal: true);
             throw;
         }
     }
