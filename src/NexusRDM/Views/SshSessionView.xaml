@@ -55,17 +55,38 @@
                                Foreground="{StaticResource NxTx2}"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- Disconnect button -->
-                <Button Grid.Column="3"
-                        Command="{x:Bind ViewModel.DisconnectCommand}"
-                        Background="{StaticResource NxBg2}"
-                        BorderBrush="{StaticResource NxBrd}"
-                        BorderThickness="1"
-                        CornerRadius="4"
-                        Padding="8,2"
-                        FontSize="11"
-                        Foreground="{StaticResource NxTx2}"
-                        Content="Disconnect" />
+                <!-- Window-mode buttons + Disconnect. -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                    <Button Click="FullScreen_Click"
+                            Background="{StaticResource NxBg2}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,2"
+                            FontSize="11"
+                            Foreground="{StaticResource NxTx2}"
+                            ToolTipService.ToolTip="Full screen (toggle with the configured hotkey)"
+                            Content="Full screen" />
+                    <Button Click="PopOut_Click"
+                            Background="{StaticResource NxBg2}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,2"
+                            FontSize="11"
+                            Foreground="{StaticResource NxTx2}"
+                            ToolTipService.ToolTip="Detach into its own window"
+                            Content="Pop out" />
+                    <Button Command="{x:Bind ViewModel.DisconnectCommand}"
+                            Background="{StaticResource NxBg2}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,2"
+                            FontSize="11"
+                            Foreground="{StaticResource NxTx2}"
+                            Content="Disconnect" />
+                </StackPanel>
             </Grid>
         </Border>
 

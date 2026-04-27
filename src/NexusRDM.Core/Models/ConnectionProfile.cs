@@ -22,6 +22,12 @@ public class ConnectionProfile
     /// <summary>JSON-serialized SshOptions. Null for RDP connections.</summary>
     public string? SshSettingsJson { get; set; }
 
+    /// <summary>Segoe Fluent Icons codepoint (e.g. <c>"E756"</c>). The
+    /// connection-tree row renders this as the row's leading icon —
+    /// replacing the previous protocol/status dot with a per-connection
+    /// glyph. Null/empty falls back to a sensible protocol default.</summary>
+    public string? IconGlyph       { get; set; }
+
     public string   Tags            { get; set; } = string.Empty; // comma-separated
     public DateTime CreatedAt       { get; set; } = DateTime.UtcNow;
     public DateTime? LastConnectedAt { get; set; }

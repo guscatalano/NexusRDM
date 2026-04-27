@@ -7,11 +7,18 @@
 
     <Grid ColumnDefinitions="150,1,*">
 
-        <!-- Left nav -->
+        <!-- Left nav: search box + section list. Selecting an item
+             filters the body to that section; the search box scopes
+             both the list and the body. -->
         <Border Grid.Column="0"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,0,1,0">
             <StackPanel Padding="0,8">
+                <TextBox x:Name="NavSearchBox"
+                         PlaceholderText="Search…"
+                         TextChanged="NavSearch_TextChanged"
+                         FontSize="11"
+                         Margin="8,0,8,8" />
                 <ListBox x:Name="SettingsNav"
                          SelectionChanged="SettingsNav_SelectionChanged"
                          Background="Transparent"
@@ -27,11 +34,18 @@
                             <Setter Property="BorderBrush" Value="Transparent" />
                         </Style>
                     </ListBox.ItemContainerStyle>
-                    <ListBoxItem Content="General" />
-                    <ListBoxItem Content="SSH defaults" />
-                    <ListBoxItem Content="RDP defaults" />
-                    <ListBoxItem Content="Credentials" />
-                    <ListBoxItem Content="About" />
+                    <!-- Tag = section header text (uppercase) the
+                         body uses; "ALL" is a sentinel for "show
+                         everything". -->
+                    <ListBoxItem Content="All"               Tag="ALL" />
+                    <ListBoxItem Content="Appearance"        Tag="APPEARANCE" />
+                    <ListBoxItem Content="SSH defaults"      Tag="SSH DEFAULTS" />
+                    <ListBoxItem Content="RDP defaults"      Tag="RDP DEFAULTS" />
+                    <ListBoxItem Content="RDP backend paths" Tag="RDP BACKEND PATHS" />
+                    <ListBoxItem Content="Host ping"         Tag="HOST PING" />
+                    <ListBoxItem Content="Hotkeys"           Tag="HOTKEYS" />
+                    <ListBoxItem Content="Safety"            Tag="SAFETY" />
+                    <ListBoxItem Content="About"             Tag="ABOUT" />
                 </ListBox>
             </StackPanel>
         </Border>
@@ -40,7 +54,7 @@
 
         <!-- Settings body -->
         <ScrollViewer Grid.Column="2" Padding="20,16,20,20">
-            <StackPanel Spacing="0" MaxWidth="500">
+            <StackPanel x:Name="BodyStack" Spacing="0" MaxWidth="500">
 
                 <!-- Appearance section -->
                 <TextBlock Text="APPEARANCE"
@@ -53,8 +67,8 @@
                 <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="Font size" FontSize="12" Foreground="{StaticResource NxTx1}" />
-                            <TextBlock Text="Applies app-wide via a uniform UI scale." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                            <TextBlock Text="Font size (experimental)" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Walks the visual tree and rescales each control's FontSize. Some controls retemplate their own text and won't pick up the change — this knob is a work in progress." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                         <ComboBox Grid.Column="1"
                                   SelectedIndex="{x:Bind ViewModel.FontSizeIndex, Mode=TwoWay}"
@@ -87,6 +101,54 @@
                                   FontSize="12"
                                   MinWidth="180" />
                     </Grid>
+                </Border>
+
+                <!-- Custom-theme editor: visible only when "Custom" is the
+                     active theme. Each row is a label + a clickable swatch
+                     that opens a ColorPicker flyout. Edits are persisted
+                     and live-applied on every change. -->
+                <Border BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="0,0,0,1"
+                        Padding="0,8"
+                        Visibility="{x:Bind ViewModel.CustomThemeVisibility, Mode=OneWay}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Edit custom palette" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                        <TextBlock Text="Click any swatch to open a color picker." FontSize="11" Foreground="{StaticResource NxTx3}" />
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.CustomColors}"
+                                      xmlns:svc="using:NexusRDM.Services">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="svc:CustomColorEntry">
+                                    <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{x:Bind Name}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource NxTx1}"
+                                                   VerticalAlignment="Center" />
+                                        <DropDownButton Grid.Column="1"
+                                                        Background="{StaticResource NxBg2}"
+                                                        BorderBrush="{StaticResource NxBrd}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="4"
+                                                        Padding="6,2"
+                                                        MinWidth="120">
+                                            <Border Width="100" Height="18"
+                                                    CornerRadius="2"
+                                                    Background="{x:Bind Brush, Mode=OneWay}" />
+                                            <DropDownButton.Flyout>
+                                                <Flyout>
+                                                    <ColorPicker Color="{x:Bind Color, Mode=TwoWay}"
+                                                                 ColorSpectrumShape="Box"
+                                                                 IsMoreButtonVisible="True"
+                                                                 IsColorSliderVisible="True"
+                                                                 IsAlphaEnabled="True" />
+                                                </Flyout>
+                                            </DropDownButton.Flyout>
+                                        </DropDownButton>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </Border>
 
                 <!-- SSH Defaults section -->
@@ -240,6 +302,108 @@
                     </StackPanel>
                 </Border>
 
+                <TextBlock Text="HOST PING"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Ping connections" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Periodically pings every saved host with ICMP and shows a small status icon next to it." />
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1"
+                                      IsOn="{x:Bind ViewModel.PingEnabled, Mode=TwoWay}"
+                                      OnContent="" OffContent="" />
+                    </Grid>
+                </Border>
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Ping interval (seconds)" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Floored at 5 seconds." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <NumberBox Grid.Column="1"
+                                   Value="{x:Bind ViewModel.PingIntervalSeconds, Mode=TwoWay}"
+                                   Minimum="5" Maximum="3600"
+                                   SpinButtonPlacementMode="Compact"
+                                   Background="{StaticResource NxBg2}"
+                                   BorderBrush="{StaticResource NxBrd}"
+                                   Foreground="{StaticResource NxTx1}"
+                                   FontSize="12"
+                                   Width="100" />
+                    </Grid>
+                </Border>
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Show latency next to icon" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Displays the round-trip time when the host responded." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1"
+                                      IsOn="{x:Bind ViewModel.PingShowLatency, Mode=TwoWay}"
+                                      OnContent="" OffContent="" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="HOTKEYS"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <StackPanel Spacing="6">
+                        <TextBlock FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap"
+                                   Text="Use combos like 'Ctrl+Tab', 'Ctrl+Shift+P', or 'F11'. Modifiers: Ctrl, Shift, Alt, Win." />
+                        <!-- Each row: [enable checkbox] [label] [combo TextBox].
+                             Unticking the checkbox stops the accelerator from
+                             registering on the next RebuildHotkeys() call;
+                             the TextBox dims to show the entry is inactive. -->
+                        <Grid ColumnDefinitions="Auto,180,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                            <CheckBox  Grid.Row="0" Grid.Column="0"
+                                       IsChecked="{x:Bind ViewModel.HotkeyNextTabEnabled, Mode=TwoWay}"
+                                       MinWidth="0" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="Next tab"        FontSize="12" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                            <TextBox   Grid.Row="0" Grid.Column="2" FontSize="12"
+                                       IsEnabled="{x:Bind ViewModel.HotkeyNextTabEnabled, Mode=OneWay}"
+                                       Text="{x:Bind ViewModel.HotkeyNextTab, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <CheckBox  Grid.Row="1" Grid.Column="0"
+                                       IsChecked="{x:Bind ViewModel.HotkeyPrevTabEnabled, Mode=TwoWay}"
+                                       MinWidth="0" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="Previous tab"    FontSize="12" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                            <TextBox   Grid.Row="1" Grid.Column="2" FontSize="12"
+                                       IsEnabled="{x:Bind ViewModel.HotkeyPrevTabEnabled, Mode=OneWay}"
+                                       Text="{x:Bind ViewModel.HotkeyPrevTab, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <CheckBox  Grid.Row="2" Grid.Column="0"
+                                       IsChecked="{x:Bind ViewModel.HotkeyFullScreenEnabled, Mode=TwoWay}"
+                                       MinWidth="0" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="Toggle full screen" FontSize="12" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                            <TextBox   Grid.Row="2" Grid.Column="2" FontSize="12"
+                                       IsEnabled="{x:Bind ViewModel.HotkeyFullScreenEnabled, Mode=OneWay}"
+                                       Text="{x:Bind ViewModel.HotkeyFullScreen, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <CheckBox  Grid.Row="3" Grid.Column="0"
+                                       IsChecked="{x:Bind ViewModel.HotkeyPopOutEnabled, Mode=TwoWay}"
+                                       MinWidth="0" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="Toggle pop out"  FontSize="12" Foreground="{StaticResource NxTx1}" VerticalAlignment="Center" />
+                            <TextBox   Grid.Row="3" Grid.Column="2" FontSize="12"
+                                       IsEnabled="{x:Bind ViewModel.HotkeyPopOutEnabled, Mode=OneWay}"
+                                       Text="{x:Bind ViewModel.HotkeyPopOut, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Text="SAFETY"
                            FontSize="10" CharacterSpacing="60"
                            Foreground="{StaticResource NxTx3}"
@@ -316,25 +480,11 @@
                     </Grid>
                 </Border>
 
-                <!-- Save -->
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
-                    <Button Command="{x:Bind ViewModel.SaveCommand}"
-                            Background="{StaticResource NxAccent}"
-                            BorderThickness="0"
-                            CornerRadius="5"
-                            Padding="14,6"
-                            FontSize="12"
-                            Foreground="White"
-                            Content="Save settings" />
-                    <Button Background="{StaticResource NxBg2}"
-                            BorderBrush="{StaticResource NxBrd}"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="14,6"
-                            FontSize="12"
-                            Foreground="{StaticResource NxTx2}"
-                            Content="Reset to defaults" />
-                </StackPanel>
+                <!-- Settings auto-persist on every change; no Save button. -->
+                <TextBlock Text="Changes are saved automatically."
+                           FontSize="11" FontStyle="Italic"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,0" />
 
                 <!-- About -->
                 <TextBlock Text="ABOUT"

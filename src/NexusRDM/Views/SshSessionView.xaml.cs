@@ -7,7 +7,7 @@ using Windows.Foundation;
 
 namespace NexusRDM.Views;
 
-public sealed partial class SshSessionView : UserControl
+public sealed partial class SshSessionView : UserControl, ISessionView
 {
     public SshSessionViewModel ViewModel { get; }
     private bool _connectStarted;
@@ -120,4 +120,121 @@ public sealed partial class SshSessionView : UserControl
     /// <summary>Push a synthetic line of text into the terminal renderer for diagnostics.</summary>
     private void WriteTrace(string line) =>
         Terminal.Feed(Encoding.UTF8.GetBytes(line + "\r\n"));
+
+    // ── Window-mode controls (toolbar buttons + global hotkeys) ──────────
+
+    private Microsoft.UI.Xaml.Window? _poppedWindow;
+    private TabViewItem?              _hostTab;
+
+    private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+    private void PopOut_Click(object sender, RoutedEventArgs e)     => PopOut();
+
+    /// <summary>Toggles full-screen on whichever window currently hosts
+    /// this view. If we're not popped out, the main window flips between
+    /// the FullScreen presenter and the default Overlapped one.</summary>
+    public void ToggleFullScreen()
+    {
+        var win = _poppedWindow ?? App.MainWin;
+        if (win?.AppWindow is not { } aw) return;
+
+        if (aw.Presenter is Microsoft.UI.Windowing.FullScreenPresenter)
+            aw.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.Overlapped);
+        else
+            aw.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+    }
+
+    /// <summary>Detaches the view from its host tab and into a new
+    /// always-on-top window. Calling again on an already-popped session
+    /// closes the popped window, which re-attaches the view via the
+    /// Closed handler.</summary>
+    public void PopOut()
+    {
+        if (_poppedWindow is not null)
+        {
+            try { _poppedWindow.Close(); } catch { /* tearing down */ }
+            return;
+        }
+
+        if (App.MainWin is null) return;
+        var sessionTabs = (App.MainWin.Content as FrameworkElement)?.FindName("SessionTabs") as TabView;
+        _hostTab = sessionTabs?.TabItems.OfType<TabViewItem>()
+            .FirstOrDefault(t => ReferenceEquals(t.Content, this));
+
+        if (_hostTab is null)
+        {
+            CreatePoppedWindow();
+            return;
+        }
+
+        var tab = _hostTab;
+
+        // WinUI 3 keeps the UserControl's XamlRoot bound to its current
+        // window even after we swap the tab's content; assigning it as
+        // another Window's Content before that's released throws
+        // "Value does not fall within the expected range". The Unloaded
+        // event is the moment XAML actually clears the binding, so we
+        // wait for it (and one extra dispatcher hop) before reparenting.
+        void OnUnloadedForPopOut(object sender, RoutedEventArgs e)
+        {
+            Unloaded -= OnUnloadedForPopOut;
+            DispatcherQueue.TryEnqueue(CreatePoppedWindow);
+        }
+        Unloaded += OnUnloadedForPopOut;
+        tab.Content = BuildPoppedPlaceholder();
+    }
+
+    private void CreatePoppedWindow()
+    {
+        var win = new Microsoft.UI.Xaml.Window
+        {
+            Title   = $"Nexus RDM — {ViewModel.DisplayName}",
+            Content = this,
+        };
+        _poppedWindow = win;
+        App.SecondaryWindows.Add(win);
+        win.Activate();
+        win.Closed += (_, _) =>
+        {
+            App.SecondaryWindows.Remove(win);
+            _poppedWindow = null;
+            var tab = _hostTab;
+            _hostTab  = null;
+            if (tab is null) return;
+
+            // Same wait-for-Unloaded discipline going back to the tab,
+            // for the same reason: the popped Window's XamlRoot
+            // ownership doesn't release until our Unloaded event fires.
+            void OnUnloadedForReAttach(object sender, RoutedEventArgs e)
+            {
+                Unloaded -= OnUnloadedForReAttach;
+                DispatcherQueue.TryEnqueue(() => tab.Content = this);
+            }
+            Unloaded += OnUnloadedForReAttach;
+            win.Content = null;
+        };
+    }
+
+    private static Border BuildPoppedPlaceholder()
+    {
+        var sp = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+            Spacing             = 6,
+        };
+        sp.Children.Add(new TextBlock
+        {
+            Text       = "Session is popped out.",
+            FontSize   = 13,
+            FontWeight = new Windows.UI.Text.FontWeight(600),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        sp.Children.Add(new TextBlock
+        {
+            Text       = "Close the floating window to dock it back here.",
+            FontSize   = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        return new Border { Child = sp };
+    }
 }

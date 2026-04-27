@@ -23,6 +23,34 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     [ObservableProperty] private string             _tags     = string.Empty;
     [ObservableProperty] private Guid?              _groupId;
 
+    /// <summary>Codepoint of the glyph chosen for this connection. Used
+    /// by the connections tree to render a per-row icon. Empty means
+    /// "use the protocol default" (set by <see cref="NexusRDM.Services.ConnectionIcons.DefaultFor"/>).</summary>
+    [ObservableProperty] private string             _iconGlyph = string.Empty;
+
+    /// <summary>Catalog the picker iterates; each entry is rendered as
+    /// a small button in the edit panel.</summary>
+    public IReadOnlyList<NexusRDM.Services.IconChoice> IconChoices { get; } =
+        NexusRDM.Services.ConnectionIcons.All;
+
+    /// <summary>Group picker entries — populated by <see cref="LoadGroupsAsync"/>
+    /// from the existing list of <see cref="Group"/>s plus a synthetic
+    /// "(none)" option for connections that live at the tree root.</summary>
+    public System.Collections.ObjectModel.ObservableCollection<GroupPickItem> GroupOptions { get; } = new();
+
+    /// <summary>Two-way binding for the Group ComboBox. Maps to the
+    /// underlying <see cref="GroupId"/> field.</summary>
+    public GroupPickItem? SelectedGroupOption
+    {
+        get => GroupOptions.FirstOrDefault(o => o.Id == GroupId)
+               ?? GroupOptions.FirstOrDefault(o => o.Id == null);
+        set
+        {
+            GroupId = value?.Id;
+            OnPropertyChanged(nameof(SelectedGroupOption));
+        }
+    }
+
     partial void OnProtocolChanged(ConnectionProtocol value)
     {
         Port = value == ConnectionProtocol.Ssh ? 22 : 3389;
@@ -319,6 +347,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         Port          = existing.Port;
         Tags          = existing.Tags;
         GroupId       = existing.GroupId;
+        IconGlyph     = existing.IconGlyph ?? string.Empty;
         CredentialKey = existing.CredentialKey;
 
         // SaveCredential defaults to true (the common case). Only opt out
@@ -393,8 +422,18 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         }
     }
 
-    public async Task LoadGroupsAsync() =>
+    public async Task LoadGroupsAsync()
+    {
         Groups = [.. await _svc.GetGroupsAsync()];
+        // Populate the picker too — connection panel binds the Group
+        // ComboBox to GroupOptions, with a leading "(none)" option for
+        // root-level connections.
+        GroupOptions.Clear();
+        GroupOptions.Add(new GroupPickItem(null, "(none)"));
+        foreach (var g in Groups.OrderBy(x => x.Name))
+            GroupOptions.Add(new GroupPickItem(g.Id, g.Name));
+        OnPropertyChanged(nameof(SelectedGroupOption));
+    }
 
     public async Task<bool> TrySaveAsync(ICredentialVault vault)
     {
@@ -428,6 +467,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         Protocol        = Protocol,
         Tags            = Tags.Trim(),
         GroupId         = GroupId,
+        IconGlyph       = string.IsNullOrWhiteSpace(IconGlyph) ? null : IconGlyph,
         CredentialKey   = credKey,
         RdpSettingsJson = Protocol == ConnectionProtocol.Rdp
             ? System.Text.Json.JsonSerializer.Serialize(new RdpOptions

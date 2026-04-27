@@ -34,6 +34,46 @@ public sealed partial class ConnectionsPane : UserControl
     private void Collapse_Click(object sender, RoutedEventArgs e) =>
         CollapseRequested?.Invoke(this, EventArgs.Empty);
 
+    private async void NewGroup_Click(object sender, RoutedEventArgs e)
+    {
+        // Build a tiny inline dialog rather than dragging in a separate
+        // page — name + optional parent-group is the entire surface.
+        var groups = await ViewModel.LoadGroupsForPickerAsync();
+
+        var nameBox = new TextBox
+        {
+            PlaceholderText = "Group name",
+            Header          = "Name",
+        };
+        var parentBox = new ComboBox
+        {
+            Header                    = "Parent (optional)",
+            HorizontalAlignment       = HorizontalAlignment.Stretch,
+            ItemsSource               = groups,
+            DisplayMemberPath         = "DisplayName",
+        };
+
+        var stack = new StackPanel { Spacing = 8 };
+        stack.Children.Add(nameBox);
+        stack.Children.Add(parentBox);
+
+        var dlg = new ContentDialog
+        {
+            Title             = "New group",
+            Content           = stack,
+            PrimaryButtonText = "Create",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+            XamlRoot          = XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var name = nameBox.Text?.Trim();
+        if (string.IsNullOrEmpty(name)) return;
+        var parent = parentBox.SelectedItem as NexusRDM.ViewModels.GroupPickItem;
+        await ViewModel.CreateGroupAsync(name, parent?.Id);
+    }
+
     private void ConnectionTree_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (NexusRDM.ViewModels.SettingsStore.ReadClickBehavior() != Core.Models.ConnectionClickBehavior.DoubleClick)

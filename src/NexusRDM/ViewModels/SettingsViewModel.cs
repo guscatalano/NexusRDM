@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using NexusRDM.Core.Models;
 using NexusRDM.Services;
@@ -16,8 +17,99 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Catalog of palettes — bound to the ComboBox in SettingsPage.</summary>
     public IReadOnlyList<NxTheme> Themes { get; } = ThemeService.All;
 
-    [ObservableProperty] private NxTheme _selectedTheme = ThemeService.Default;
-    partial void OnSelectedThemeChanged(NxTheme value) => ThemeService.Apply(value);
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsCustomThemeSelected))]
+    [NotifyPropertyChangedFor(nameof(CustomThemeVisibility))]
+    private NxTheme _selectedTheme = ThemeService.Default;
+    partial void OnSelectedThemeChanged(NxTheme value) => ApplySelectedTheme();
+
+    /// <summary>True when the user picked the "Custom" palette — drives
+    /// the visibility of the per-color editor below the dropdown.</summary>
+    public bool IsCustomThemeSelected => SelectedTheme.Id == "custom";
+    public Microsoft.UI.Xaml.Visibility CustomThemeVisibility =>
+        IsCustomThemeSelected ? Microsoft.UI.Xaml.Visibility.Visible
+                              : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+    /// <summary>One row per <see cref="NxTheme"/> color slot. Editing a
+    /// row's Color persists it (as hex under <c>CustomColor.{Key}</c>)
+    /// and, if the active theme is Custom, re-applies the rebuilt
+    /// palette so the change is visible immediately.</summary>
+    public System.Collections.ObjectModel.ObservableCollection<CustomColorEntry> CustomColors { get; } = new();
+
+    private void InitCustomColors()
+    {
+        if (CustomColors.Count > 0) return;
+        // Seed defaults from the active default palette (Dracula) but
+        // let any stored hex override take precedence — the user's last
+        // edit sticks.
+        var seed = ThemeService.Default;
+        Add("Background 0",   "Bg0",     seed.Bg0);
+        Add("Background 1",   "Bg1",     seed.Bg1);
+        Add("Background 2",   "Bg2",     seed.Bg2);
+        Add("Background 3",   "Bg3",     seed.Bg3);
+        Add("Border",         "Brd",     seed.Brd);
+        Add("Text primary",   "Tx1",     seed.Tx1);
+        Add("Text secondary", "Tx2",     seed.Tx2);
+        Add("Text tertiary",  "Tx3",     seed.Tx3);
+        Add("Accent",         "Accent",  seed.Accent);
+        Add("Accent (hover)", "Accent2", seed.Accent2);
+        Add("SSH",            "Ssh",     seed.Ssh);
+        Add("RDP",            "Rdp",     seed.Rdp);
+        Add("Red",            "Red",     seed.Red);
+        Add("Yellow",         "Yellow",  seed.Yellow);
+
+        foreach (var e in CustomColors) e.PropertyChanged += OnCustomColorChanged;
+
+        void Add(string label, string key, Windows.UI.Color fallback)
+        {
+            var initial = SettingsStore.ReadCustomColor(key, fallback);
+            CustomColors.Add(new CustomColorEntry(label, key, initial));
+        }
+    }
+
+    private void OnCustomColorChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (sender is not CustomColorEntry row || e.PropertyName != nameof(CustomColorEntry.Color)) return;
+        SettingsStore.WriteCustomColor(row.Key, row.Color);
+        if (IsCustomThemeSelected) ApplySelectedTheme();
+    }
+
+    /// <summary>Either applies a built-in theme or rebuilds the Custom
+    /// palette on the fly from <see cref="CustomColors"/>.</summary>
+    private void ApplySelectedTheme()
+    {
+        if (SelectedTheme.Id == "custom")
+        {
+            ThemeService.Apply(BuildCustomThemeFromState());
+        }
+        else
+        {
+            ThemeService.Apply(SelectedTheme);
+        }
+    }
+
+    private NxTheme BuildCustomThemeFromState()
+    {
+        Windows.UI.Color C(string key) =>
+            CustomColors.FirstOrDefault(e => e.Key == key) is { } entry ? entry.Color
+                                                                        : ThemeService.Default.Bg0;
+        // Heuristic: if Bg0 is bright, treat as a light palette so
+        // WinUI's built-in glyphs flip accordingly.
+        var bg = C("Bg0");
+        var luma = (0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B) / 255.0;
+        return new NxTheme(
+            Id: "custom", DisplayName: "Custom", IsLight: luma > 0.55,
+            Bg0: C("Bg0"), Bg1: C("Bg1"), Bg2: C("Bg2"), Bg3: C("Bg3"),
+            Brd: C("Brd"),
+            Tx1: C("Tx1"), Tx2: C("Tx2"), Tx3: C("Tx3"),
+            Accent: C("Accent"), Accent2: C("Accent2"),
+            Ssh: C("Ssh"), Rdp: C("Rdp"),
+            Red: C("Red"), Yellow: C("Yellow"));
+    }
+    // Default ssh-user / ports / save-window-size are read fresh by
+    // their consumers (EditConnectionViewModel for ports, MainWindow
+    // for window size persistence). No instant-apply hook needed —
+    // the OnPropertyChanged auto-persist flushes them on each edit.
     [ObservableProperty] private string _defaultSshUser  = string.Empty;
     [ObservableProperty] private int    _defaultSshPort  = 22;
     [ObservableProperty] private int    _defaultRdpPort  = 3389;
@@ -46,8 +138,24 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnDebugModeChanged(bool value) => SettingsStore.ApplyDebugMode(value);
 
     /// <summary>How long audit-log entries are kept before being purged.
-    /// Default 7 days; cleanup runs at app startup.</summary>
+    /// Default 7 days; cleanup runs at app startup AND immediately when
+    /// the user shortens the window (so the new cutoff applies without
+    /// a restart).</summary>
     [ObservableProperty] private int _auditRetentionDays = 7;
+    partial void OnAuditRetentionDaysChanged(int value)
+    {
+        try
+        {
+            // IAuditRepository is scoped (per DbContext) — open a fresh
+            // scope, fire-and-forget the purge, dispose the scope.
+            using var scope = App.Services?.CreateScope();
+            var audit = scope?.ServiceProvider
+                .GetService(typeof(NexusRDM.Core.Interfaces.IAuditRepository))
+                as NexusRDM.Core.Interfaces.IAuditRepository;
+            _ = audit?.DeleteOlderThanAsync(DateTime.UtcNow.AddDays(-Math.Max(1, value)));
+        }
+        catch { /* non-fatal */ }
+    }
 
     /// <summary>Single- or double-click in the connections tree to
     /// activate. Default is single-click — fastest path to a session.</summary>
@@ -78,6 +186,38 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _fontSizeIndex = 1;
     partial void OnFontSizeIndexChanged(int value) => SettingsStore.ApplyFontSize(value);
 
+    /// <summary>Periodically ping every saved host and surface the
+    /// result as a status icon in the connections tree.</summary>
+    [ObservableProperty] private bool _pingEnabled         = false;
+    /// <summary>How often to retry each host. Floored at 5s by the
+    /// service so a busy network doesn't get hammered.</summary>
+    [ObservableProperty] private int  _pingIntervalSeconds = 30;
+    /// <summary>Show round-trip latency next to the ping icon.</summary>
+    [ObservableProperty] private bool _pingShowLatency     = false;
+    partial void OnPingEnabledChanged(bool value)        => SettingsStore.RaisePingSettingsChanged();
+    partial void OnPingIntervalSecondsChanged(int value) => SettingsStore.RaisePingSettingsChanged();
+    partial void OnPingShowLatencyChanged(bool value)    => SettingsStore.RaisePingSettingsChanged();
+
+    /// <summary>Hotkey strings, e.g. <c>"Ctrl+Tab"</c>. Free-form so the
+    /// user can wire any single combo; parsed by <see cref="SettingsStore.ParseHotkey"/>.
+    /// MainWindow re-registers accelerators when these change.</summary>
+    [ObservableProperty] private string _hotkeyNextTab    = "Ctrl+Tab";
+    [ObservableProperty] private string _hotkeyPrevTab    = "Ctrl+Shift+Tab";
+    [ObservableProperty] private string _hotkeyFullScreen = "F11";
+    [ObservableProperty] private string _hotkeyPopOut     = "Ctrl+Shift+P";
+    [ObservableProperty] private bool   _hotkeyNextTabEnabled    = true;
+    [ObservableProperty] private bool   _hotkeyPrevTabEnabled    = true;
+    [ObservableProperty] private bool   _hotkeyFullScreenEnabled = true;
+    [ObservableProperty] private bool   _hotkeyPopOutEnabled     = true;
+    partial void OnHotkeyNextTabChanged(string value)         => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyPrevTabChanged(string value)         => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyFullScreenChanged(string value)      => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyPopOutChanged(string value)          => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyNextTabEnabledChanged(bool value)    => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyPrevTabEnabledChanged(bool value)    => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyFullScreenEnabledChanged(bool value) => App.MainWin?.RebuildHotkeys();
+    partial void OnHotkeyPopOutEnabledChanged(bool value)     => App.MainWin?.RebuildHotkeys();
+
     /// <summary>Safe for unpackaged apps — Package.Current throws without identity.</summary>
     public string AppVersion
     {
@@ -92,7 +232,38 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
-    public SettingsViewModel() => Load();
+    /// <summary>True while we're hydrating values from disk in the
+    /// constructor. The OnPropertyChanged override skips its
+    /// auto-persist while this is set, so initial bind-up doesn't
+    /// thrash the store with redundant writes.</summary>
+    private bool _loading;
+
+    public SettingsViewModel()
+    {
+        _loading = true;
+        try
+        {
+            // Custom-color rows are seeded BEFORE Load so the saved theme id
+            // can pick "custom" without racing against an empty list.
+            InitCustomColors();
+            Load();
+        }
+        finally { _loading = false; }
+    }
+
+    /// <summary>Auto-persist every observable change. The Settings page
+    /// no longer has a Save button — anything the user touches goes
+    /// straight to the store and to whatever services consume it.</summary>
+    protected override void OnPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (_loading) return;
+        // Derived/computed properties (IsCustomThemeSelected,
+        // CustomThemeVisibility) still PropertyChange — re-writing the
+        // full dict on those is harmless and cheap.
+        try { PersistAll(); }
+        catch { /* never let a write failure crash the UI thread */ }
+    }
 
     private void Load()
     {
@@ -111,6 +282,17 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("MstscExePath",       out var mp)) MstscExePath       = Convert.ToString(mp) ?? string.Empty;
         if (s.TryGetValue("MstscAxPath",        out var ap)) MstscAxPath        = Convert.ToString(ap) ?? string.Empty;
         if (s.TryGetValue("FontSize",           out var fs)) FontSizeIndex      = Convert.ToInt32(fs);
+        if (s.TryGetValue("HotkeyNextTab",      out var h1)) HotkeyNextTab      = Convert.ToString(h1) ?? HotkeyNextTab;
+        if (s.TryGetValue("HotkeyPrevTab",      out var h2)) HotkeyPrevTab      = Convert.ToString(h2) ?? HotkeyPrevTab;
+        if (s.TryGetValue("HotkeyFullScreen",   out var h3)) HotkeyFullScreen   = Convert.ToString(h3) ?? HotkeyFullScreen;
+        if (s.TryGetValue("HotkeyPopOut",       out var h4)) HotkeyPopOut       = Convert.ToString(h4) ?? HotkeyPopOut;
+        if (s.TryGetValue("HotkeyNextTabEnabled",    out var e1)) HotkeyNextTabEnabled    = Convert.ToBoolean(e1);
+        if (s.TryGetValue("HotkeyPrevTabEnabled",    out var e2)) HotkeyPrevTabEnabled    = Convert.ToBoolean(e2);
+        if (s.TryGetValue("HotkeyFullScreenEnabled", out var e3)) HotkeyFullScreenEnabled = Convert.ToBoolean(e3);
+        if (s.TryGetValue("HotkeyPopOutEnabled",     out var e4)) HotkeyPopOutEnabled     = Convert.ToBoolean(e4);
+        if (s.TryGetValue("PingEnabled",         out var pe))  PingEnabled         = Convert.ToBoolean(pe);
+        if (s.TryGetValue("PingIntervalSeconds", out var pi))  PingIntervalSeconds = Math.Max(5, Convert.ToInt32(pi));
+        if (s.TryGetValue("PingShowLatency",     out var pl))  PingShowLatency     = Convert.ToBoolean(pl);
     }
 
     [RelayCommand]
@@ -131,8 +313,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         MstscAxStatus = (ok ? "✔ " : "✘ ") + msg;
     }
 
-    [RelayCommand]
-    private void Save()
+    /// <summary>Snapshots every observable into a fresh dictionary and
+    /// hands it to <see cref="SettingsStore.Write"/>. Called from
+    /// <see cref="OnPropertyChanged"/> on every change — there is no
+    /// explicit Save button anymore.</summary>
+    private void PersistAll()
     {
         SettingsStore.Write(new Dictionary<string, object>
         {
@@ -150,9 +335,18 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["MstscExePath"]       = MstscExePath,
             ["MstscAxPath"]        = MstscAxPath,
             ["FontSize"]           = FontSizeIndex,
+            ["HotkeyNextTab"]      = HotkeyNextTab,
+            ["HotkeyPrevTab"]      = HotkeyPrevTab,
+            ["HotkeyFullScreen"]   = HotkeyFullScreen,
+            ["HotkeyPopOut"]       = HotkeyPopOut,
+            ["HotkeyNextTabEnabled"]    = HotkeyNextTabEnabled,
+            ["HotkeyPrevTabEnabled"]    = HotkeyPrevTabEnabled,
+            ["HotkeyFullScreenEnabled"] = HotkeyFullScreenEnabled,
+            ["HotkeyPopOutEnabled"]     = HotkeyPopOutEnabled,
+            ["PingEnabled"]         = PingEnabled,
+            ["PingIntervalSeconds"] = PingIntervalSeconds,
+            ["PingShowLatency"]     = PingShowLatency,
         });
-
-        ThemeService.Apply(SelectedTheme);
     }
 
     /// <summary>Reads the persisted theme id from disk and applies it.
@@ -163,7 +357,36 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var s = SettingsStore.Read();
         s.TryGetValue("ThemeId", out var id);
-        ThemeService.Apply(ThemeService.ById(Convert.ToString(id)));
+        var idStr = Convert.ToString(id) ?? string.Empty;
+        if (string.Equals(idStr, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            // Rebuild the Custom palette from the persisted swatches.
+            ThemeService.Apply(BuildCustomThemeFromStore());
+            return;
+        }
+        ThemeService.Apply(ThemeService.ById(idStr));
+    }
+
+    /// <summary>Static counterpart of <see cref="BuildCustomThemeFromState"/>
+    /// that reads the persisted swatches without needing a live
+    /// <see cref="SettingsViewModel"/> — used at startup before the page
+    /// is created.</summary>
+    private static NxTheme BuildCustomThemeFromStore()
+    {
+        var dark = ThemeService.ById("dark");
+        Windows.UI.Color G(string key, Windows.UI.Color fb) => SettingsStore.ReadCustomColor(key, fb);
+        var bg0 = G("Bg0", dark.Bg0);
+        var luma = (0.299 * bg0.R + 0.587 * bg0.G + 0.114 * bg0.B) / 255.0;
+        return new NxTheme(
+            Id: "custom", DisplayName: "Custom", IsLight: luma > 0.55,
+            Bg0: bg0,                    Bg1: G("Bg1", dark.Bg1),
+            Bg2: G("Bg2", dark.Bg2),     Bg3: G("Bg3", dark.Bg3),
+            Brd: G("Brd", dark.Brd),
+            Tx1: G("Tx1", dark.Tx1),     Tx2: G("Tx2", dark.Tx2),
+            Tx3: G("Tx3", dark.Tx3),
+            Accent: G("Accent", dark.Accent), Accent2: G("Accent2", dark.Accent2),
+            Ssh: G("Ssh", dark.Ssh),     Rdp:    G("Rdp", dark.Rdp),
+            Red: G("Red", dark.Red),     Yellow: G("Yellow", dark.Yellow));
     }
 }
 
@@ -236,6 +459,116 @@ public static class SettingsStore
     }
 
     /// <summary>Reads the persisted font-size index (defaults to medium).</summary>
+    /// <summary>Read each hotkey or fall back to its default. Used by
+    /// MainWindow when it (re)builds keyboard accelerators.</summary>
+    public static string ReadHotkey(string key, string fallback)
+    {
+        var s = Read();
+        return s.TryGetValue(key, out var v) ? Convert.ToString(v) ?? fallback : fallback;
+    }
+
+    /// <summary>Reads the per-hotkey enable flag. Defaults to <c>true</c>
+    /// so users get the bindings on a fresh install; toggling the
+    /// checkbox in Settings flips this off.</summary>
+    public static bool ReadHotkeyEnabled(string key)
+    {
+        var s = Read();
+        if (!s.TryGetValue(key, out var v)) return true;
+        try { return Convert.ToBoolean(v); }
+        catch { return true; }
+    }
+
+    /// <summary>Parses <c>"Ctrl+Shift+Tab"</c> style strings into a
+    /// (key, modifiers) pair. Modifiers are case-insensitive: Ctrl,
+    /// Shift, Alt, Win. Returns null if the string can't be parsed.</summary>
+    public static (Windows.System.VirtualKey Key, Windows.System.VirtualKeyModifiers Mods)? ParseHotkey(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        var parts = s.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return null;
+
+        var mods = Windows.System.VirtualKeyModifiers.None;
+        Windows.System.VirtualKey? key = null;
+        foreach (var p in parts)
+        {
+            switch (p.ToLowerInvariant())
+            {
+                case "ctrl":
+                case "control": mods |= Windows.System.VirtualKeyModifiers.Control; break;
+                case "shift":   mods |= Windows.System.VirtualKeyModifiers.Shift;   break;
+                case "alt":
+                case "menu":    mods |= Windows.System.VirtualKeyModifiers.Menu;    break;
+                case "win":
+                case "windows": mods |= Windows.System.VirtualKeyModifiers.Windows; break;
+                default:
+                    if (Enum.TryParse<Windows.System.VirtualKey>(p, ignoreCase: true, out var k))
+                        key = k;
+                    break;
+            }
+        }
+        return key is null ? null : (key.Value, mods);
+    }
+
+    /// <summary>Notifies listeners (ConnectionsViewModel) that one of
+    /// the ping-related settings has changed. Avoids forcing a direct
+    /// DI dependency from SettingsViewModel back into the connections
+    /// VM; subscribers re-read the values.</summary>
+    public static event EventHandler? PingSettingsChanged;
+    public static void RaisePingSettingsChanged() =>
+        PingSettingsChanged?.Invoke(null, EventArgs.Empty);
+
+    public static bool ReadPingEnabled()
+    {
+        var s = Read();
+        if (!s.TryGetValue("PingEnabled", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+    public static int ReadPingIntervalSeconds()
+    {
+        var s = Read();
+        if (!s.TryGetValue("PingIntervalSeconds", out var v)) return 30;
+        try { return Math.Max(5, Convert.ToInt32(v)); } catch { return 30; }
+    }
+    public static bool ReadPingShowLatency()
+    {
+        var s = Read();
+        if (!s.TryGetValue("PingShowLatency", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+
+    /// <summary>Reads a custom-theme color from settings, or returns
+    /// the supplied fallback when missing/garbage. Stored as
+    /// <c>#AARRGGBB</c> hex strings under <c>CustomColor.{key}</c>.</summary>
+    public static Windows.UI.Color ReadCustomColor(string key, Windows.UI.Color fallback)
+    {
+        var s = Read();
+        if (!s.TryGetValue($"CustomColor.{key}", out var v)) return fallback;
+        var hex = Convert.ToString(v) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(hex)) return fallback;
+        try
+        {
+            hex = hex.TrimStart('#');
+            if (hex.Length == 6) hex = "FF" + hex;
+            var argb = Convert.ToUInt32(hex, 16);
+            return Windows.UI.Color.FromArgb(
+                (byte)((argb >> 24) & 0xFF),
+                (byte)((argb >> 16) & 0xFF),
+                (byte)((argb >>  8) & 0xFF),
+                (byte)( argb        & 0xFF));
+        }
+        catch { return fallback; }
+    }
+
+    public static void WriteCustomColor(string key, Windows.UI.Color color)
+    {
+        // Merge: read all, overwrite the one key, write back. The store
+        // is small and writes are user-driven (a swatch click), so the
+        // round-trip cost is negligible.
+        var values = new Dictionary<string, object>(Read());
+        values[$"CustomColor.{key}"] = $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+        Write(values);
+    }
+
     public static int ReadFontSizeIndex()
     {
         var s = Read();
@@ -244,15 +577,69 @@ public static class SettingsStore
         catch { return 1; }
     }
 
-    /// <summary>Applies the font-size scale to the main window's
-    /// content via a uniform <see cref="Microsoft.UI.Xaml.Media.ScaleTransform"/>.
-    /// Cheap and avoids rebinding every <c>FontSize</c> in the
-    /// codebase. 0=small (0.85×), 1=medium (1.0×), 2=large (1.15×).</summary>
+    /// <summary>Applies the user's font-size choice to every text-bearing
+    /// control in the visual tree by multiplying its <c>FontSize</c> by
+    /// the picked scale. Originals are stashed in a per-element
+    /// <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/>
+    /// on first sight, so subsequent calls re-scale relative to the
+    /// XAML-defined size — not the previously-scaled one. Avoids the
+    /// ScaleTransform pitfall where the entire UI (including layout
+    /// boxes, icons, padding) zooms in lockstep.</summary>
     public static void ApplyFontSize(int idx)
     {
-        if (App.MainWin?.Content is not Microsoft.UI.Xaml.FrameworkElement root) return;
         var scale = idx switch { 0 => 0.85, 2 => 1.15, _ => 1.0 };
-        root.RenderTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { ScaleX = scale, ScaleY = scale };
+
+        void Apply(Microsoft.UI.Xaml.Window? w)
+        {
+            if (w?.Content is Microsoft.UI.Xaml.FrameworkElement root)
+            {
+                // Drop any previous render-transform scale we may have
+                // stamped on the window before the proper font-only path
+                // existed. Without this, an upgrade keeps the broken zoom.
+                root.RenderTransform = null;
+                ScaleFontsRecursive(root, scale);
+            }
+        }
+
+        Apply(App.MainWin);
+        foreach (var w in App.SecondaryWindows.ToArray()) Apply(w);
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        Microsoft.UI.Xaml.FrameworkElement, object> _originalFontSize = new();
+
+    private static void ScaleFontsRecursive(Microsoft.UI.Xaml.FrameworkElement el, double scale)
+    {
+        // Capture-or-replay the original size, then write back the
+        // scaled value. Only TextBlock and Control expose FontSize;
+        // everything else just gets descended into.
+        double? orig = el switch
+        {
+            Microsoft.UI.Xaml.Controls.TextBlock tb     => GetOrCapture(tb,  () => tb.FontSize),
+            Microsoft.UI.Xaml.Controls.Control   c      => GetOrCapture(c,   () => c.FontSize),
+            _ => null,
+        };
+        if (orig.HasValue)
+        {
+            switch (el)
+            {
+                case Microsoft.UI.Xaml.Controls.TextBlock tb: tb.FontSize = orig.Value * scale; break;
+                case Microsoft.UI.Xaml.Controls.Control   c:  c.FontSize  = orig.Value * scale; break;
+            }
+        }
+
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(el);
+        for (int i = 0; i < count; i++)
+            if (Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(el, i) is Microsoft.UI.Xaml.FrameworkElement child)
+                ScaleFontsRecursive(child, scale);
+    }
+
+    private static double GetOrCapture(Microsoft.UI.Xaml.FrameworkElement key, Func<double> read)
+    {
+        if (_originalFontSize.TryGetValue(key, out var v)) return (double)v;
+        var current = read();
+        _originalFontSize.Add(key, current);
+        return current;
     }
 
     public static string ReadMstscExePath() =>

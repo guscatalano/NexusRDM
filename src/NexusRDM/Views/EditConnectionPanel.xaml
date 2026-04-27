@@ -106,8 +106,60 @@
                                        Value="{x:Bind ViewModel.Port, Mode=TwoWay}" />
                         </Grid>
 
+                        <ComboBox Header="Group" HorizontalAlignment="Stretch"
+                                  ItemsSource="{x:Bind ViewModel.GroupOptions}"
+                                  DisplayMemberPath="DisplayName"
+                                  SelectedItem="{x:Bind ViewModel.SelectedGroupOption, Mode=TwoWay}" />
+
                         <TextBox Header="Tags (comma separated)" PlaceholderText="linux, production, web"
                                  Text="{x:Bind ViewModel.Tags, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- Per-connection icon picker. The selection is
+                             stored as a Segoe Fluent Icons codepoint on
+                             ConnectionProfile.IconGlyph. The picker renders
+                             a small grid of toggle buttons so the user
+                             can scan and pick visually. The icon is
+                             optional — "None" clears the choice. -->
+                        <TextBlock Text="ICON"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{StaticResource NxTx3}"
+                                   Margin="0,12,0,2" />
+                        <Button Click="IconNone_Click"
+                                Background="{StaticResource NxBg2}"
+                                BorderBrush="{StaticResource NxBrd}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="6,2"
+                                FontSize="11"
+                                Foreground="{StaticResource NxTx2}"
+                                ToolTipService.ToolTip="No icon"
+                                Content="None"
+                                HorizontalAlignment="Left"
+                                Margin="0,0,0,6" />
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.IconChoices}"
+                                       xmlns:svc="using:NexusRDM.Services">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout MinItemWidth="40" MinItemHeight="40"
+                                                   MinRowSpacing="6" MinColumnSpacing="6" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="svc:IconChoice">
+                                    <Button Tag="{x:Bind Glyph}"
+                                            ToolTipService.ToolTip="{x:Bind Name}"
+                                            Click="IconChoice_Click"
+                                            Background="{StaticResource NxBg2}"
+                                            BorderBrush="{StaticResource NxBrd}"
+                                            BorderThickness="1"
+                                            CornerRadius="4"
+                                            Width="36" Height="36"
+                                            Padding="0">
+                                        <FontIcon Glyph="{x:Bind Glyph}"
+                                                  FontSize="14"
+                                                  Foreground="{StaticResource NxTx1}" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
 
                         <!-- SSH section: credentials + ssh-specific options -->
                         <StackPanel Spacing="6"
