@@ -1,128 +1,189 @@
-# NexusRDM
+# Nexus RDM
 
-A modern Remote Desktop and SSH connection manager built with **WinUI 3** and **.NET 9**.
+A modern, fast remote-desktop manager for Windows. Hold every SSH and RDP connection you care about in a single tabbed window — keep them organized, watch their state at a glance, and import whole clusters from Proxmox, Hyper-V, or a network sweep.
 
-## Features
+> _Screenshot placeholder — main window with connections sidebar + active session tabs. Suggested capture: a couple of folders open in the tree, one SSH tab + one RDP tab side-by-side via the new tab view._
+>
+> ![Main window](docs/screenshots/main-window.png)
 
-### Connections
-- **Per-connection icons** — pick from a curated set of Segoe Fluent glyphs in the editor; rendered in the tree row in connection-status colour. Optional — connections without an icon just show the name.
-- **Groups** — create groups from the sidebar; nest groups under groups; drop a connection into any group via the editor's Group ComboBox. Groups render with a bold name and an amber folder glyph for instant visual distinction.
-- **Live status dots / icons** — green when a session is up, red when not. Both the tree row and the tab header reflect status; the tab also surfaces protocol icon (CommandPrompt for SSH, Remote for RDP) matching the home-page legend.
-- **Host ping** — periodic ICMP probe with optional latency display next to each connection. Toggleable + interval-configurable in Settings; on by default.
-- **Tags** and full-text **search** in the sidebar.
-- **Click behaviour** — single- or double-click to connect, configurable in Settings.
+---
 
-### SSH
-- VT100/xterm terminal via [VtNetCore](https://github.com/darrenstarr/VtNetCore).
-- Underlying transport via [SSH.NET](https://github.com/sshnet/SSH.NET) with sync write/flush wrap (avoids `Renci.SshNet.ShellStream` async deadlock).
-- Authentication: password, private key (.pem / .ppk), keyboard-interactive.
-- Per-tab toolbar: **Full screen**, **Pop out** (detaches into its own resizable window with a wait-for-`Unloaded` reparent dance to satisfy WinUI 3's single-XamlRoot rule), Disconnect.
-- Audit-log lifecycle events on connect / disconnect.
+## What you get
 
-### RDP
-- In-proc [`mstscax.dll`](https://learn.microsoft.com/windows/win32/termserv/mstscax) hosting via WinForms `AxHost` on a top-level owned window pinned over the host tab — full control: live resolution, smart-sizing, full-screen, resolution presets, redirections.
-- **Pop-out** detaches into a free-floating window; closing re-attaches to the tab and respects the active-tab visibility (re-hides if you've switched tabs).
-- **Resolution dropdown** in the toolbar matches the global default-resolution setting (Match monitor / Match panel / 1024×768 … 3840×2160) and live-resizes the session via `IMsRdpClient9.UpdateSessionDisplaySettings` — no reconnect.
-- **Reconnect** without closing the tab — Disconnect button flips to Connect when the session ends; clicking rebuilds a fresh `IRdpSession`, replays the last bounds, and swaps it into `OpenSession`.
-- **mstscax.dll override** via SxS activation context — point at any custom DLL, the Validate button does `LoadLibrary` + `DllGetClassObject` + `CreateInstance` to confirm the COM class is reachable; on success the session uses that DLL instead of the system one.
-- **mstsc.exe override** for the legacy launch-as-process backend.
-- **RDP events window** — a floating diagnostic feed of every event the OCX raises (Connected / Disconnected / OnLogonError / OnAuthenticationWarning / etc.) via a custom `IDispatch` connection-point sink. Selectable, copyable; pinned always-on-top above the RDP form.
-- **Edit panel covers ~440px**: when the slide-over editor is open, every embedded RDP form narrows by exactly the panel's width so the live session stays visible while you edit.
+- **One window, every session.** SSH and RDP both run as tabs in the same Tab View. Pop any tab into its own window when you want full-screen, dock it back when you're done.
+- **Folders, search, and ping at a glance.** Group connections however you want (or auto-group from a sync). The tree shows live connection state, an SSH/RDP badge, latency, and an at-a-glance running/stopped/paused icon for managed VMs.
+- **Saved credentials in Windows Credential Manager.** No JSON-on-disk passwords, no plaintext-anywhere. The app stores secrets through the OS vault and looks them up on connect.
+- **Proxmox cluster import.** Register a PVE cluster once, every VM and container shows up automatically. The importer probes ports 22 / 3389 to pick the right protocol per VM, reads guest-agent IPs (or LXC `net0`), respects per-VM `#nexus:*` tags, and hard-deletes rows when the VM disappears from the cluster.
+- **Local Hyper-V import.** Same shape as Proxmox, but for the local host: enumerate via WMI, get the IP from KVP exchange, run power actions (start / shutdown / reboot / save) right from the tree, or open the Microsoft `vmconnect` console.
+- **Network discovery.** Sweep a `/24` LAN segment for SSH and RDP listeners, dedup against your existing connections, and drop the hits into a "Discovered" folder.
+- **Theme + UX polish.** Eight built-in themes including a fully editable Custom palette, configurable hotkeys, font-size knob, adjustable sidebar width, and a status row that wraps long error messages instead of truncating them.
 
-### Themes
-- 8 built-in palettes — **Dracula** (default), Dark, Light, Solarized Dark, Solarized Light, Nord, Monokai — applied at runtime by mutating each shared `SolidColorBrush.Color`.
-- **Custom theme editor** — pick "Custom" in Settings and edit each token (Bg0…Bg3, Tx1…Tx3, Brd, Accent / Accent2, Ssh, Rdp, Red, Yellow) via a colour-picker flyout. Persisted as `#AARRGGBB` per token.
+---
 
-### Settings
-- **Auto-persist** — every change writes to disk; no Save button. The settings page also has a left-nav with section filtering and a **search box** that filters both the nav list and the visible body.
-- **Hotkeys** — configurable for Next tab / Previous tab / Toggle full screen / Toggle pop out, each with an enable checkbox. Free-form combos like `Ctrl+Tab`, `Ctrl+Shift+P`, `F11`. Re-registered live on change.
-- **Audit-log retention** — entries older than the configured window (default 7 days) are purged at startup AND immediately when the user shortens the window.
-- **Confirm-close while connected** — once-per-action prompt before closing a tab or the window with live sessions; suppressible.
-- **Debug mode** — surfaces developer affordances (Copy visual tree button in the sidebar).
-- **Database management** — shows DB path + creation date; *Open data folder*, *Reset database* (with confirmation), *Export database* (full JSON dump of connections / groups / audit entries).
+## Install / run
 
-### Audit log
-- Captures every Created / Updated / Deleted / Connected / Disconnected / Failed event with timestamp, profile name, and a Detail column.
-- **Update events list field-level diffs** ("Name: old → new; Port: 22 → 2222; RDP options changed: ColorDepth, NetworkType") — names only on embedded option blobs to keep credentials out of the log.
-- **Auto-refreshes** via an `IAuditNotifier` event hub plus a 3 s polling backup so the page reflects new entries instantly.
-- Wide Detail column with text wrapping.
+1. Grab the latest **NexusRDM-vX.Y.Z-win-x64.zip** from [Releases](../../releases).
+2. Unzip anywhere.
+3. Run `NexusRDM.exe`. Self-contained — no .NET install needed.
 
-### Credentials
-- All secrets live in Windows Credential Manager under the `NexusRDM/` prefix — never on disk.
-- Deleting a connection removes its credential too; if wincred refuses, the user gets a warning dialog identifying the orphaned key.
-- Password fields are disabled when "Don't save — prompt at connect time" is ticked, so the value isn't quietly typed and discarded.
+Or build from source: open `NexusRDM.slnx` in Visual Studio 2022, set `NexusRDM` as startup, F5.
 
-### Windowing & airspace
-- Embedded RDP forms are top-level Win32 windows owned by the WinUI HWND. WinUI 3 cannot host Win32 child HWNDs visibly (composition airspace) — see `docs/rdp-embedding.md` for the design journey.
-- A central `Services/DialogHost` serialises every `ContentDialog` (WinUI 3 only allows one at a time) and parks every embedded RDP form for the dialog's lifetime so they don't paint over the buttons.
-- Pop-out reparenting waits for the `Unloaded` event before assigning to the new `Window.Content` (XamlRoot release timing).
-- Cross-process per-monitor V2 DPI awareness explicitly set on the WinForms STA thread so `SetWindowPos` rects from the WinUI thread aren't DWM-virtualised down.
+---
 
-### Connection editor
-- **Validation** — required Name / Host with inline red error text under each field.
-- **Setting search box** in the footer filters every visible row by header / placeholder / content.
-- **REDIRECTIONS / AUDIO / GATEWAY / Advanced** sections cover every RDP knob the OCX exposes (auth strictness, network connection type, performance flags, keyboard hook mode, connection bar, auto-reconnect, load-balance info, etc.).
-- **Group selector** + per-connection **icon picker**.
+## Connecting to things
 
-## Tech Stack
+### Make a connection by hand
 
-| Layer | Technology |
+Click **+ New** in the sidebar, fill in name + host + protocol, hit save. The credential row defaults to "save in vault"; turn it off if you'd rather get prompted every time.
+
+> _GIF placeholder — opening the New Connection panel, picking a protocol, entering creds, then double-clicking the new row to connect. Suggested length: 8–10s._
+>
+> ![New connection](docs/screenshots/new-connection.gif)
+
+### Right-click for everything else
+
+Every row's right-click menu gives you Connect / Edit / Delete. Folders give you New connection in group / Delete group / (and if it's a managed folder) Sync now.
+
+> _Screenshot placeholder — the right-click context menu open on a connection row, showing the full action list._
+>
+> ![Right-click menu](docs/screenshots/context-menu.png)
+
+---
+
+## Proxmox sync
+
+Settings → **Proxmox sources** → **+ Add cluster…**
+
+Give it the cluster URL, an API token (preferred — `USER@REALM!TOKENID` + the secret) or a username/password, and click **Test connection**. Token gotcha: PVE tokens default to `Privsep=1`, which means the *token* needs its own ACL row in **Datacenter → Permissions** (granting the role to the underlying user is not enough). The Test button surfaces this exact case if it sees zero VMs come back.
+
+Once the source is registered, **Sync now** pulls every VM into a folder named after the cluster. The folder is italic + tagged `AUTO` so you know it's owned by the sync — manual edits to display name or host get overwritten on the next pass, but **Protocol** and **Port** stay user-editable. The auto-pick can be wrong on Linux VMs running RDP or Windows hosts running OpenSSH; flip the protocol once and your choice sticks.
+
+Right-click a synced VM for **Power** (Start / Shutdown / Reboot / Stop / Reset), **Open Web Console** (launches PVE's noVNC in your default browser), or **Detach from Proxmox** if you want manual ownership of that row.
+
+> _GIF placeholder — registering a Proxmox cluster, hitting Test, then Sync, watching VMs populate the tree under the cluster folder. Suggested length: 15–20s._
+>
+> ![Proxmox sync](docs/screenshots/proxmox-sync.gif)
+
+A small colored icon on each row shows the VM's power state — green ▶ running, gray ■ stopped, amber ⏸ paused. Hide it from Settings if it clutters narrow trees.
+
+> _Screenshot placeholder — the connections tree with a Proxmox cluster expanded, showing the AUTO badge on the folder, the P pill on each VM row, the running/stopped icons, and a sample SSH/RDP badge._
+>
+> ![Power icons](docs/screenshots/power-icons.png)
+
+---
+
+## Hyper-V (local)
+
+Settings → **Hyper-V** → flip on **Enable Hyper-V sync**, hit **Test connection**.
+
+You need to be in the local **Hyper-V Administrators** group (same as `Get-VM` in PowerShell — no elevation required). If you're not, the Test diagnostic tells you the exact PowerShell command to add yourself, and reminds you that group memberships only land in your access token after a fresh logon.
+
+Synced VMs show up under a `Hyper-V` folder. Right-click a VM for **Power** actions (via WMI's `RequestStateChange`), **Open in vmconnect** (launches Microsoft's console), or **Detach**.
+
+> _GIF placeholder — enabling Hyper-V sync, clicking Test, hitting Sync now, then right-clicking a VM and triggering Start. Suggested length: 12–15s._
+>
+> ![Hyper-V sync](docs/screenshots/hyperv-sync.gif)
+
+---
+
+## Network discovery
+
+Settings → **Network discovery** → set a `/24` subnet → **Scan now**.
+
+It TCP-probes ports 22 and 3389 across the 256 addresses, optionally reverses-DNS the hits, and drops anything new under a `Discovered` folder. Dedup is by `host:port`, so a re-scan never produces duplicates — and existing manual rows are left alone.
+
+The folder is auto-managed: turn the toggle off and the folder + its rows + their saved credentials go away. **Clear discovered devices** wipes the contents but keeps the folder for the next sweep.
+
+> _Screenshot placeholder — Network discovery section with a scan in progress (status row showing "Probing… 134/512 (3 found)") and the Discovered folder in the tree below. Suggested capture: split with the settings panel on the right and the connections sidebar on the left._
+>
+> ![Network discovery](docs/screenshots/discovery.png)
+
+---
+
+## Themes
+
+Eight built-in palettes including the original Dracula default. Pick **Custom** to edit every color individually with a color-picker per slot — changes apply live so you can dial in the exact look you want.
+
+> _Screenshot placeholder — the theme picker open with a few options visible, and the custom-palette editor expanded below. A side-by-side of two themes would also work great._
+>
+> ![Themes](docs/screenshots/themes.png)
+
+---
+
+## Keyboard shortcuts
+
+Configurable in **Settings → Hotkeys**. Defaults:
+
+| Action | Shortcut |
 |---|---|
-| UI | WinUI 3 (Windows App SDK 1.7) |
-| Language | C# / .NET 9 |
-| MVVM | CommunityToolkit.Mvvm |
-| SSH | SSH.NET, VtNetCore |
-| RDP | mstscax.dll via `System.Windows.Forms.AxHost` |
-| Database | SQLite via EF Core 9 |
-| Secrets | Windows Credential Manager (advapi32 P/Invoke) |
+| Next session tab | `Ctrl+Tab` |
+| Previous session tab | `Ctrl+Shift+Tab` |
+| Toggle full-screen | `F11` |
+| Pop out / dock active tab | `Ctrl+Shift+P` |
+| Search the connections tree | `Ctrl+F` |
 
-## Solution Structure
+Each one has its own enable checkbox if you'd rather free up the binding.
 
-```
-NexusRDM/
-├── src/
-│   ├── NexusRDM/                  # WinUI 3 app (Views, ViewModels, Services)
-│   ├── NexusRDM.Core/             # Domain models, protocol interfaces, ConnectionService
-│   ├── NexusRDM.Data/             # EF Core DbContext, repositories, migrations
-│   └── NexusRDM.RdpAx/            # In-proc mstscax host + SxS override + dispatch sink
-├── tests/
-│   ├── NexusRDM.Core.Tests/
-│   ├── NexusRDM.Data.Tests/
-│   ├── NexusRDM.Tests.ViewModels/ # xUnit unit tests for VM + service logic
-│   └── NexusRDM.Tests.UiSmoke/    # FlaUI end-to-end smoke tests against the built exe
-└── docs/
-    └── rdp-embedding.md           # design journey for the WinUI 3 / mstscax airspace problem
-```
+---
 
-## Getting Started
+## Settings reference
 
-1. Install [Visual Studio 2022](https://visualstudio.microsoft.com/) with the **Windows App SDK** workload.
-2. Install the [Windows App SDK 1.7](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads) runtime.
-3. Open `NexusRDM.slnx` (or build `src/NexusRDM/NexusRDM.csproj` directly).
-4. Set `NexusRDM` as the startup project and run.
+Everything is auto-saved — there's no Save button, every change persists immediately.
 
-The app is **unpackaged** (no MSIX), self-contained against the Windows App SDK runtime — first launch creates `%LocalAppData%\NexusRDM\` for the SQLite database and settings.
+- **Appearance** — font size (small / medium / large), theme picker, custom palette editor.
+- **SSH defaults / RDP defaults** — port, default resolution, color depth, audio mode, redirection toggles, gateway settings.
+- **RDP backend paths** — override `mstsc.exe` or `mstscax.dll` if you want to side-load a custom version.
+- **Host ping** — on/off toggle, interval (5–600s), show-latency-in-tree.
+- **Hotkeys** — see above.
+- **Safety** — confirm-before-closing-active-sessions, audit-log retention.
+- **Database** — open data folder, export everything to JSON, reset (also wipes vault credentials — re-launch starts fresh).
+- **Proxmox sources** — list / add / edit / delete clusters; per-source Test / Sync / Sync interval. Global toggles: TCP-probe ports for protocol picking, show power-state icon.
+- **Network discovery** — see [above](#network-discovery). Reverse-DNS option, short-hostname-vs-FQDN.
+- **Hyper-V** — see [above](#hyper-v-local).
 
-## Tests
+---
+
+## Where things live on disk
+
+| What | Where |
+|---|---|
+| Database (connections, groups, audit) | `%LocalAppData%\NexusRDM\connections.db` |
+| Settings | `%LocalAppData%\NexusRDM\settings.json` |
+| Logs | `%LocalAppData%\NexusRDM\logs\nexus-YYYY-MM-DD.log` |
+| Crash dumps | `%LocalAppData%\NexusRDM\crash.log` |
+| Credentials | Windows Credential Manager (Generic credentials, prefixed) |
+
+The database can be safely deleted (or moved between machines) — the app rebuilds the schema on next launch via EF Core migrations.
+
+---
+
+## Troubleshooting
+
+**Proxmox sync returns 0 VMs.** Your token has `Privsep=1` (the default) and no ACL row of its own. Open the Proxmox UI → **Datacenter → Permissions → Add → API Token Permission**, pick the token, give it `PVEAuditor` on `/`. Sync again.
+
+**Hyper-V sync returns 0 VMs.** The most common cause is being in the `Hyper-V Administrators` group but not having signed out since being added — Windows only refreshes group memberships in your access token at fresh logon. Sign out, sign back in, retry. PowerShell's `whoami /groups | findstr Hyper-V` is authoritative.
+
+**RDP session fails with credential errors.** If the connection is set to "save in vault", make sure the saved username/password actually log in via mstsc directly. The app uses your stored credential verbatim.
+
+**Some long status messages get cut off.** Resize the window (or drag the sidebar splitter) — long error text wraps into the available width.
+
+---
+
+## Building from source
 
 ```bash
-# Unit + VM tests (xUnit, fake services)
-dotnet test tests/NexusRDM.Core.Tests
-dotnet test tests/NexusRDM.Tests.ViewModels
-
-# End-to-end smoke (FlaUI; launches the built NexusRDM.exe)
-dotnet build src/NexusRDM
-dotnet test tests/NexusRDM.Tests.UiSmoke
+git clone https://github.com/guscatalano/NexusRDM
+cd NexusRDM
+# Open NexusRDM.slnx in Visual Studio 2022, F5
+# Or:
+dotnet restore src/NexusRDM/NexusRDM.csproj
+msbuild src/NexusRDM/NexusRDM.csproj /p:Configuration=Release /p:Platform=x64
 ```
 
-The Tests.ViewModels suite covers ~110 scenarios across the connection/edit/RDP-session VMs, theme catalogue, settings store, ping wiring, the group selector's stack-overflow regression, and per-row tree-node visuals.
+Targets `.NET 9` + `Windows App SDK 1.7`, self-contained build. CI on every PR (`.github/workflows/ci.yml`) runs the full test suite (Core + Data + ViewModels) and produces a debug artifact.
 
-## Requirements
+---
 
-- Windows 10 version 1809 (build 17763) or later
-- Visual Studio 2022 17.10+
-- .NET 9 SDK
+## Credits
 
-## License
-
-MIT
+Built by [**Gus Catalano**](https://github.com/guscatalano) with help from Claude.
