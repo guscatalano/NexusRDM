@@ -154,6 +154,31 @@ public sealed partial class SettingsPage : Page
         _ = svc.ScanAsync(ViewModel.DiscoverySubnet);
     }
 
+    private async void DiscoveryClear_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = new ContentDialog
+        {
+            Title             = "Clear discovered devices?",
+            Content           = "Removes every connection inside the Discovered folder and its saved credentials. The folder itself stays — the next scan can repopulate it.",
+            PrimaryButtonText = "Clear",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+            XamlRoot          = XamlRoot,
+        };
+        if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
+            return;
+
+        var svc = App.Services.GetRequiredService<NexusRDM.Services.NetworkDiscoveryService>();
+        try
+        {
+            var n = await svc.ClearDiscoveredAsync();
+            DiscoveryStatus.Text = n == 0
+                ? "Nothing to clear."
+                : $"Cleared {n} discovered device(s).";
+        }
+        catch (Exception ex) { DiscoveryStatus.Text = $"Clear failed — {ex.Message}"; }
+    }
+
     private async Task ShowErrorAsync(string title, string body)
     {
         var dlg = new ContentDialog
@@ -262,8 +287,8 @@ public sealed partial class SettingsPage : Page
         var confirm = new ContentDialog
         {
             Title             = "Reset database?",
-            Content           = "This permanently deletes every saved connection, group, and audit entry. " +
-                                "Credentials in Windows Credential Manager are not removed (clean those up there). " +
+            Content           = "This permanently deletes every saved connection, group, and audit entry, " +
+                                "AND removes every NexusRDM-managed credential from Windows Credential Manager. " +
                                 "The app will close — re-launch to start fresh.",
             PrimaryButtonText = "Delete and quit",
             CloseButtonText   = "Cancel",
@@ -271,6 +296,25 @@ public sealed partial class SettingsPage : Page
             XamlRoot          = XamlRoot,
         };
         if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary) return;
+
+        // Wipe vault first while the DI scope is alive and the vault
+        // can still iterate its keys. Doing this AFTER the DB delete
+        // would also work, but we don't want a partial DB-gone-vault-
+        // intact state to linger if the file delete throws.
+        try
+        {
+            using var vaultScope = App.Services.CreateScope();
+            var vault = vaultScope.ServiceProvider
+                .GetRequiredService<NexusRDM.Core.Interfaces.ICredentialVault>();
+            // Snapshot the key list — Delete mutates the underlying
+            // store, so iterating ListKeys() directly would skip rows.
+            foreach (var key in vault.ListKeys().ToArray())
+            {
+                try { vault.Delete(key); }
+                catch { /* one bad entry shouldn't abort the whole wipe */ }
+            }
+        }
+        catch { /* vault unavailable — proceed with DB reset anyway */ }
 
         // Best-effort drop via EF, then nuke the file. Either succeeding
         // is enough — File.Delete catches the case where EF couldn't

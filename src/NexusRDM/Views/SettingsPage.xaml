@@ -655,7 +655,7 @@
 
                 <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Sweep an IPv4 subnet for SSH (port 22) and RDP (port 3389) listeners. New hits are added under a 'Discovered' group. Cap is /16; bigger subnets are rejected."
+                        <TextBlock Text="Sweep a /24 IPv4 subnet for SSH (port 22) and RDP (port 3389) listeners. New hits are added under a 'Discovered' group. Only /24 is accepted — larger ranges aren't scanned."
                                    FontSize="11"
                                    Foreground="{StaticResource NxTx3}"
                                    TextWrapping="Wrap" />
@@ -663,7 +663,7 @@
                         <ToggleSwitch Header="Enable scheduled scans"
                                       IsOn="{x:Bind ViewModel.DiscoveryEnabled, Mode=TwoWay}" />
 
-                        <TextBox Header="Subnet (CIDR)"
+                        <TextBox Header="Subnet (CIDR — must be /24)"
                                  PlaceholderText="192.168.1.0/24"
                                  Text="{x:Bind ViewModel.DiscoverySubnet, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
@@ -689,6 +689,16 @@
                                     FontSize="11"
                                     Foreground="{StaticResource NxTx1}"
                                     Content="Scan now" />
+                            <Button Click="DiscoveryClear_Click"
+                                    Background="#33FF6B6B"
+                                    BorderBrush="#80FF6B6B"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,4"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxRed}"
+                                    Content="Clear discovered devices"
+                                    ToolTipService.ToolTip="Removes every connection inside the Discovered folder (and its credentials). The folder itself stays so future scans can repopulate." />
                             <TextBlock x:Name="DiscoveryStatus"
                                        Text=""
                                        FontSize="11"

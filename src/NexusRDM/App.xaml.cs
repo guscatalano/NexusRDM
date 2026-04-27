@@ -124,8 +124,37 @@ public partial class App : Application
                 }
                 SecondaryWindows.Clear();
 
+                // Dispose long-lived singletons explicitly. The
+                // ServiceProvider does this for us when disposed below,
+                // but pinging / discovery have in-flight loops with up
+                // to 2-second tails — kicking off cancellation here
+                // gives those loops a head start while the rest of
+                // teardown runs.
+                try { Services.GetRequiredService<Services.PingService>().Dispose(); }
+                catch (Exception ex) { CrashLogger.Log(ex, "shutdown: PingService.Dispose"); }
+                try { Services.GetRequiredService<Services.NetworkDiscoveryService>().Dispose(); }
+                catch (Exception ex) { CrashLogger.Log(ex, "shutdown: NetworkDiscoveryService.Dispose"); }
                 try { Services.GetRequiredService<Services.SessionManager>().Dispose(); }
                 catch (Exception ex) { CrashLogger.Log(ex, "shutdown: SessionManager.Dispose"); }
+
+                // Cascade-dispose every other IDisposable singleton
+                // registered with the container (DbContext factories,
+                // anything we add later). ServiceProvider is itself
+                // IAsyncDisposable / IDisposable.
+                try { (Services as IDisposable)?.Dispose(); }
+                catch (Exception ex) { CrashLogger.Log(ex, "shutdown: Services.Dispose"); }
+
+                // Safety net: WinUI 3 + the embedded mstscax Forms host
+                // routinely leave non-background STA threads alive that
+                // .NET won't unwind, leaving the process visible in
+                // Task Manager after the UI is gone. Force-exit after
+                // a short grace period so the user doesn't have to
+                // taskkill.
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                    Environment.Exit(0);
+                });
             };
             MainWin.Activate();
         }
