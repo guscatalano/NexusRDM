@@ -45,6 +45,7 @@
                     <ListBoxItem Content="Host ping"         Tag="HOST PING" />
                     <ListBoxItem Content="Hotkeys"           Tag="HOTKEYS" />
                     <ListBoxItem Content="Safety"            Tag="SAFETY" />
+                    <ListBoxItem Content="Database"          Tag="DATABASE" />
                     <ListBoxItem Content="About"             Tag="ABOUT" />
                 </ListBox>
             </StackPanel>
@@ -478,6 +479,59 @@
                                       OnContent=""
                                       OffContent="" />
                     </Grid>
+                </Border>
+
+                <!-- Database management. The DB path is read-only and
+                     resets nuke every saved connection / group / audit
+                     entry. -->
+                <TextBlock Text="DATABASE"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Database file" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                        <TextBlock x:Name="DbPathText"
+                                   FontSize="11"
+                                   FontFamily="Consolas, Cascadia Code, Courier New"
+                                   Foreground="{StaticResource NxTx3}"
+                                   IsTextSelectionEnabled="True"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="DbCreatedText"
+                                   FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   Margin="0,2,0,0" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+                            <Button Click="RevealDb_Click"
+                                    Background="{StaticResource NxBg2}"
+                                    BorderBrush="{StaticResource NxBrd}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="8,2"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxTx2}"
+                                    Content="Open data folder" />
+                            <Button Click="ExportDb_Click"
+                                    Background="{StaticResource NxBg2}"
+                                    BorderBrush="{StaticResource NxBrd}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="8,2"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxTx2}"
+                                    Content="Export database…" />
+                            <Button Click="ResetDb_Click"
+                                    Background="#33FF6B6B"
+                                    BorderBrush="#80FF6B6B"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="8,2"
+                                    FontSize="11"
+                                    Foreground="{StaticResource NxRed}"
+                                    Content="Reset database…" />
+                        </StackPanel>
+                    </StackPanel>
                 </Border>
 
                 <!-- Settings auto-persist on every change; no Save button. -->

@@ -187,8 +187,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnFontSizeIndexChanged(int value) => SettingsStore.ApplyFontSize(value);
 
     /// <summary>Periodically ping every saved host and surface the
-    /// result as a status icon in the connections tree.</summary>
-    [ObservableProperty] private bool _pingEnabled         = false;
+    /// result as a status icon in the connections tree. On by default
+    /// — most users want the at-a-glance reachability indicator.</summary>
+    [ObservableProperty] private bool _pingEnabled         = true;
     /// <summary>How often to retry each host. Floored at 5s by the
     /// service so a busy network doesn't get hammered.</summary>
     [ObservableProperty] private int  _pingIntervalSeconds = 30;
@@ -520,8 +521,8 @@ public static class SettingsStore
     public static bool ReadPingEnabled()
     {
         var s = Read();
-        if (!s.TryGetValue("PingEnabled", out var v)) return false;
-        try { return Convert.ToBoolean(v); } catch { return false; }
+        if (!s.TryGetValue("PingEnabled", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
     }
     public static int ReadPingIntervalSeconds()
     {

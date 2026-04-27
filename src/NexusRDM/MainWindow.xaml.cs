@@ -644,48 +644,19 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> ConfirmCloseAsync(string title, string body)
     {
-        // ContentDialog renders inside the WinUI HWND; the embedded RDP
-        // forms are top-level owned windows that paint above it (the
-        // same airspace problem as the edit-connection slide-over). Park
-        // every form offscreen for the duration of the dialog so the
-        // user can actually click the buttons.
-        var hidden = new List<IRdpSession>();
-        foreach (var s in _sessions.Sessions)
-            if (s.RdpSession is { } rdp)
-            {
-                try { rdp.SetVisible(false); hidden.Add(rdp); }
-                catch { /* best effort */ }
-            }
-
-        try
+        // DialogHost serialises against any other dialog already up
+        // (sidebar delete, settings reset, etc.) and parks every
+        // embedded RDP form so the buttons are reachable.
+        var dlg = new ContentDialog
         {
-            var dlg = new ContentDialog
-            {
-                Title             = title,
-                Content           = body,
-                PrimaryButtonText = "Close",
-                CloseButtonText   = "Cancel",
-                DefaultButton     = ContentDialogButton.Close,
-                XamlRoot          = Content.XamlRoot,
-            };
-            var result = await dlg.ShowAsync();
-            return result == ContentDialogResult.Primary;
-        }
-        finally
-        {
-            // Restore only the form attached to the active tab; other
-            // tabs remain hidden until selected (the SelectionChanged
-            // handler manages per-tab visibility).
-            var selected = SessionTabs.SelectedItem as TabViewItem;
-            foreach (var rdp in hidden)
-            {
-                var visible = SessionTabs.TabItems.OfType<TabViewItem>()
-                    .Any(item => ReferenceEquals(item, selected)
-                              && item.Tag is OpenSession os
-                              && ReferenceEquals(os.RdpSession, rdp));
-                try { rdp.SetVisible(visible); } catch { /* best effort */ }
-            }
-        }
+            Title             = title,
+            Content           = body,
+            PrimaryButtonText = "Close",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+            XamlRoot          = Content.XamlRoot,
+        };
+        return await DialogHost.ShowAsync(dlg) == ContentDialogResult.Primary;
     }
 
     /// <summary>Hook AppWindow.Closing so we can prompt before the window

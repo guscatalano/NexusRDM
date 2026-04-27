@@ -1,6 +1,8 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using NexusRDM.Data.Context;
 using NexusRDM.ViewModels;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -15,6 +17,168 @@ public sealed partial class SettingsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         InitializeComponent();
+        DbPathText.Text = App.DbPath;
+        // Show when the database was first created. SQLite has no
+        // "CREATE TIME" column we can ask, so we use the file's
+        // creation timestamp on disk; close enough.
+        try
+        {
+            DbCreatedText.Text = System.IO.File.Exists(App.DbPath)
+                ? $"Created {System.IO.File.GetCreationTime(App.DbPath):yyyy-MM-dd HH:mm}"
+                : "Database file not yet created — it'll be made on next save.";
+        }
+        catch (Exception ex) { DbCreatedText.Text = $"(Could not read timestamp: {ex.Message})"; }
+    }
+
+    private async void ExportDb_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedFileName     = $"nexusrdm-export-{DateTime.Now:yyyyMMdd-HHmm}",
+                SuggestedStartLocation = PickerLocationId.Desktop,
+            };
+            picker.FileTypeChoices.Add("JSON", new System.Collections.Generic.List<string> { ".json" });
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWin));
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
+
+            // Pull every row directly from the DbContext (rather than going
+            // through repos with their default top-N caps for audit). The
+            // export is always a full snapshot — partial dumps would be a
+            // footgun for backup/restore.
+            using var scope = App.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var connections = await db.Connections.AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+            var groups = await db.Groups.AsNoTracking()
+                .OrderBy(g => g.Name)
+                .ToListAsync();
+            var audit  = await db.AuditLog.AsNoTracking()
+                .OrderByDescending(a => a.OccurredAt)
+                .ToListAsync();
+
+            var snapshot = new DatabaseExport
+            {
+                ExportedAt   = DateTime.UtcNow,
+                AppVersion   = ViewModel.AppVersion,
+                Connections  = connections,
+                Groups       = groups,
+                AuditEntries = audit,
+            };
+
+            var opts = new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles,
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(snapshot, opts);
+            await Windows.Storage.FileIO.WriteTextAsync(file, json);
+
+            await ShowMessageAsync(
+                "Export complete",
+                $"Wrote {connections.Count} connection(s), {groups.Count} group(s), and " +
+                $"{audit.Count} audit entries to {file.Path}.");
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync("Export failed", ex.Message);
+        }
+    }
+
+    /// <summary>Container for the JSON dump. Kept here (not in
+    /// NexusRDM.Core) because it's a UI-side concern and we want the
+    /// shape easy to evolve without ceremony.</summary>
+    private sealed class DatabaseExport
+    {
+        public DateTime ExportedAt   { get; set; }
+        public string?  AppVersion   { get; set; }
+        public System.Collections.Generic.List<NexusRDM.Core.Models.ConnectionProfile> Connections  { get; set; } = new();
+        public System.Collections.Generic.List<NexusRDM.Core.Models.Group>             Groups       { get; set; } = new();
+        public System.Collections.Generic.List<NexusRDM.Core.Models.AuditEntry>        AuditEntries { get; set; } = new();
+    }
+
+    private async void RevealDb_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Open the data folder in Explorer with the db file selected.
+            // Process.Start with explorer.exe + /select handles the
+            // missing-file case gracefully (it just opens the folder).
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = $"/select,\"{App.DbPath}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync("Couldn't open folder", ex.Message);
+        }
+    }
+
+    private async void ResetDb_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = new ContentDialog
+        {
+            Title             = "Reset database?",
+            Content           = "This permanently deletes every saved connection, group, and audit entry. " +
+                                "Credentials in Windows Credential Manager are not removed (clean those up there). " +
+                                "The app will close — re-launch to start fresh.",
+            PrimaryButtonText = "Delete and quit",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+            XamlRoot          = XamlRoot,
+        };
+        if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary) return;
+
+        // Best-effort drop via EF, then nuke the file. Either succeeding
+        // is enough — File.Delete catches the case where EF couldn't
+        // close all handles.
+        try
+        {
+            using var scope = App.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            await db.Database.EnsureDeletedAsync();
+        }
+        catch { /* fall through to direct file delete */ }
+
+        try
+        {
+            if (System.IO.File.Exists(App.DbPath)) System.IO.File.Delete(App.DbPath);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync(
+                "Couldn't delete database file",
+                $"{ex.Message}\n\nDelete it manually and restart:\n{App.DbPath}");
+            return;
+        }
+
+        // Close every secondary window first so they don't hang on
+        // dispose; then close the main window. App startup re-runs
+        // Database.Migrate() which re-creates an empty schema.
+        foreach (var w in App.SecondaryWindows.ToArray())
+        {
+            try { w.Close(); } catch { }
+        }
+        App.MainWin?.Close();
+    }
+
+    private async System.Threading.Tasks.Task ShowMessageAsync(string title, string body)
+    {
+        var dlg = new ContentDialog
+        {
+            Title           = title,
+            Content         = body,
+            CloseButtonText = "OK",
+            XamlRoot        = XamlRoot,
+        };
+        try { await NexusRDM.Services.DialogHost.ShowAsync(dlg); } catch { /* root gone */ }
     }
 
     private void SettingsNav_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
@@ -60,6 +224,14 @@ public sealed partial class SettingsPage : Page
         return map;
     }
 
+    /// <summary>Tracks exactly which elements *we* hid so restoring
+    /// only flips those back to Visible. Setting Visible blindly on
+    /// every element clobbers any in-place x:Bind Visibility binding
+    /// (e.g. the custom-palette editor that's only visible when the
+    /// active theme is Custom) until that binding's source changes
+    /// again.</summary>
+    private readonly HashSet<UIElement> _hiddenByFilter = new();
+
     private void ApplyFilterCore()
     {
         _sectionMap ??= BuildSectionMap();
@@ -67,42 +239,58 @@ public sealed partial class SettingsPage : Page
         var pickedTag = (SettingsNav.SelectedItem as ListBoxItem)?.Tag as string ?? "ALL";
         var query     = (NavSearchBox.Text ?? string.Empty).Trim();
 
-        // First pass: nav-pick filtering. Empty query + ALL → show all.
-        foreach (var (section, elements) in _sectionMap)
+        // Restore everything we hid last pass — leaves elements managed
+        // by their own visibility bindings untouched.
+        foreach (var el in _hiddenByFilter) el.Visibility = Visibility.Visible;
+        _hiddenByFilter.Clear();
+
+        // Section pick: hide every section but the picked one (or all
+        // for ALL). We only Collapse — never explicitly set Visible,
+        // because the previous-pass restore already did that.
+        if (!string.Equals(pickedTag, "ALL", StringComparison.OrdinalIgnoreCase))
         {
-            var visible = pickedTag == "ALL" ||
-                          string.Equals(pickedTag, section, StringComparison.OrdinalIgnoreCase);
-            foreach (var el in elements)
-                el.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var (section, elements) in _sectionMap)
+            {
+                if (string.Equals(pickedTag, section, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var el in elements)
+                {
+                    el.Visibility = Visibility.Collapsed;
+                    _hiddenByFilter.Add(el);
+                }
+            }
         }
 
-        // Second pass: search filtering on top of the section pick.
-        // Hide entire sections whose header + extracted text don't match.
-        // Also dim nav items that aren't relevant.
+        // Search: hide sections whose header/contents don't match the
+        // query, then dim nav items that don't match either.
         if (!string.IsNullOrEmpty(query))
         {
             var q = query.ToLowerInvariant();
             foreach (var (section, elements) in _sectionMap)
             {
-                if (elements[0].Visibility == Visibility.Collapsed) continue;
+                // Skip sections we already hid by section-pick.
+                if (elements.Count == 0 || _hiddenByFilter.Contains(elements[0])) continue;
                 var hit = section.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                           elements.Any(el => ContainsSearchText(el, q));
                 if (!hit)
-                    foreach (var el in elements) el.Visibility = Visibility.Collapsed;
+                {
+                    foreach (var el in elements)
+                    {
+                        el.Visibility = Visibility.Collapsed;
+                        _hiddenByFilter.Add(el);
+                    }
+                }
             }
 
             foreach (var item in SettingsNav.Items.OfType<ListBoxItem>())
             {
                 var tag = item.Tag as string ?? string.Empty;
                 if (string.Equals(tag, "ALL", StringComparison.OrdinalIgnoreCase)) continue;
-                item.Visibility = tag.Contains(q, StringComparison.OrdinalIgnoreCase)
-                    ? Visibility.Visible : Visibility.Collapsed;
+                if (!tag.Contains(q, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.Visibility = Visibility.Collapsed;
+                    _hiddenByFilter.Add(item);
+                }
             }
-        }
-        else
-        {
-            foreach (var item in SettingsNav.Items.OfType<ListBoxItem>())
-                item.Visibility = Visibility.Visible;
         }
     }
 

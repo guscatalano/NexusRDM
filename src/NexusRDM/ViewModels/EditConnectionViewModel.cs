@@ -12,16 +12,67 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     private readonly IConnectionService _svc;
     private readonly Guid?              _existingId;
 
-    [ObservableProperty][NotifyDataErrorInfo][Required(ErrorMessage = "Name is required")][MaxLength(200)]
+    [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [Required(ErrorMessage = "Name is required")]
+    [MaxLength(200)]
+    [NotifyPropertyChangedFor(nameof(DisplayNameError))]
+    [NotifyPropertyChangedFor(nameof(HasDisplayNameError))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameErrorVisibility))]
     private string _displayName = string.Empty;
 
-    [ObservableProperty][NotifyDataErrorInfo][Required(ErrorMessage = "Host is required")][MaxLength(512)]
+    [ObservableProperty]
+    [NotifyDataErrorInfo]
+    [Required(ErrorMessage = "Host is required")]
+    [MaxLength(512)]
+    [NotifyPropertyChangedFor(nameof(HostError))]
+    [NotifyPropertyChangedFor(nameof(HasHostError))]
+    [NotifyPropertyChangedFor(nameof(HostErrorVisibility))]
     private string _host = string.Empty;
+
+    /// <summary>WinUI's stock TextBox doesn't bind to <c>INotifyDataErrorInfo</c>,
+    /// so we surface validation results as plain string + visibility
+    /// properties the XAML can light up.</summary>
+    public string DisplayNameError => FirstError(nameof(DisplayName));
+    public bool   HasDisplayNameError => !string.IsNullOrEmpty(DisplayNameError);
+    public Visibility DisplayNameErrorVisibility =>
+        HasDisplayNameError ? Visibility.Visible : Visibility.Collapsed;
+
+    public string HostError => FirstError(nameof(Host));
+    public bool   HasHostError => !string.IsNullOrEmpty(HostError);
+    public Visibility HostErrorVisibility =>
+        HasHostError ? Visibility.Visible : Visibility.Collapsed;
+
+    private string FirstError(string propertyName) =>
+        GetErrors(propertyName).OfType<ValidationResult>().FirstOrDefault()?.ErrorMessage ?? string.Empty;
+
+    /// <summary>Subscribed in the constructor — ObservableValidator
+    /// raises <see cref="ObservableValidator.ErrorsChanged"/> when
+    /// validation state changes; mirror that into our derived
+    /// XAML-friendly properties so the inline error TextBlock under
+    /// each field re-renders without manual bookkeeping.</summary>
+    private void OnViewModelErrorsChanged(object? sender, System.ComponentModel.DataErrorsChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DisplayName))
+        {
+            OnPropertyChanged(nameof(DisplayNameError));
+            OnPropertyChanged(nameof(HasDisplayNameError));
+            OnPropertyChanged(nameof(DisplayNameErrorVisibility));
+        }
+        else if (e.PropertyName == nameof(Host))
+        {
+            OnPropertyChanged(nameof(HostError));
+            OnPropertyChanged(nameof(HasHostError));
+            OnPropertyChanged(nameof(HostErrorVisibility));
+        }
+    }
 
     [ObservableProperty] private int                _port     = 22;
     [ObservableProperty] private ConnectionProtocol _protocol = ConnectionProtocol.Ssh;
     [ObservableProperty] private string             _tags     = string.Empty;
-    [ObservableProperty] private Guid?              _groupId;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedGroupOption))]
+    private Guid?                                   _groupId;
 
     /// <summary>Codepoint of the glyph chosen for this connection. Used
     /// by the connections tree to render a per-row icon. Empty means
@@ -44,11 +95,11 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     {
         get => GroupOptions.FirstOrDefault(o => o.Id == GroupId)
                ?? GroupOptions.FirstOrDefault(o => o.Id == null);
-        set
-        {
-            GroupId = value?.Id;
-            OnPropertyChanged(nameof(SelectedGroupOption));
-        }
+        // Setter mutates GroupId — its [NotifyPropertyChangedFor]
+        // re-raises SelectedGroupOption for us. Calling OnPropertyChanged
+        // here directly would loop the TwoWay ComboBox binding into a
+        // setter→notify→setter stack overflow.
+        set { if (value?.Id != GroupId) GroupId = value?.Id; }
     }
 
     partial void OnProtocolChanged(ConnectionProtocol value)
@@ -337,6 +388,12 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     {
         _svc        = svc;
         _existingId = existing?.Id;
+
+        // ObservableValidator's ErrorsChanged fires whenever a property's
+        // validation results change; we mirror that into the derived
+        // *Error / *ErrorVisibility properties the XAML binds to.
+        ErrorsChanged += OnViewModelErrorsChanged;
+
         if (existing is null) return;
 
         DisplayName   = existing.DisplayName;
@@ -427,7 +484,8 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         Groups = [.. await _svc.GetGroupsAsync()];
         // Populate the picker too — connection panel binds the Group
         // ComboBox to GroupOptions, with a leading "(none)" option for
-        // root-level connections.
+        // root-level connections. Re-emit SelectedGroupOption so the
+        // ComboBox picks the right item now that the list exists.
         GroupOptions.Clear();
         GroupOptions.Add(new GroupPickItem(null, "(none)"));
         foreach (var g in Groups.OrderBy(x => x.Name))
@@ -438,7 +496,18 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     public async Task<bool> TrySaveAsync(ICredentialVault vault)
     {
         ValidateAllProperties();
-        if (HasErrors) { ErrorMessage = "Please fix the highlighted fields."; return false; }
+        if (HasErrors)
+        {
+            // Build a concise summary so the banner names the offending
+            // fields too, on top of the inline messages under each box.
+            var fields = new List<string>();
+            if (HasDisplayNameError) fields.Add("Name");
+            if (HasHostError)        fields.Add("Host");
+            ErrorMessage = fields.Count == 0
+                ? "Please fix the highlighted fields."
+                : "Missing or invalid: " + string.Join(", ", fields);
+            return false;
+        }
 
         IsBusy = true; ErrorMessage = string.Empty;
         try

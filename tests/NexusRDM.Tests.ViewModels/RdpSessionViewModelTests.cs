@@ -104,28 +104,36 @@ public sealed class RdpSessionViewModelTests
     }
 
     [Theory]
-    [InlineData("1920 × 1080", 1920, 1080)]
-    [InlineData("2560 × 1440", 2560, 1440)]
-    [InlineData("1024x768",    1024,  768)] // ASCII 'x' also accepted
-    public void SelectedResolution_ParsesAndForwards(string label, int w, int h)
+    [InlineData(RdpDefaultResolution.Res1920x1080, 1920, 1080)]
+    [InlineData(RdpDefaultResolution.Res2560x1440, 2560, 1440)]
+    [InlineData(RdpDefaultResolution.Res1024x768,  1024,  768)]
+    public void SelectedResolution_FixedSize_ForwardsToSession(RdpDefaultResolution res, int w, int h)
     {
         var (vm, fake, _, _) = Build();
 
-        vm.SelectedResolution = label;
+        vm.SelectedResolution = res;
 
         Assert.Single(fake.ResolutionCalls);
         Assert.Equal((w, h), fake.ResolutionCalls[0]);
     }
 
     [Fact]
-    public void SelectedResolution_IgnoresGarbage()
+    public void SelectedResolution_PresetsRaiseEvent_NotDirectForward()
     {
+        // MatchMonitor / MatchPanel can't be resolved without an HWND
+        // and panel rect — those come from the View. The VM raises
+        // ResolutionPresetRequested and the View is expected to call
+        // SetResolution back with concrete pixels.
         var (vm, fake, _, _) = Build();
+        var captured = new List<RdpDefaultResolution>();
+        vm.ResolutionPresetRequested += (_, p) => captured.Add(p);
 
-        vm.SelectedResolution = "garbage";
-        vm.SelectedResolution = string.Empty;
+        vm.SelectedResolution = RdpDefaultResolution.MatchMonitor;
+        vm.SelectedResolution = RdpDefaultResolution.MatchPanel;
 
-        Assert.Empty(fake.ResolutionCalls);
+        Assert.Equal(new[] { RdpDefaultResolution.MatchMonitor, RdpDefaultResolution.MatchPanel },
+                     captured);
+        Assert.Empty(fake.ResolutionCalls); // VM didn't forward directly.
     }
 
     [Fact]

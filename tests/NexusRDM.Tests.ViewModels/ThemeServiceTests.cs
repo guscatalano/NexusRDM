@@ -18,9 +18,11 @@ public sealed class ThemeServiceTests
     }
 
     [Fact]
-    public void Default_IsDarkPalette()
+    public void Default_IsDraculaPalette()
     {
-        Assert.Equal("dark", ThemeService.Default.Id);
+        // Default flipped from "dark" to "dracula" — most users prefer
+        // the warmer palette out of the box.
+        Assert.Equal("dracula", ThemeService.Default.Id);
         Assert.False(ThemeService.Default.IsLight);
     }
 
