@@ -21,7 +21,16 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
     // touching observable properties. Without this, OnPropertyChanged fires
     // on the wrong thread and the XAML binding throws
     // RPC_E_WRONG_THREAD ("marshalled for a different thread").
-    private readonly DispatcherQueue _ui = DispatcherQueue.GetForCurrentThread();
+    // Wrapped in a try because DispatcherQueue.GetForCurrentThread()
+    // throws E_NOINTERFACE outside a WinUI app host (e.g. xunit). Tests
+    // get null and the OnUi pump runs synchronously on the calling
+    // thread; production gets the real dispatcher.
+    private readonly DispatcherQueue? _ui = TryGetDispatcher();
+    private static DispatcherQueue? TryGetDispatcher()
+    {
+        try   { return DispatcherQueue.GetForCurrentThread(); }
+        catch { return null; }
+    }
 
     // Last hwnd+bounds from the View's StartConnection — replayed on
     // reconnect from the toolbar so we re-attach to the same panel rect.
