@@ -341,7 +341,14 @@ public sealed class MstscAxRdpSession : IRdpSession
     {
         if (_form is { IsDisposed: false } f)
         {
-            try { f.Invoke(() => f.Close()); }
+            // BeginInvoke (async) instead of Invoke — Disconnect is called
+            // from SessionManager.Dispose on the WinUI thread during
+            // app shutdown, and a synchronous Invoke deadlocks if the
+            // form's STA pump has already finished Application.Run (no
+            // message loop to service the call). Posting fire-and-forget
+            // lets the form close on its own message-pump tick when one
+            // is still alive, and is a harmless no-op otherwise.
+            try { f.BeginInvoke(() => f.Close()); }
             catch { /* best effort across STA threads */ }
         }
     }

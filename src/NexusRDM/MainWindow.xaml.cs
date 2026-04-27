@@ -513,21 +513,28 @@ public sealed partial class MainWindow : Window
     /// actually goes away. Wired from the constructor.</summary>
     private void HookCloseConfirmation()
     {
-        AppWindow.Closing += async (_, args) =>
+        AppWindow.Closing += (sender, args) =>
         {
             if (_confirmedClose) return;
             if (!SettingsStore.ReadConfirmCloseActive()) return;
             if (!AnyActiveSession())                     return;
 
+            // Cancel synchronously so WinUI keeps the window alive, then
+            // run the dialog + final Close on the dispatcher. The handler
+            // itself stays sync so AppWindow doesn't see a half-evaluated
+            // args.Cancel — async lambdas race with WinUI's close pipeline.
             args.Cancel = true;
-            var ok = await ConfirmCloseAsync(
-                "Close Nexus RDM?",
-                "There are active sessions. Closing will disconnect all of them.");
-            if (!ok) return;
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                var ok = await ConfirmCloseAsync(
+                    "Close Nexus RDM?",
+                    "There are active sessions. Closing will disconnect all of them.");
+                if (!ok) return;
 
-            _confirmedClose      = true;
-            _suppressTabConfirm  = true;
-            Close();
+                _confirmedClose      = true;
+                _suppressTabConfirm  = true;
+                Close();
+            });
         };
     }
 }
