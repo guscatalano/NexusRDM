@@ -22,6 +22,26 @@ public sealed partial class RdpSessionView : UserControl
         Loaded   += OnLoaded;
         Unloaded += OnUnloaded;
 
+        // Match-monitor / match-panel come back here so we can resolve
+        // pixel dims against the live owner-hwnd + panel size, then
+        // forward to the OCX through the same SetResolution path the
+        // fixed presets use.
+        ViewModel.ResolutionPresetRequested += (_, preset) =>
+        {
+            var hwnd = WindowNative.GetWindowHandle(App.MainWin);
+            var (_, _, w, h) = GetPanelScreenBounds();
+            var size = preset switch
+            {
+                NexusRDM.Core.Models.RdpDefaultResolution.MatchMonitor =>
+                    GetMonitorPixelSize(hwnd, w, h),
+                NexusRDM.Core.Models.RdpDefaultResolution.MatchPanel =>
+                    (w, h),
+                _ => (0, 0),
+            };
+            if (size.Item1 > 0 && size.Item2 > 0)
+                ViewModel.SetResolution(size.Item1, size.Item2);
+        };
+
         // WinUI 3 TabView detaches the inactive tab's content from the
         // visual tree, so Loaded/Unloaded is our clean signal for "this
         // tab is/isn't on screen". OnUnloaded hides the embedded form;
@@ -189,4 +209,31 @@ public sealed partial class RdpSessionView : UserControl
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X; public int Y; }
+
+    /// <summary>Returns the full pixel size of the monitor under
+    /// <paramref name="hwnd"/>, falling back to the supplied panel
+    /// dimensions on any failure.</summary>
+    private static (int W, int H) GetMonitorPixelSize(nint hwnd, int fallbackW, int fallbackH)
+    {
+        try
+        {
+            var mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (mon == 0) return (fallbackW, fallbackH);
+            var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(mon, ref info)) return (fallbackW, fallbackH);
+            return (info.rcMonitor.right - info.rcMonitor.left,
+                    info.rcMonitor.bottom - info.rcMonitor.top);
+        }
+        catch { return (fallbackW, fallbackH); }
+    }
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO
+    {
+        public uint cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags;
+    }
+    [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO mi);
 }

@@ -42,15 +42,18 @@
                     <ProgressRing IsActive="{x:Bind ViewModel.IsConnecting, Mode=OneWay}"
                                   Width="14" Height="14"
                                   Foreground="{StaticResource NxAccent}" />
-                    <!-- Read-only TextBox so the failure message is copyable. -->
-                    <TextBox Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
-                             IsReadOnly="True"
-                             BorderThickness="0"
-                             Background="Transparent"
-                             Padding="0"
-                             FontSize="11"
-                             Foreground="{StaticResource NxTx2}"
-                             VerticalAlignment="Center" />
+                    <!-- TextBlock instead of TextBox: the default TextBox
+                         template adds vertical padding that visually
+                         reads as a trailing line break inside the 30-px
+                         toolbar row. We trade copy-on-select for layout
+                         tightness; failure messages are still surfaced
+                         in the audit log. -->
+                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                               TextTrimming="CharacterEllipsis"
+                               IsTextSelectionEnabled="True"
+                               FontSize="11"
+                               Foreground="{StaticResource NxTx2}"
+                               VerticalAlignment="Center" />
                 </StackPanel>
                 <!-- Disconnect button -->
                 <Button Grid.Column="3"

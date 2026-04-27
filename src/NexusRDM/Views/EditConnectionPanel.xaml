@@ -193,16 +193,10 @@
                                        FontSize="10" FontWeight="SemiBold"
                                        Foreground="{StaticResource NxTx3}"
                                        Margin="0,8,0,2" />
-                            <Grid ColumnDefinitions="*,Auto,*">
-                                <NumberBox Grid.Column="0" Header="Width" Minimum="640" Maximum="7680"
-                                           SpinButtonPlacementMode="Compact"
-                                           Value="{x:Bind ViewModel.RdpWidth, Mode=TwoWay}" />
-                                <TextBlock Grid.Column="1" Text="×" VerticalAlignment="Bottom" Margin="8,0,8,8"
-                                           Foreground="{StaticResource NxTx2}" />
-                                <NumberBox Grid.Column="2" Header="Height" Minimum="480" Maximum="4320"
-                                           SpinButtonPlacementMode="Compact"
-                                           Value="{x:Bind ViewModel.RdpHeight, Mode=TwoWay}" />
-                            </Grid>
+                            <ComboBox Header="Resolution" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.RdpResolutionOptions}"
+                                      DisplayMemberPath="Display"
+                                      SelectedItem="{x:Bind ViewModel.SelectedRdpResolutionOption, Mode=TwoWay}" />
                             <CheckBox Content="Full screen" IsChecked="{x:Bind ViewModel.RdpFullScreen, Mode=TwoWay}" />
                             <ComboBox Header="Color depth" HorizontalAlignment="Stretch"
                                       ItemsSource="{x:Bind ViewModel.RdpColorDepthOptions}"

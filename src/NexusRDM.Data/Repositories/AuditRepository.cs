@@ -30,4 +30,9 @@ public sealed class AuditRepository : IAuditRepository
             .OrderByDescending(a => a.OccurredAt)
             .Take(limit)
             .ToListAsync(ct);
+
+    public async Task<int> DeleteOlderThanAsync(DateTime cutoff, CancellationToken ct = default) =>
+        await _db.AuditLog
+            .Where(a => a.OccurredAt < cutoff)
+            .ExecuteDeleteAsync(ct);
 }

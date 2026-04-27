@@ -63,12 +63,31 @@ public partial class App : Application
         {
             using var scope = Services.CreateScope();
             scope.ServiceProvider.GetRequiredService<NexusDbContext>().Database.Migrate();
+
+            // Honor the audit-log retention setting — delete entries
+            // older than the configured cutoff. Best effort; if the
+            // table is missing on first run, the migration above just
+            // created it so there's nothing to clean up anyway.
+            try
+            {
+                var days   = SettingsStore.ReadAuditRetentionDays();
+                var cutoff = DateTime.UtcNow.AddDays(-days);
+                var audit  = scope.ServiceProvider.GetRequiredService<IAuditRepository>();
+                _ = audit.DeleteOlderThanAsync(cutoff);
+            }
+            catch { /* non-fatal */ }
             MainWin = new MainWindow();
             // Push the persisted theme onto the freshly-created window
             // so the first frame already reflects the user's choice.
             try { SettingsViewModel.ApplyPersistedTheme(); } catch { /* non-fatal */ }
             try { SettingsStore.ApplyDebugMode(SettingsStore.ReadDebugMode()); }
             catch { /* non-fatal */ }
+            try { SettingsStore.ApplyFontSize(SettingsStore.ReadFontSizeIndex()); }
+            catch { /* non-fatal */ }
+            // Side-load the user's mstscax.dll (if any) via SxS so
+            // CoCreateInstance picks it up on each session's STA thread.
+            try { NexusRDM.RdpAx.MstscAxOverride.Configure(SettingsStore.ReadMstscAxPath()); }
+            catch { /* non-fatal — falls back to system mstscax */ }
             MainWin.Closed += (_, _) =>
             {
                 // WinUI 3 keeps the process alive while any window is
@@ -111,13 +130,15 @@ public partial class App : Application
         services.AddNexusData(DbPath);
 
         services.AddSingleton<ICredentialVault, CredentialVault>();
+        services.AddSingleton<NexusRDM.Core.Services.IAuditNotifier, NexusRDM.Core.Services.AuditNotifier>();
         services.AddScoped<IConnectionService,  ConnectionService>();
         services.AddSingleton<ISshHandler,      SshHandler>();
         // RDP backend is a dispatcher that picks Mstsc / MstscAx / FreeRdp at
         // session-open time based on the user's setting. The MstscAx factory
         // lives in this project (Forms host); Core stays UI-agnostic.
         services.AddSingleton<IRdpHandler>(_ => new RdpHandler(
-            modeProvider:    SettingsStore.ReadRdpMode,
+            modeProvider:        SettingsStore.ReadRdpMode,
+            mstscExePathProvider: SettingsStore.ReadMstscExePath,
             mstscAxFactory:  (profile, user, pass) => new MstscAxRdpSession(
                 profile, user, pass,
                 resolutionResolver: ResolveDesktopSize)));

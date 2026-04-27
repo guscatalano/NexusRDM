@@ -21,6 +21,7 @@ public sealed class MstscRdpSession : IRdpSession
 {
     private readonly ConnectionProfile _profile;
     private readonly string            _username;
+    private readonly string            _exePath;
     private Process?                   _proc;
 
     public Guid ConnectionId { get; }
@@ -30,15 +31,19 @@ public sealed class MstscRdpSession : IRdpSession
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? FatalError;
     public event EventHandler<RdpEventEntry>? RdpEvent;
+    // Mstsc backend has no pop-out — never fires. Implemented as add/remove
+    // accessors so the compiler doesn't warn about an unused field event.
+    public event EventHandler? ReAttached { add { } remove { } }
 
     private void Log(string kind, string detail = "") =>
         RdpEvent?.Invoke(this, new RdpEventEntry(DateTime.Now, kind, detail));
 
-    internal MstscRdpSession(ConnectionProfile profile, string username)
+    internal MstscRdpSession(ConnectionProfile profile, string username, string? exePath = null)
     {
         ConnectionId = profile.Id;
         _profile     = profile;
         _username    = username;
+        _exePath     = string.IsNullOrWhiteSpace(exePath) ? "mstsc.exe" : exePath;
     }
 
     public void Connect(nint hwndParent, int x, int y, int width, int height)
@@ -47,7 +52,7 @@ public sealed class MstscRdpSession : IRdpSession
         var rdpPath = Path.Combine(Path.GetTempPath(), $"nexus_{ConnectionId:N}.rdp");
         File.WriteAllText(rdpPath, BuildRdpFile(width, height));
 
-        var psi = new ProcessStartInfo("mstsc.exe", $"\"{rdpPath}\"")
+        var psi = new ProcessStartInfo(_exePath, $"\"{rdpPath}\"")
         {
             UseShellExecute = false
         };
@@ -151,17 +156,20 @@ public sealed class MstscRdpSession : IRdpSession
 public sealed class RdpHandler : IRdpHandler
 {
     private readonly Func<RdpLaunchMode> _modeProvider;
+    private readonly Func<string?>?      _mstscExePathProvider;
     private readonly Func<ConnectionProfile, string, string, IRdpSession>? _mstscAxFactory;
     private readonly Func<ConnectionProfile, string, string, IRdpSession>? _freeRdpFactory;
 
     public RdpHandler(
         Func<RdpLaunchMode>? modeProvider = null,
         Func<ConnectionProfile, string, string, IRdpSession>? mstscAxFactory = null,
-        Func<ConnectionProfile, string, string, IRdpSession>? freeRdpFactory = null)
+        Func<ConnectionProfile, string, string, IRdpSession>? freeRdpFactory = null,
+        Func<string?>? mstscExePathProvider = null)
     {
-        _modeProvider   = modeProvider   ?? (() => RdpLaunchMode.MstscAx);
-        _mstscAxFactory = mstscAxFactory;
-        _freeRdpFactory = freeRdpFactory;
+        _modeProvider         = modeProvider   ?? (() => RdpLaunchMode.MstscAx);
+        _mstscAxFactory       = mstscAxFactory;
+        _freeRdpFactory       = freeRdpFactory;
+        _mstscExePathProvider = mstscExePathProvider;
     }
 
     public IRdpSession CreateSession(ConnectionProfile profile, string username, string password)
@@ -178,7 +186,7 @@ public sealed class RdpHandler : IRdpHandler
             RdpLaunchMode.MstscAx
                 => throw new InvalidOperationException(
                     "MstscAx backend factory not registered. Pick Mstsc in Settings or wire up the factory."),
-            _   => new MstscRdpSession(profile, username),
+            _   => new MstscRdpSession(profile, username, _mstscExePathProvider?.Invoke()),
         };
     }
 }

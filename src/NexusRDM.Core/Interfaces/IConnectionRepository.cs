@@ -24,4 +24,9 @@ public interface IAuditRepository
     Task LogAsync(AuditEntry entry, CancellationToken ct = default);
     Task<IReadOnlyList<AuditEntry>> GetForConnectionAsync(Guid connectionId, int limit = 50, CancellationToken ct = default);
     Task<IReadOnlyList<AuditEntry>> GetRecentAsync(int limit = 100, CancellationToken ct = default);
+
+    /// <summary>Bulk-delete every audit entry whose <c>OccurredAt</c> is
+    /// older than <paramref name="cutoff"/>. Returns the number of rows
+    /// removed so callers can log retention activity.</summary>
+    Task<int> DeleteOlderThanAsync(DateTime cutoff, CancellationToken ct = default);
 }

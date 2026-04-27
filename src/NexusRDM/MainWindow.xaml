@@ -123,7 +123,7 @@
                 <!-- CONNECTIONS + TAB VIEW -->
                 <Grid x:Name="ConnView">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="240" MinWidth="160" MaxWidth="360" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="360" />
                         <ColumnDefinition Width="1" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
@@ -131,6 +131,29 @@
                     <views:ConnectionsPane x:Name="ConnectionsPane"
                                            Grid.Column="0"
                                            Background="{StaticResource NxBg1}" />
+
+                    <!-- When collapsed: a thin reveal strip with an
+                         expand button. The pane itself sits at width 0,
+                         so this band has the only visible affordance. -->
+                    <Border x:Name="SidebarCollapsedStrip"
+                            Grid.Column="0"
+                            Width="22"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Left"
+                            Background="{StaticResource NxBg1}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="0,0,1,0">
+                        <Button Click="SidebarToggle_Click"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="0,8"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Top"
+                                ToolTipService.ToolTip="Show connections">
+                            <FontIcon Glyph="&#xE76C;" FontSize="11"
+                                      Foreground="{StaticResource NxTx2}" />
+                        </Button>
+                    </Border>
 
                     <Border Grid.Column="1" Background="{StaticResource NxBrd}" />
 

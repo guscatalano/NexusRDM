@@ -72,6 +72,14 @@ public enum RdpAuthenticationLevel
     WarnIfNoAuth     = 2,
 }
 
+/// <summary>Whether activating a connection in the tree opens it on a
+/// single click or a double click.</summary>
+public enum ConnectionClickBehavior
+{
+    SingleClick = 0,
+    DoubleClick = 1,
+}
+
 /// <summary>
 /// Backend used to start an RDP session. Default is <see cref="Mstsc"/>: the
 /// classic Windows Remote Desktop client launched as a separate process.

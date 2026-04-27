@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
         }
         catch { /* non-fatal — falls back to default icon */ }
         ConnectionsPane.ConnectRequested += OnConnectRequested;
+        ConnectionsPane.CollapseRequested += (_, _) => SidebarToggle_Click(null!, null!);
         // RDP sessions own a top-level Win32 form pinned over their host
         // tab. WinUI 3 TabView doesn't unload the inactive tab's content
         // reliably (so RdpSessionView.Unloaded isn't the right signal),
@@ -129,13 +130,16 @@ public sealed partial class MainWindow : Window
             "Click “New” in the left pane. Pick SSH or RDP, fill in host/port, and choose how to authenticate."));
         stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "2", "Save credentials",
             "Enter username/password and tick “Save to Windows Credential Manager.” Your secrets never live in plain text."));
-        stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "3", "Open a session",
+        stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "3", "Open a connection",
             "Click any connection in the tree. SSH opens in a terminal tab; RDP launches the embedded Remote Desktop control."));
 
         stack.Children.Add(SectionHeader("PROTOCOLS", tx3));
         var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 18 };
-        legend.Children.Add(LegendDot(ssh, "SSH — terminal sessions", tx2));
-        legend.Children.Add(LegendDot(rdp, "RDP — remote desktop",    tx2));
+        // Use Segoe Fluent Icons rather than colored dots so the legend
+        // doesn't look like a connection-status indicator (those live in
+        // the connection tree and tabs and *do* color-code by status).
+        legend.Children.Add(LegendIcon("", "SSH — terminal sessions", ssh, tx2));   // CommandPrompt
+        legend.Children.Add(LegendIcon("", "RDP — remote desktop",    rdp, tx2));   // Remote
         stack.Children.Add(legend);
 
         stack.Children.Add(SectionHeader("TIPS", tx3));
@@ -211,6 +215,14 @@ public sealed partial class MainWindow : Window
         return sp;
     }
 
+    private static StackPanel LegendIcon(string glyph, string label, SolidColorBrush iconFg, SolidColorBrush textFg)
+    {
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        sp.Children.Add(new FontIcon { Glyph = glyph, FontSize = 14, Foreground = iconFg, VerticalAlignment = VerticalAlignment.Center });
+        sp.Children.Add(new TextBlock { Text = label, FontSize = 12, Foreground = textFg, VerticalAlignment = VerticalAlignment.Center });
+        return sp;
+    }
+
     private static TextBlock BulletLine(string text, SolidColorBrush fg) => new()
     {
         Text = text,
@@ -218,6 +230,30 @@ public sealed partial class MainWindow : Window
         Foreground = fg,
         TextWrapping = TextWrapping.Wrap,
     };
+
+    private bool _sidebarCollapsed;
+
+    private void SidebarToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _sidebarCollapsed = !_sidebarCollapsed;
+        if (_sidebarCollapsed)
+        {
+            // Drop the column to a hairline (0 + the 1px separator) so
+            // the TabView gets the reclaimed space; the strip overlays
+            // a 22-px reveal handle on the left.
+            SidebarColumn.MinWidth = 0;
+            SidebarColumn.Width    = new GridLength(22);
+            ConnectionsPane.Visibility       = Visibility.Collapsed;
+            SidebarCollapsedStrip.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            SidebarColumn.MinWidth = 160;
+            SidebarColumn.Width    = new GridLength(240);
+            ConnectionsPane.Visibility       = Visibility.Visible;
+            SidebarCollapsedStrip.Visibility = Visibility.Collapsed;
+        }
+    }
 
     private void BtnNavConn_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Connections);
     private void BtnNavAudit_Click(object sender, RoutedEventArgs e) => ShowNav(NavSection.Audit);
@@ -315,7 +351,9 @@ public sealed partial class MainWindow : Window
         var session = _ssh.CreateSession(profile, username, password!);
         var entry   = _sessions.AddSsh(profile, session);
         var vm      = new SshSessionViewModel(profile, session, _sessions);
-        AddSessionTab(profile, entry, Symbol.Globe, new SshSessionView(vm),
+        // Use the same Segoe Fluent glyph the home-page legend shows
+        // for SSH (CommandPrompt, U+E756) so tab + legend stay in sync.
+        AddSessionTab(profile, entry, "", new SshSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxSsh"]);
         WireSessionAuditEvents(profile, session);
     }
@@ -330,7 +368,8 @@ public sealed partial class MainWindow : Window
         var session = _rdp.CreateSession(profile, username, password ?? string.Empty);
         var entry   = _sessions.AddRdp(profile, session);
         var vm      = new RdpSessionViewModel(profile, session, _rdp, username, password ?? string.Empty, _sessions);
-        AddSessionTab(profile, entry, Symbol.Remote, new RdpSessionView(vm),
+        // Same glyph the home-page legend uses for RDP (Remote, U+E8AF).
+        AddSessionTab(profile, entry, "", new RdpSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxRdp"]);
         WireSessionAuditEvents(profile, session);
     }
@@ -360,13 +399,53 @@ public sealed partial class MainWindow : Window
         rdp.Connected    += (_, _)      => _ = _svc.RecordConnectedAsync(profile.Id);
         rdp.Disconnected += (_, reason) => _ = _svc.RecordDisconnectedAsync(profile.Id, reason);
         rdp.FatalError   += (_, msg)    => _ = _svc.RecordFailedAsync(profile.Id, msg);
+
+        // Pop-out close → form snapped back to the panel rect. If the
+        // user is now on a different tab than they were when they popped
+        // out, the form would otherwise sit visible on top of the wrong
+        // tab. Push it back through the per-tab visibility logic.
+        rdp.ReAttached   += (_, _) => DispatcherQueue.TryEnqueue(() =>
+        {
+            var selected = SessionTabs.SelectedItem as TabViewItem;
+            var owner = SessionTabs.TabItems.OfType<TabViewItem>()
+                .FirstOrDefault(i => i.Tag is OpenSession os && ReferenceEquals(os.RdpSession, rdp));
+            try { rdp.SetVisible(ReferenceEquals(owner, selected)); }
+            catch { /* best effort */ }
+        });
     }
 
-    private void AddSessionTab(ConnectionProfile profile, OpenSession entry, Symbol icon, UIElement content, SolidColorBrush dotColor)
+    private void AddSessionTab(ConnectionProfile profile, OpenSession entry, string iconGlyph, UIElement content, SolidColorBrush dotColor)
     {
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        header.Children.Add(new Ellipse { Width = 7, Height = 7, Fill = dotColor });
+        // Status dot: starts red (not yet connected), flips to green on
+        // the session's Connected event and back to red on Disconnected.
+        // The dotColor argument (protocol-coded) is now ignored — protocol
+        // is communicated by the tab icon (Globe / Remote).
+        var connected   = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C));
+        var disconnected= new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x6B, 0x6B));
+        var statusDot   = new Ellipse { Width = 7, Height = 7, Fill = disconnected };
+        header.Children.Add(statusDot);
         header.Children.Add(new TextBlock { Text = profile.DisplayName, FontSize = 12, Foreground = (SolidColorBrush)Application.Current.Resources["NxTx1"] });
+
+        // Wire the dot to the underlying session events. Both backends
+        // expose Connected/Disconnected; we marshal back to the UI thread
+        // because RDP fires from the WinForms STA.
+        var ui = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        void Mark(bool live) => ui.TryEnqueue(() => statusDot.Fill = live ? connected : disconnected);
+        if (entry.SshSession is { } ssh)
+        {
+            ssh.Disconnected += (_, _) => Mark(false);
+            // ISshSession lacks an explicit Connected event — flip green
+            // on first byte received.
+            var seenData = false;
+            ssh.DataReceived += (_, _) => { if (!seenData) { seenData = true; Mark(true); } };
+        }
+        if (entry.RdpSession is { } rdp)
+        {
+            rdp.Connected    += (_, _)  => Mark(true);
+            rdp.Disconnected += (_, _)  => Mark(false);
+            rdp.FatalError   += (_, _)  => Mark(false);
+        }
 
         var tab = new TabViewItem
         {
@@ -376,7 +455,7 @@ public sealed partial class MainWindow : Window
             // ConnectionId).
             Tag        = entry,
             Content    = content,
-            IconSource = new SymbolIconSource { Symbol = icon }
+            IconSource = new FontIconSource { Glyph = iconGlyph }
         };
 
         // Right-click flyout — currently exposes Duplicate. Only meaningful for

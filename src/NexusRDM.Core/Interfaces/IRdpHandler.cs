@@ -33,6 +33,12 @@ public interface IRdpSession : IDisposable
     /// events on arbitrary threads.</summary>
     event EventHandler<RdpEventEntry>? RdpEvent;
 
+    /// <summary>Fires after the user closes a popped-out window and the
+    /// form snaps back to the host tab's panel rect. Hosts should
+    /// re-apply tab visibility — the form may need to be hidden again
+    /// if the user is now on a different tab than when they popped out.</summary>
+    event EventHandler? ReAttached;
+
     /// <summary>Begin the RDP session. <paramref name="hwndParent"/> is the
     /// HWND that should own the resulting remote-desktop window (typically
     /// the WinUI app window). The (x, y, width, height) hint suggests an

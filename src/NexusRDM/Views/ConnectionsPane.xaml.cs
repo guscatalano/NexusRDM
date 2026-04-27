@@ -11,6 +11,7 @@ public sealed partial class ConnectionsPane : UserControl
 {
     public ConnectionsViewModel ViewModel { get; }
     public event EventHandler<ConnectionProfile>? ConnectRequested;
+    public event EventHandler? CollapseRequested;
 
     public ConnectionsPane()
     {
@@ -21,7 +22,23 @@ public sealed partial class ConnectionsPane : UserControl
 
     private void ConnectionTree_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
     {
+        // TreeView.ItemInvoked fires once per single click. When the user
+        // has set click behavior to DoubleClick, swallow this and let the
+        // DoubleTapped handler fire instead.
+        if (NexusRDM.ViewModels.SettingsStore.ReadClickBehavior() != Core.Models.ConnectionClickBehavior.SingleClick)
+            return;
         if (args.InvokedItem is ConnectionTreeNode { Profile: { } profile })
+            ConnectRequested?.Invoke(this, profile);
+    }
+
+    private void Collapse_Click(object sender, RoutedEventArgs e) =>
+        CollapseRequested?.Invoke(this, EventArgs.Empty);
+
+    private void ConnectionTree_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (NexusRDM.ViewModels.SettingsStore.ReadClickBehavior() != Core.Models.ConnectionClickBehavior.DoubleClick)
+            return;
+        if (e.OriginalSource is FrameworkElement { DataContext: ConnectionTreeNode { Profile: { } profile } })
             ConnectRequested?.Invoke(this, profile);
     }
 

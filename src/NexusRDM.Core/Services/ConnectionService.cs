@@ -9,11 +9,19 @@ public sealed class ConnectionService : IConnectionService
     private readonly IConnectionRepository    _repo;
     private readonly IAuditRepository         _audit;
     private readonly ICredentialVault?        _vault;
+    private readonly IAuditNotifier?          _notifier;
     private readonly ILogger<ConnectionService> _log;
 
     public ConnectionService(IConnectionRepository repo, IAuditRepository audit,
-        ILogger<ConnectionService> log, ICredentialVault? vault = null)
-    { _repo = repo; _audit = audit; _log = log; _vault = vault; }
+        ILogger<ConnectionService> log, ICredentialVault? vault = null,
+        IAuditNotifier? notifier = null)
+    { _repo = repo; _audit = audit; _log = log; _vault = vault; _notifier = notifier; }
+
+    private async Task LogAuditAsync(AuditEntry entry, CancellationToken ct)
+    {
+        await _audit.LogAsync(entry, ct);
+        _notifier?.NotifyEntryWritten();
+    }
 
     public Task<IReadOnlyList<ConnectionProfile>> GetAllAsync(CancellationToken ct = default) => _repo.GetAllAsync(ct);
     public Task<ConnectionProfile?> GetByIdAsync(Guid id, CancellationToken ct = default)     => _repo.GetByIdAsync(id, ct);
@@ -22,7 +30,7 @@ public sealed class ConnectionService : IConnectionService
     public async Task<ConnectionProfile> CreateAsync(ConnectionProfile p, CancellationToken ct = default)
     {
         var created = await _repo.AddAsync(p, ct);
-        await _audit.LogAsync(new AuditEntry { ConnectionId = created.Id, DisplayName = created.DisplayName, Action = AuditAction.Created }, ct);
+        await LogAuditAsync(new AuditEntry { ConnectionId = created.Id, DisplayName = created.DisplayName, Action = AuditAction.Created }, ct);
         _log.LogInformation("Created connection {Name} ({Id})", created.DisplayName, created.Id);
         return created;
     }
@@ -36,7 +44,7 @@ public sealed class ConnectionService : IConnectionService
         var before = await _repo.GetByIdAsync(p.Id, ct);
         await _repo.UpdateAsync(p, ct);
         var detail = before is null ? null : DiffProfile(before, p);
-        await _audit.LogAsync(new AuditEntry
+        await LogAuditAsync(new AuditEntry
         {
             ConnectionId = p.Id,
             DisplayName  = p.DisplayName,
@@ -75,7 +83,7 @@ public sealed class ConnectionService : IConnectionService
         }
 
         await _repo.DeleteAsync(id, ct);
-        await _audit.LogAsync(new AuditEntry { ConnectionId = id, DisplayName = p.DisplayName, Action = AuditAction.Deleted }, ct);
+        await LogAuditAsync(new AuditEntry { ConnectionId = id, DisplayName = p.DisplayName, Action = AuditAction.Deleted }, ct);
         return warning;
     }
 
@@ -88,7 +96,7 @@ public sealed class ConnectionService : IConnectionService
     {
         await _repo.UpdateLastConnectedAsync(id, DateTime.UtcNow, ct);
         var p = await _repo.GetByIdAsync(id, ct);
-        await _audit.LogAsync(new AuditEntry
+        await LogAuditAsync(new AuditEntry
         {
             ConnectionId = id,
             DisplayName  = p?.DisplayName ?? string.Empty,
@@ -100,7 +108,7 @@ public sealed class ConnectionService : IConnectionService
     public async Task RecordDisconnectedAsync(Guid id, string? reason = null, CancellationToken ct = default)
     {
         var p = await _repo.GetByIdAsync(id, ct);
-        await _audit.LogAsync(new AuditEntry
+        await LogAuditAsync(new AuditEntry
         {
             ConnectionId = id,
             DisplayName  = p?.DisplayName ?? string.Empty,
@@ -112,7 +120,7 @@ public sealed class ConnectionService : IConnectionService
     public async Task RecordFailedAsync(Guid id, string reason, CancellationToken ct = default)
     {
         var p = await _repo.GetByIdAsync(id, ct);
-        await _audit.LogAsync(new AuditEntry
+        await LogAuditAsync(new AuditEntry
         {
             ConnectionId = id,
             DisplayName  = p?.DisplayName ?? string.Empty,
@@ -144,15 +152,43 @@ public sealed class ConnectionService : IConnectionService
         Compare("Tags",        a.Tags,           b.Tags);
         Compare("Group",       a.GroupId,        b.GroupId);
         Compare("Credential",  a.CredentialKey,  b.CredentialKey);
-        // Embedded JSON blobs: surfacing the full diff would dwarf
-        // everything else, so just flag that protocol-specific options
-        // moved.
-        if (!string.Equals(a.RdpSettingsJson, b.RdpSettingsJson, StringComparison.Ordinal))
-            parts.Add("RDP options changed");
-        if (!string.Equals(a.SshSettingsJson, b.SshSettingsJson, StringComparison.Ordinal))
-            parts.Add("SSH options changed");
+        // Embedded JSON blobs: report which sub-options changed by name
+        // (without leaking the values — they may include credentials,
+        // gateway hostnames, or other context the user wouldn't want
+        // pinned in the audit log).
+        var rdpFields = DiffOptionFields(a.RdpSettingsJson, b.RdpSettingsJson, typeof(RdpOptions));
+        if (rdpFields.Count > 0) parts.Add($"RDP options changed: {string.Join(", ", rdpFields)}");
+        var sshFields = DiffOptionFields(a.SshSettingsJson, b.SshSettingsJson, typeof(SshOptions));
+        if (sshFields.Count > 0) parts.Add($"SSH options changed: {string.Join(", ", sshFields)}");
 
         return parts.Count == 0 ? null : string.Join("; ", parts);
+    }
+
+    /// <summary>Deserialise both JSON blobs into the same options type
+    /// and return the names of properties whose values differ. Values
+    /// are intentionally NOT included — the audit log only records
+    /// "what changed", not the new content.</summary>
+    private static List<string> DiffOptionFields(string? aJson, string? bJson, Type type)
+    {
+        var changed = new List<string>();
+        if (string.Equals(aJson, bJson, StringComparison.Ordinal)) return changed;
+        try
+        {
+            var a = string.IsNullOrWhiteSpace(aJson) ? Activator.CreateInstance(type) : System.Text.Json.JsonSerializer.Deserialize(aJson, type);
+            var b = string.IsNullOrWhiteSpace(bJson) ? Activator.CreateInstance(type) : System.Text.Json.JsonSerializer.Deserialize(bJson, type);
+            foreach (var prop in type.GetProperties())
+            {
+                var av = prop.GetValue(a);
+                var bv = prop.GetValue(b);
+                if (!Equals(av, bv)) changed.Add(prop.Name);
+            }
+        }
+        catch
+        {
+            // Fall back to a generic flag if parsing fails for any reason.
+            changed.Add("(unparsable)");
+        }
+        return changed;
     }
 
     public Task<IReadOnlyList<AuditEntry>> GetRecentAuditAsync(int limit = 100, CancellationToken ct = default)

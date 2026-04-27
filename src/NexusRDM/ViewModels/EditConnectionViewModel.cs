@@ -69,6 +69,9 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     [ObservableProperty] private int           _keepAliveSeconds = 30;
 
     // ── RDP: Display ────────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpResolutionOption))]
+    private RdpDefaultResolution _rdpPreferredResolution = RdpDefaultResolution.MatchMonitor;
     [ObservableProperty] private int    _rdpWidth      = 1920;
     [ObservableProperty] private int    _rdpHeight     = 1080;
     [ObservableProperty] private bool   _rdpFullScreen = false;
@@ -193,6 +196,28 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     // bind via SelectedItem instead. Each wrapper's setter pushes the
     // enum back into the underlying [ObservableProperty] field; the
     // field's NotifyPropertyChangedFor re-raises the wrapper.
+
+    /// <summary>Resolution presets — same set the global Settings page
+    /// uses, so the per-connection override and the app default speak
+    /// the same vocabulary.</summary>
+    public IReadOnlyList<NamedOption<RdpDefaultResolution>> RdpResolutionOptions { get; } =
+    [
+        new("Match current monitor",  RdpDefaultResolution.MatchMonitor),
+        new("Match panel size",       RdpDefaultResolution.MatchPanel),
+        new("1024 × 768",             RdpDefaultResolution.Res1024x768),
+        new("1280 × 720",             RdpDefaultResolution.Res1280x720),
+        new("1366 × 768",             RdpDefaultResolution.Res1366x768),
+        new("1600 × 900",             RdpDefaultResolution.Res1600x900),
+        new("1920 × 1080",            RdpDefaultResolution.Res1920x1080),
+        new("2560 × 1440",            RdpDefaultResolution.Res2560x1440),
+        new("3840 × 2160",            RdpDefaultResolution.Res3840x2160),
+    ];
+
+    public NamedOption<RdpDefaultResolution>? SelectedRdpResolutionOption
+    {
+        get => RdpResolutionOptions.FirstOrDefault(o => o.Value == RdpPreferredResolution);
+        set { if (value is not null) RdpPreferredResolution = value.Value; }
+    }
 
     public NamedOption<RdpColorDepth>? SelectedRdpColorDepthOption
     {
@@ -329,6 +354,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         else
         {
             var rdp = existing.RdpSettings();
+            RdpPreferredResolution = rdp.PreferredResolution;
             RdpWidth          = rdp.Width;
             RdpHeight         = rdp.Height;
             RdpFullScreen     = rdp.FullScreen;
@@ -406,6 +432,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         RdpSettingsJson = Protocol == ConnectionProtocol.Rdp
             ? System.Text.Json.JsonSerializer.Serialize(new RdpOptions
               {
+                  PreferredResolution = RdpPreferredResolution,
                   Width             = RdpWidth,
                   Height            = RdpHeight,
                   FullScreen        = RdpFullScreen,
