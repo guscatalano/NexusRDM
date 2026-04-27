@@ -220,13 +220,68 @@ public sealed class MstscAxRdpSession : IRdpSession
                     Log("OcxCreated", "MsRdpClient9NotSafeForScripting");
 
                     var rdp = _profile.RdpSettings();
-                    ocx.Server                                 = _profile.Host;
-                    ocx.UserName                               = _username;
-                    ocx.AdvancedSettings9.RDPPort              = _profile.Port;
-                    ocx.AdvancedSettings9.ClearTextPassword    = _password;
-                    ocx.AdvancedSettings9.SmartSizing          = true;
-                    ocx.AdvancedSettings9.EnableCredSspSupport = true;
-                    ocx.ColorDepth                             = (int)rdp.ColorDepth;
+                    // Each property is wrapped in TrySet because the OCX
+                    // exposes its surface via late-bound IDispatch — older
+                    // mstscax builds (or stripped-down server installs) may
+                    // be missing individual properties, and a single
+                    // RuntimeBinderException would currently fatal the
+                    // entire connection. Failures are logged so the user
+                    // can see which knobs the OCX rejected.
+                    TrySet("Server",       () => ocx.Server   = _profile.Host);
+                    TrySet("UserName",     () => ocx.UserName = _username);
+                    var adv = ocx.AdvancedSettings9;
+                    TrySet("RDPPort",                () => adv.RDPPort                  = _profile.Port);
+                    TrySet("ClearTextPassword",      () => adv.ClearTextPassword        = _password);
+                    TrySet("SmartSizing",            () => adv.SmartSizing              = true);
+                    TrySet("EnableCredSspSupport",   () => adv.EnableCredSspSupport     = rdp.EnableCredSspSupport);
+                    TrySet("AuthenticationLevel",    () => adv.AuthenticationLevel      = (uint)rdp.AuthenticationLevel);
+                    // PromptForCredentials lives on IMsRdpClientNonScriptable3 — a
+                    // vtable interface, not the dispinterface dynamic dispatches
+                    // through, so we can't reach it from here. Skipped on purpose.
+                    TrySet("ConnectToAdministerServer", () => adv.ConnectToAdministerServer = rdp.AdminConsole);
+                    TrySet("EnableAutoReconnect",    () => adv.EnableAutoReconnect      = rdp.AutoReconnect);
+                    TrySet("NetworkConnectionType",  () => adv.NetworkConnectionType    = (uint)rdp.NetworkType);
+                    TrySet("PerformanceFlags",       () => adv.PerformanceFlags         = ComputePerformanceFlags(rdp));
+                    // KeyboardHookMode (capital K) — the IDL property name; the
+                    // earlier "keyboardHookMode" spelling was wrong and was
+                    // silently rejected by IDispatch::GetIDsOfNames.
+                    TrySet("KeyboardHookMode",       () => adv.KeyboardHookMode         = (int)rdp.KeyboardHookMode);
+                    TrySet("DisplayConnectionBar",   () => adv.DisplayConnectionBar     = rdp.ConnectionBar);
+                    TrySet("PinConnectionBar",       () => adv.PinConnectionBar         = rdp.PinConnectionBar);
+                    TrySet("BitmapPersistence",      () => adv.BitmapPersistence        = rdp.BitmapCaching ? 1 : 0);
+
+                    // Redirections — every flag the OCX exposes.
+                    TrySet("RedirectDrives",      () => adv.RedirectDrives      = rdp.RedirectDrives);
+                    TrySet("RedirectPrinters",    () => adv.RedirectPrinters    = rdp.RedirectPrinters);
+                    TrySet("RedirectPorts",       () => adv.RedirectPorts       = rdp.RedirectPorts);
+                    TrySet("RedirectSmartCards",  () => adv.RedirectSmartCards  = rdp.RedirectSmartCards);
+                    TrySet("RedirectClipboard",   () => adv.RedirectClipboard   = rdp.RedirectClipboard);
+                    TrySet("RedirectDevices",     () => adv.RedirectDevices     = rdp.RedirectDevices);
+                    TrySet("RedirectPOSDevices",  () => adv.RedirectPOSDevices  = rdp.RedirectPOSDevices);
+
+                    // Audio in/out — playback via SecuredSettings3, mic via AdvancedSettings9.
+                    TrySet("AudioRedirectionMode",       () => ocx.SecuredSettings3.AudioRedirectionMode = (int)rdp.AudioMode);
+                    TrySet("AudioCaptureRedirectionMode",() => adv.AudioCaptureRedirectionMode           = rdp.AudioCapture);
+
+                    // Gateway — only push when the user actually wants one.
+                    if (rdp.GatewayUsageMethod != RdpGatewayUsage.NoUse)
+                    {
+                        TrySet("GatewayUsageMethod", () => adv.GatewayUsageMethod = (uint)rdp.GatewayUsageMethod);
+                        TrySet("GatewayHostname",    () => adv.GatewayHostname    = rdp.GatewayServer   ?? string.Empty);
+                        TrySet("GatewayUsername",    () => adv.GatewayUsername    = rdp.GatewayUsername ?? string.Empty);
+                        TrySet("GatewayDomain",      () => adv.GatewayDomain      = rdp.GatewayDomain   ?? string.Empty);
+                    }
+
+                    if (!string.IsNullOrEmpty(rdp.LoadBalanceInfo))
+                        TrySet("LoadBalanceInfo", () => adv.LoadBalanceInfo = rdp.LoadBalanceInfo);
+
+                    TrySet("ColorDepth", () => ocx.ColorDepth = (int)rdp.ColorDepth);
+
+                    void TrySet(string name, Action a)
+                    {
+                        try { a(); }
+                        catch (Exception ex) { Log("OcxPropertySkipped", $"{name}: {ex.Message}"); }
+                    }
                     // DesktopWidth/Height set the BASE resolution the
                     // remote session is negotiated at — without them
                     // mstscax defaults to 800×600 and the rendered
@@ -574,6 +629,30 @@ public sealed class MstscAxRdpSession : IRdpSession
     {
         public MsRdpClientAxHost() : base(MsRdpClient9NotSafeClsid) { }
         public object? Ocx => GetOcx();
+    }
+
+    // Performance bitmask values (TS_PERF_*). The OCX flips a feature OFF
+    // when its bit is set, so a UI checkbox saying "show wallpaper" → ON
+    // means the wallpaper bit stays clear (disable=false).
+    private const int TS_PERF_DISABLE_WALLPAPER          = 0x00000001;
+    private const int TS_PERF_DISABLE_FULLWINDOWDRAG     = 0x00000002;
+    private const int TS_PERF_DISABLE_MENUANIMATIONS     = 0x00000004;
+    private const int TS_PERF_DISABLE_THEMING            = 0x00000008;
+    private const int TS_PERF_DISABLE_CURSOR_SHADOW      = 0x00000020;
+    private const int TS_PERF_DISABLE_CURSORSETTINGS     = 0x00000040;
+    private const int TS_PERF_ENABLE_FONT_SMOOTHING      = 0x00000080;
+    private const int TS_PERF_ENABLE_DESKTOP_COMPOSITION = 0x00000100;
+
+    private static uint ComputePerformanceFlags(RdpOptions r)
+    {
+        var f = 0;
+        if (!r.DesktopBackground)  f |= TS_PERF_DISABLE_WALLPAPER;
+        if (!r.WindowDrag)         f |= TS_PERF_DISABLE_FULLWINDOWDRAG;
+        if (!r.MenuAnimations)     f |= TS_PERF_DISABLE_MENUANIMATIONS;
+        if (!r.VisualStyles)       f |= TS_PERF_DISABLE_THEMING;
+        if (r.FontSmoothing)       f |= TS_PERF_ENABLE_FONT_SMOOTHING;
+        if (r.DesktopComposition)  f |= TS_PERF_ENABLE_DESKTOP_COMPOSITION;
+        return (uint)f;
     }
 
     // ── Win32 ──────────────────────────────────────────────────────────────

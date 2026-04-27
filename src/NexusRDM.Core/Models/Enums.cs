@@ -29,6 +29,49 @@ public enum RdpAudioMode
     NoPlayback    = 2
 }
 
+/// <summary>Maps to mstscax <c>AdvancedSettings9.GatewayUsageMethod</c>.</summary>
+public enum RdpGatewayUsage
+{
+    NoUse  = 0,
+    Direct = 1,
+    Detect = 2,
+    Default = 3,
+}
+
+/// <summary>Maps to mstscax <c>AdvancedSettings9.NetworkConnectionType</c>
+/// — used as a hint to the server about which graphics features to enable.
+/// The integer values mirror the OCX's own constants
+/// (<c>CONNECTION_TYPE_*</c>); the OCX rejects 0, so <see cref="Auto"/>
+/// uses 7 = <c>CONNECTION_TYPE_AUTODETECT</c>.</summary>
+public enum RdpNetworkType
+{
+    Modem        = 1,
+    LowBroadband = 2,
+    Satellite    = 3,
+    HighBroadband= 4,
+    Wan          = 5,
+    Lan          = 6,
+    Auto         = 7,
+}
+
+/// <summary>Where Windows-key combos (Alt+Tab, Win, etc.) are routed.
+/// Maps to mstscax <c>AdvancedSettings9.KeyboardHookMode</c>.</summary>
+public enum RdpKeyboardHook
+{
+    LocalOnly          = 0,
+    RemoteAlways       = 1,
+    RemoteOnFullScreen = 2,
+}
+
+/// <summary>Server-auth strictness. Maps to mstscax
+/// <c>AdvancedSettings9.AuthenticationLevel</c>.</summary>
+public enum RdpAuthenticationLevel
+{
+    NoAuthRequired   = 0,
+    AuthRequired     = 1,
+    WarnIfNoAuth     = 2,
+}
+
 /// <summary>
 /// Backend used to start an RDP session. Default is <see cref="Mstsc"/>: the
 /// classic Windows Remote Desktop client launched as a separate process.

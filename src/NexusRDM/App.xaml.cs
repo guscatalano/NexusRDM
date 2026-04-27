@@ -67,6 +67,8 @@ public partial class App : Application
             // Push the persisted theme onto the freshly-created window
             // so the first frame already reflects the user's choice.
             try { SettingsViewModel.ApplyPersistedTheme(); } catch { /* non-fatal */ }
+            try { SettingsStore.ApplyDebugMode(SettingsStore.ReadDebugMode()); }
+            catch { /* non-fatal */ }
             MainWin.Closed += (_, _) =>
             {
                 // WinUI 3 keeps the process alive while any window is

@@ -68,12 +68,167 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     [ObservableProperty] private string        _privateKeyPath   = string.Empty;
     [ObservableProperty] private int           _keepAliveSeconds = 30;
 
+    // ── RDP: Display ────────────────────────────────────────────────
     [ObservableProperty] private int    _rdpWidth      = 1920;
     [ObservableProperty] private int    _rdpHeight     = 1080;
     [ObservableProperty] private bool   _rdpFullScreen = false;
-    [ObservableProperty] private bool   _rdpClipboard  = true;
-    [ObservableProperty] private bool   _rdpDrives     = false;
-    [ObservableProperty] private string _rdpDomain     = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpColorDepthOption))]
+    private RdpColorDepth _rdpColorDepth = RdpColorDepth.Colors32Bit;
+
+    // ── RDP: Audio ──────────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpAudioOption))]
+    private RdpAudioMode _rdpAudioMode = RdpAudioMode.PlayOnClient;
+    [ObservableProperty] private bool   _rdpAudioCapture = false;
+
+    // ── RDP: Redirections ───────────────────────────────────────────
+    [ObservableProperty] private bool   _rdpClipboard       = true;
+    [ObservableProperty] private bool   _rdpDrives          = false;
+    [ObservableProperty] private bool   _rdpPrinters        = false;
+    [ObservableProperty] private bool   _rdpSmartCards      = false;
+    [ObservableProperty] private bool   _rdpPorts           = false;
+    [ObservableProperty] private bool   _rdpDevices         = false;
+    [ObservableProperty] private bool   _rdpPosDevices      = false;
+
+    // ── RDP: Gateway ────────────────────────────────────────────────
+    [ObservableProperty] private string _rdpGatewayServer   = string.Empty;
+    [ObservableProperty] private string _rdpGatewayUsername = string.Empty;
+    [ObservableProperty] private string _rdpGatewayDomain   = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpGatewayUsageOption))]
+    private RdpGatewayUsage _rdpGatewayUsage = RdpGatewayUsage.NoUse;
+
+    // ── RDP: Connection ─────────────────────────────────────────────
+    [ObservableProperty] private string _rdpDomain          = string.Empty;
+    [ObservableProperty] private bool   _rdpAdminConsole    = false;
+    [ObservableProperty] private string _rdpLoadBalanceInfo = string.Empty;
+    [ObservableProperty] private bool   _rdpAutoReconnect   = true;
+
+    // ── RDP: Authentication ─────────────────────────────────────────
+    [ObservableProperty] private bool   _rdpEnableCredSsp   = true;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpAuthLevelOption))]
+    private RdpAuthenticationLevel _rdpAuthLevel = RdpAuthenticationLevel.WarnIfNoAuth;
+    [ObservableProperty] private bool   _rdpPromptForCreds  = false;
+
+    // ── RDP: Performance ────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpNetworkOption))]
+    private RdpNetworkType _rdpNetworkType = RdpNetworkType.Auto;
+    [ObservableProperty] private bool   _rdpDesktopBackground   = false;
+    [ObservableProperty] private bool   _rdpVisualStyles        = false;
+    [ObservableProperty] private bool   _rdpFontSmoothing       = true;
+    [ObservableProperty] private bool   _rdpMenuAnimations      = false;
+    [ObservableProperty] private bool   _rdpWindowDrag          = false;
+    [ObservableProperty] private bool   _rdpDesktopComposition  = false;
+    [ObservableProperty] private bool   _rdpBitmapCaching       = true;
+
+    // ── RDP: Keyboard ───────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedRdpKeyboardHookOption))]
+    private RdpKeyboardHook _rdpKeyboardHook = RdpKeyboardHook.RemoteOnFullScreen;
+
+    // ── RDP: Connection bar ─────────────────────────────────────────
+    [ObservableProperty] private bool   _rdpConnectionBar    = true;
+    [ObservableProperty] private bool   _rdpPinConnectionBar = false;
+
+    // Catalog properties for the matching ComboBoxes in EditConnectionPanel.xaml.
+    public IReadOnlyList<NamedOption<RdpColorDepth>> RdpColorDepthOptions { get; } =
+    [
+        new("8-bit",   RdpColorDepth.Colors8Bit),
+        new("15-bit",  RdpColorDepth.Colors15Bit),
+        new("16-bit",  RdpColorDepth.Colors16Bit),
+        new("24-bit",  RdpColorDepth.Colors24Bit),
+        new("32-bit (best)", RdpColorDepth.Colors32Bit),
+    ];
+
+    public IReadOnlyList<NamedOption<RdpAudioMode>> RdpAudioOptions { get; } =
+    [
+        new("Play on this computer", RdpAudioMode.PlayOnClient),
+        new("Play on remote",        RdpAudioMode.PlayOnServer),
+        new("Do not play",           RdpAudioMode.NoPlayback),
+    ];
+
+    public IReadOnlyList<NamedOption<RdpGatewayUsage>> RdpGatewayUsageOptions { get; } =
+    [
+        new("Don't use a gateway",      RdpGatewayUsage.NoUse),
+        new("Always use a gateway",     RdpGatewayUsage.Direct),
+        new("Detect gateway settings",  RdpGatewayUsage.Detect),
+        new("Use defaults",             RdpGatewayUsage.Default),
+    ];
+
+    public IReadOnlyList<NamedOption<RdpNetworkType>> RdpNetworkOptions { get; } =
+    [
+        // Order is "Auto first, then ramp up by speed" for UX even
+        // though the underlying enum values follow the OCX's
+        // CONNECTION_TYPE_* numbering (Modem=1 … Auto=7).
+        new("Auto-detect",          RdpNetworkType.Auto),
+        new("Modem (56 Kbps)",      RdpNetworkType.Modem),
+        new("Low broadband",        RdpNetworkType.LowBroadband),
+        new("Satellite",            RdpNetworkType.Satellite),
+        new("High broadband",       RdpNetworkType.HighBroadband),
+        new("WAN",                  RdpNetworkType.Wan),
+        new("LAN (10 Mbps+)",       RdpNetworkType.Lan),
+    ];
+
+    public IReadOnlyList<NamedOption<RdpKeyboardHook>> RdpKeyboardHookOptions { get; } =
+    [
+        new("Apply locally",                 RdpKeyboardHook.LocalOnly),
+        new("Apply on remote",               RdpKeyboardHook.RemoteAlways),
+        new("Apply on remote in full screen",RdpKeyboardHook.RemoteOnFullScreen),
+    ];
+
+    public IReadOnlyList<NamedOption<RdpAuthenticationLevel>> RdpAuthLevelOptions { get; } =
+    [
+        new("Don't require server auth",         RdpAuthenticationLevel.NoAuthRequired),
+        new("Require server authentication",     RdpAuthenticationLevel.AuthRequired),
+        new("Warn if server can't be authenticated", RdpAuthenticationLevel.WarnIfNoAuth),
+    ];
+
+    // SelectedItem wrappers — ComboBox.SelectedValue + enum is unreliable
+    // in WinUI 3 (the binding races against ItemsSource resolution and
+    // can land empty), so we expose paired NamedOption properties and
+    // bind via SelectedItem instead. Each wrapper's setter pushes the
+    // enum back into the underlying [ObservableProperty] field; the
+    // field's NotifyPropertyChangedFor re-raises the wrapper.
+
+    public NamedOption<RdpColorDepth>? SelectedRdpColorDepthOption
+    {
+        get => RdpColorDepthOptions.FirstOrDefault(o => o.Value == RdpColorDepth);
+        set { if (value is not null) RdpColorDepth = value.Value; }
+    }
+
+    public NamedOption<RdpAudioMode>? SelectedRdpAudioOption
+    {
+        get => RdpAudioOptions.FirstOrDefault(o => o.Value == RdpAudioMode);
+        set { if (value is not null) RdpAudioMode = value.Value; }
+    }
+
+    public NamedOption<RdpGatewayUsage>? SelectedRdpGatewayUsageOption
+    {
+        get => RdpGatewayUsageOptions.FirstOrDefault(o => o.Value == RdpGatewayUsage);
+        set { if (value is not null) RdpGatewayUsage = value.Value; }
+    }
+
+    public NamedOption<RdpAuthenticationLevel>? SelectedRdpAuthLevelOption
+    {
+        get => RdpAuthLevelOptions.FirstOrDefault(o => o.Value == RdpAuthLevel);
+        set { if (value is not null) RdpAuthLevel = value.Value; }
+    }
+
+    public NamedOption<RdpNetworkType>? SelectedRdpNetworkOption
+    {
+        get => RdpNetworkOptions.FirstOrDefault(o => o.Value == RdpNetworkType);
+        set { if (value is not null) RdpNetworkType = value.Value; }
+    }
+
+    public NamedOption<RdpKeyboardHook>? SelectedRdpKeyboardHookOption
+    {
+        get => RdpKeyboardHookOptions.FirstOrDefault(o => o.Value == RdpKeyboardHook);
+        set { if (value is not null) RdpKeyboardHook = value.Value; }
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
@@ -174,12 +329,41 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         else
         {
             var rdp = existing.RdpSettings();
-            RdpWidth      = rdp.Width;
-            RdpHeight     = rdp.Height;
-            RdpFullScreen = rdp.FullScreen;
-            RdpClipboard  = rdp.RedirectClipboard;
-            RdpDrives     = rdp.RedirectDrives;
-            RdpDomain     = rdp.Domain ?? string.Empty;
+            RdpWidth          = rdp.Width;
+            RdpHeight         = rdp.Height;
+            RdpFullScreen     = rdp.FullScreen;
+            RdpColorDepth     = rdp.ColorDepth;
+            RdpAudioMode      = rdp.AudioMode;
+            RdpAudioCapture   = rdp.AudioCapture;
+            RdpClipboard      = rdp.RedirectClipboard;
+            RdpDrives         = rdp.RedirectDrives;
+            RdpPrinters       = rdp.RedirectPrinters;
+            RdpSmartCards     = rdp.RedirectSmartCards;
+            RdpPorts          = rdp.RedirectPorts;
+            RdpDevices        = rdp.RedirectDevices;
+            RdpPosDevices     = rdp.RedirectPOSDevices;
+            RdpGatewayServer  = rdp.GatewayServer   ?? string.Empty;
+            RdpGatewayUsername= rdp.GatewayUsername ?? string.Empty;
+            RdpGatewayDomain  = rdp.GatewayDomain   ?? string.Empty;
+            RdpGatewayUsage   = rdp.GatewayUsageMethod;
+            RdpDomain         = rdp.Domain ?? string.Empty;
+            RdpAdminConsole   = rdp.AdminConsole;
+            RdpLoadBalanceInfo= rdp.LoadBalanceInfo ?? string.Empty;
+            RdpAutoReconnect  = rdp.AutoReconnect;
+            RdpEnableCredSsp  = rdp.EnableCredSspSupport;
+            RdpAuthLevel      = rdp.AuthenticationLevel;
+            RdpPromptForCreds = rdp.PromptForCredentials;
+            RdpNetworkType    = rdp.NetworkType;
+            RdpDesktopBackground   = rdp.DesktopBackground;
+            RdpVisualStyles        = rdp.VisualStyles;
+            RdpFontSmoothing       = rdp.FontSmoothing;
+            RdpMenuAnimations      = rdp.MenuAnimations;
+            RdpWindowDrag          = rdp.WindowDrag;
+            RdpDesktopComposition  = rdp.DesktopComposition;
+            RdpBitmapCaching       = rdp.BitmapCaching;
+            RdpKeyboardHook        = rdp.KeyboardHookMode;
+            RdpConnectionBar       = rdp.ConnectionBar;
+            RdpPinConnectionBar    = rdp.PinConnectionBar;
         }
     }
 
@@ -221,9 +405,43 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         CredentialKey   = credKey,
         RdpSettingsJson = Protocol == ConnectionProtocol.Rdp
             ? System.Text.Json.JsonSerializer.Serialize(new RdpOptions
-              { Width = RdpWidth, Height = RdpHeight, FullScreen = RdpFullScreen,
-                RedirectClipboard = RdpClipboard, RedirectDrives = RdpDrives,
-                Domain = string.IsNullOrWhiteSpace(RdpDomain) ? null : RdpDomain })
+              {
+                  Width             = RdpWidth,
+                  Height            = RdpHeight,
+                  FullScreen        = RdpFullScreen,
+                  ColorDepth        = RdpColorDepth,
+                  AudioMode         = RdpAudioMode,
+                  AudioCapture      = RdpAudioCapture,
+                  RedirectClipboard = RdpClipboard,
+                  RedirectDrives    = RdpDrives,
+                  RedirectPrinters  = RdpPrinters,
+                  RedirectSmartCards= RdpSmartCards,
+                  RedirectPorts     = RdpPorts,
+                  RedirectDevices   = RdpDevices,
+                  RedirectPOSDevices= RdpPosDevices,
+                  GatewayServer     = NullIfBlank(RdpGatewayServer),
+                  GatewayUsername   = NullIfBlank(RdpGatewayUsername),
+                  GatewayDomain     = NullIfBlank(RdpGatewayDomain),
+                  GatewayUsageMethod= RdpGatewayUsage,
+                  Domain            = NullIfBlank(RdpDomain),
+                  AdminConsole      = RdpAdminConsole,
+                  LoadBalanceInfo   = NullIfBlank(RdpLoadBalanceInfo),
+                  AutoReconnect     = RdpAutoReconnect,
+                  EnableCredSspSupport = RdpEnableCredSsp,
+                  AuthenticationLevel  = RdpAuthLevel,
+                  PromptForCredentials = RdpPromptForCreds,
+                  NetworkType       = RdpNetworkType,
+                  DesktopBackground = RdpDesktopBackground,
+                  VisualStyles      = RdpVisualStyles,
+                  FontSmoothing     = RdpFontSmoothing,
+                  MenuAnimations    = RdpMenuAnimations,
+                  WindowDrag        = RdpWindowDrag,
+                  DesktopComposition= RdpDesktopComposition,
+                  BitmapCaching     = RdpBitmapCaching,
+                  KeyboardHookMode  = RdpKeyboardHook,
+                  ConnectionBar     = RdpConnectionBar,
+                  PinConnectionBar  = RdpPinConnectionBar,
+              })
             : null,
         SshSettingsJson = Protocol == ConnectionProtocol.Ssh
             ? System.Text.Json.JsonSerializer.Serialize(new SshOptions
@@ -232,4 +450,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
                 KeepAliveSeconds = KeepAliveSeconds })
             : null
     };
+
+    private static string? NullIfBlank(string s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s;
 }

@@ -17,10 +17,11 @@ namespace NexusRDM;
 public sealed partial class MainWindow : Window
 {
     public MainViewModel  ViewModel { get; }
-    private readonly SessionManager   _sessions;
-    private readonly ISshHandler      _ssh;
-    private readonly IRdpHandler      _rdp;
-    private readonly ICredentialVault _vault;
+    private readonly SessionManager     _sessions;
+    private readonly ISshHandler        _ssh;
+    private readonly IRdpHandler        _rdp;
+    private readonly ICredentialVault   _vault;
+    private readonly IConnectionService _svc;
 
     private enum NavSection { Connections, Audit, Settings }
     private NavSection _currentNav = NavSection.Connections;
@@ -32,6 +33,7 @@ public sealed partial class MainWindow : Window
         _ssh      = App.Services.GetRequiredService<ISshHandler>();
         _rdp      = App.Services.GetRequiredService<IRdpHandler>();
         _vault    = App.Services.GetRequiredService<ICredentialVault>();
+        _svc      = App.Services.GetRequiredService<IConnectionService>();
 
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
@@ -315,6 +317,7 @@ public sealed partial class MainWindow : Window
         var vm      = new SshSessionViewModel(profile, session, _sessions);
         AddSessionTab(profile, entry, Symbol.Globe, new SshSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxSsh"]);
+        WireSessionAuditEvents(profile, session);
     }
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)
@@ -329,6 +332,34 @@ public sealed partial class MainWindow : Window
         var vm      = new RdpSessionViewModel(profile, session, _rdp, username, password ?? string.Empty, _sessions);
         AddSessionTab(profile, entry, Symbol.Remote, new RdpSessionView(vm),
             (SolidColorBrush)Application.Current.Resources["NxRdp"]);
+        WireSessionAuditEvents(profile, session);
+    }
+
+    /// <summary>Forwards session lifecycle events into the audit log so
+    /// the user can see when a connection actually came up or dropped —
+    /// not just when the tab opened/closed. Fire-and-forget on a
+    /// background task because the events arrive on arbitrary threads.</summary>
+    private void WireSessionAuditEvents(ConnectionProfile profile, ISshSession ssh)
+    {
+        ssh.Disconnected += (_, _) =>
+            _ = _svc.RecordDisconnectedAsync(profile.Id, "session ended");
+        // SSH connect happens inside the VM via ConnectAsync; record from
+        // the same place — but we don't have a Connected event on
+        // ISshSession, so log on first DataReceived as a proxy.
+        var connectedLogged = false;
+        ssh.DataReceived += (_, _) =>
+        {
+            if (connectedLogged) return;
+            connectedLogged = true;
+            _ = _svc.RecordConnectedAsync(profile.Id);
+        };
+    }
+
+    private void WireSessionAuditEvents(ConnectionProfile profile, IRdpSession rdp)
+    {
+        rdp.Connected    += (_, _)      => _ = _svc.RecordConnectedAsync(profile.Id);
+        rdp.Disconnected += (_, reason) => _ = _svc.RecordDisconnectedAsync(profile.Id, reason);
+        rdp.FatalError   += (_, msg)    => _ = _svc.RecordFailedAsync(profile.Id, msg);
     }
 
     private void AddSessionTab(ConnectionProfile profile, OpenSession entry, Symbol icon, UIElement content, SolidColorBrush dotColor)
