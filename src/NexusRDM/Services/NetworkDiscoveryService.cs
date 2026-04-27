@@ -85,14 +85,62 @@ public sealed class NetworkDiscoveryService : IDisposable
         }, null, TimeSpan.FromSeconds(15), interval);
     }
 
+    /// <summary>Wipe every connection inside the Discovered folder
+    /// but leave the folder in place so the next scan can repopulate.
+    /// Vault credentials for those rows are deleted in the same pass.
+    /// Returns the number of rows removed (0 if the folder didn't
+    /// exist or was empty).</summary>
+    public async Task<int> ClearDiscoveredAsync()
+    {
+        try
+        {
+            using var scope = _services.CreateScope();
+            var db    = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var vault = scope.ServiceProvider.GetRequiredService<NexusRDM.Core.Interfaces.ICredentialVault>();
+            var group = await db.Groups.FirstOrDefaultAsync(g => g.Name == DiscoveredGroupName);
+            if (group is null) return 0;
+
+            var rows = await db.Connections.Where(c => c.GroupId == group.Id).ToListAsync();
+            foreach (var c in rows)
+            {
+                if (!string.IsNullOrEmpty(c.CredentialKey))
+                    try { vault.Delete(c.CredentialKey); } catch { /* not in vault */ }
+            }
+            db.Connections.RemoveRange(rows);
+            await db.SaveChangesAsync();
+
+            // Surface via ScanCompleted so the connections tree
+            // diff-merges the now-empty folder.
+            ScanCompleted?.Invoke(this, new DiscoveryResult(0, 0, 0, "cleared"));
+            return rows.Count;
+        }
+        catch { return 0; }
+    }
+
     private async Task RemoveDiscoveredGroupAsync()
     {
         try
         {
             using var scope = _services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var db    = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
+            var vault = scope.ServiceProvider.GetRequiredService<NexusRDM.Core.Interfaces.ICredentialVault>();
             var group = await db.Groups.FirstOrDefaultAsync(g => g.Name == DiscoveredGroupName);
             if (group is null) return;
+
+            // Discovery OWNS the connections inside — turning the
+            // feature off should wipe its surface area entirely, not
+            // leave a swarm of orphaned auto-discovered rows pinned
+            // to the top level. Vault credentials get cleaned up in
+            // the same pass; anything we can't delete from the vault
+            // is logged-and-ignored (orphaning a credential is annoying
+            // but not corruption).
+            var rows = await db.Connections.Where(c => c.GroupId == group.Id).ToListAsync();
+            foreach (var c in rows)
+            {
+                if (!string.IsNullOrEmpty(c.CredentialKey))
+                    try { vault.Delete(c.CredentialKey); } catch { /* not in vault */ }
+            }
+            db.Connections.RemoveRange(rows);
             db.Groups.Remove(group);
             await db.SaveChangesAsync();
 
@@ -291,7 +339,13 @@ public sealed class NetworkDiscoveryService : IDisposable
     /// <summary>Enumerate every IPv4 address in <paramref name="cidr"/>,
     /// inclusive of the network and broadcast addresses. Throws
     /// <see cref="FormatException"/> on garbage input — the UI surfaces
-    /// the message verbatim.</summary>
+    /// the message verbatim.
+    ///
+    /// Discovery only accepts <c>/24</c> subnets: it's the home/SMB
+    /// LAN size that finishes a sweep in seconds, and it sidesteps
+    /// the operational footguns of bigger ranges (slow scans, accidental
+    /// hits on infrastructure subnets, alarms from network monitors).
+    /// Larger or smaller prefixes are rejected up-front.</summary>
     public static IEnumerable<IPAddress> ParseCidr(string cidr)
     {
         if (string.IsNullOrWhiteSpace(cidr))
@@ -305,8 +359,12 @@ public sealed class NetworkDiscoveryService : IDisposable
          || baseIp.AddressFamily != AddressFamily.InterNetwork)
             throw new FormatException($"'{parts[0]}' isn't a valid IPv4 address.");
 
-        if (!int.TryParse(parts[1], out var prefix) || prefix < 1 || prefix > 32)
-            throw new FormatException($"Prefix must be 1–32, got '/{parts[1]}'.");
+        if (!int.TryParse(parts[1], out var prefix))
+            throw new FormatException($"Prefix must be /24, got '/{parts[1]}'.");
+        if (prefix != 24)
+            throw new FormatException(
+                $"Only /24 subnets are supported (got /{prefix}). " +
+                "Pick a single LAN segment like 192.168.1.0/24.");
 
         // Big-endian conversion: 192.168.1.0 → 0xC0A80100
         var bytes = baseIp.GetAddressBytes();
