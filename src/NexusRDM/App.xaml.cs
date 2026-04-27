@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using NexusRDM.Core.Protocols;
+using NexusRDM.Core.Proxmox;
 using NexusRDM.Core.Services;
 using NexusRDM.Data;
 using NexusRDM.Data.Context;
@@ -165,6 +166,10 @@ public partial class App : Application
                 resolutionResolver: ResolveDesktopSize)));
         services.AddSingleton<SessionManager>();
         services.AddSingleton<PingService>();
+        services.AddNexusProxmox();
+        services.AddSingleton<Services.ProxmoxSyncService>();
+        services.AddSingleton<Services.ProxmoxPowerService>();
+        services.AddSingleton<Services.ProxmoxConsoleService>();
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();

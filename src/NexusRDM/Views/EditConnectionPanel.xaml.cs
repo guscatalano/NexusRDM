@@ -61,6 +61,22 @@ public sealed partial class EditConnectionPanel : UserControl
     private void IconColorClear_Click(object sender, RoutedEventArgs e) =>
         ViewModel.IconColor = null;
 
+    /// <summary>Toggle the editor out of "managed by Proxmox" mode.
+    /// Clears IsManaged + the external FK fields on the VM so the next
+    /// Save persists this row as a manual connection. The actual DB
+    /// write happens through the normal Save path; we only mutate the
+    /// VM here so Cancel still leaves the DB row untouched.</summary>
+    private void DetachManaged_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.IsManaged = false;
+        // Reach into the cached external ids on the VM via reflection?
+        // No — easier to give the VM a Detach() helper. Inline minimal
+        // version: setting IsManaged=false alone isn't enough because
+        // BuildProfile still writes ExternalSourceId/ExternalId. The VM
+        // owns those; expose a method.
+        ViewModel.DetachFromExternal();
+    }
+
     // Tracks every element the search filter has hidden so we can restore
     // exactly those, leaving alone things that bindings (e.g. SSH/RDP
     // protocol-section visibility) had collapsed independently.

@@ -18,7 +18,7 @@ public sealed partial class CredentialPromptDialog : ContentDialog
         DefaultButton     = ContentDialogButton.Primary;
 
         var stack = new StackPanel { Spacing = 8 };
-        var userBox = new TextBox    { Header = "Username", PlaceholderText = "user" };
+        var userBox = new TextBox    { Header = "Username" };
         var passBox = new PasswordBox { Header = "Password" };
         stack.Children.Add(userBox);
         stack.Children.Add(passBox);
