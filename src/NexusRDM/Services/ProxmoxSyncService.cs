@@ -93,17 +93,38 @@ public sealed class ProxmoxSyncService
             // silently — discovery is best-effort, never fatal.
             var (discoveredIp, ostype) = await DiscoverVmDetailsAsync(client, r, ct);
 
-            var protocol = ResolveProtocol(directives, source.DefaultProtocol, r.Tags, ostype);
+            existingByExtId.TryGetValue(extId, out var row);
+            var isUpdate = row is not null;
+            // Probe the actual ports when we're inserting a new row and
+            // can reach the guest. The TCP probe is far more reliable
+            // than ostype guessing — a Linux VM running an RDP server
+            // (xrdp) or a Windows host behind sshd both come out right.
+            // We skip the probe when:
+            //   - The user pinned the protocol via #nexus:rdp/ssh/console
+            //   - We have no IP (probe would just time out twice)
+            //   - The row already exists (Protocol is user-editable on
+            //     managed rows; we don't clobber on update)
+            ConnectionProtocol? probed = null;
+            var hasTagPin = directives.ForceRdp || directives.ForceSsh || directives.ForceConsole;
+            // Setting gate: users can flip the probe off in
+            // Settings → Proxmox sources to avoid touching guest
+            // sockets (e.g. on audited networks). When off the sync
+            // falls through to ResolveProtocol's ostype heuristic.
+            if (!isUpdate && !hasTagPin && !string.IsNullOrEmpty(discoveredIp)
+             && NexusRDM.ViewModels.SettingsStore.ReadProxmoxProbeProtocol())
+                probed = await ProbeProtocolAsync(discoveredIp!, ostype, ct);
+
+            var protocol = probed ?? ResolveProtocol(directives, source.DefaultProtocol, r.Tags, ostype);
             var host     = ResolveHost(directives, r, discoveredIp);
             var port     = directives.Port ?? ConnectionProfile.DefaultPort(protocol);
             var user     = directives.User ?? source.DefaultUsername;
             var name     = string.IsNullOrWhiteSpace(r.Name) ? $"vm-{r.Vmid}" : r.Name!;
 
-            if (existingByExtId.TryGetValue(extId, out var row))
+            if (isUpdate && row is not null)
             {
                 // Cluster-owned columns get overwritten on every sync.
                 // Protocol + Port are explicitly user-editable on
-                // managed rows: our auto-pick (ostype heuristic) is a
+                // managed rows: our auto-pick (probe / ostype) is a
                 // best guess, so once the user changes it in the
                 // editor we never clobber their choice. Other
                 // user-modified fields (CredentialKey, IconGlyph,
@@ -194,6 +215,60 @@ public sealed class ProxmoxSyncService
             ProxmoxDefaultProtocol.Console => ConnectionProtocol.Ssh, // see above
             _ /* Auto */ => HeuristicProtocol(rawTags, ostype),
         };
+    }
+
+    /// <summary>Concurrently TCP-connect to ports 22 and 3389 on
+    /// <paramref name="ip"/>. The probe is the most reliable protocol
+    /// signal we have — a Windows host running OpenSSH or a Linux VM
+    /// running xrdp would both come out wrong with ostype alone. When:
+    ///   - only one port is open → use it
+    ///   - both are open → defer to ostype (Windows = RDP, else SSH);
+    ///     no ostype = SSH wins (covers more setups)
+    ///   - neither is open → return null so the caller falls back to
+    ///     the heuristic
+    /// Each probe has a ~600 ms ceiling. Total wall time per VM is
+    /// dominated by the slower of the two — typically 600 ms when one
+    /// port is closed, near-zero when both respond.</summary>
+    private static async Task<ConnectionProtocol?> ProbeProtocolAsync(
+        string ip, string? ostype, CancellationToken ct)
+    {
+        if (!System.Net.IPAddress.TryParse(ip, out var addr))
+            return null;
+
+        var sshTask = TryConnectAsync(addr, 22,   ct);
+        var rdpTask = TryConnectAsync(addr, 3389, ct);
+        await Task.WhenAll(sshTask, rdpTask).ConfigureAwait(false);
+
+        var sshOpen = sshTask.Result;
+        var rdpOpen = rdpTask.Result;
+
+        if (sshOpen && !rdpOpen) return ConnectionProtocol.Ssh;
+        if (rdpOpen && !sshOpen) return ConnectionProtocol.Rdp;
+        if (sshOpen && rdpOpen)
+        {
+            var os = (ostype ?? "").ToLowerInvariant();
+            if (os.StartsWith("win") || os.StartsWith("wxp") || os.StartsWith("w2k"))
+                return ConnectionProtocol.Rdp;
+            return ConnectionProtocol.Ssh;
+        }
+        return null;
+    }
+
+    private static async Task<bool> TryConnectAsync(
+        System.Net.IPAddress ip, int port, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromMilliseconds(600));
+        try
+        {
+            using var sock = new System.Net.Sockets.Socket(
+                ip.AddressFamily,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Tcp);
+            await sock.ConnectAsync(ip, port, timeout.Token).ConfigureAwait(false);
+            return sock.Connected;
+        }
+        catch { return false; }
     }
 
     /// <summary>Picks the protocol when the source is set to Auto. The

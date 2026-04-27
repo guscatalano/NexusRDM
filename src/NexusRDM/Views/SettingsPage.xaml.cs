@@ -100,6 +100,32 @@ public sealed partial class SettingsPage : Page
         await ProxmoxVm.SyncAsync(row);
     }
 
+    // ── Network discovery ────────────────────────────────────────────────
+
+    private async void DiscoveryScanNow_Click(object sender, RoutedEventArgs e)
+    {
+        var svc = App.Services.GetRequiredService<NexusRDM.Services.NetworkDiscoveryService>();
+        var dispatcher = DispatcherQueue;
+
+        // Live progress text. Unsubscribed before we return so a stale
+        // subscription doesn't pile up across repeated Scan-now clicks.
+        EventHandler<NexusRDM.Services.DiscoveryProgress> onProgress = (_, p) =>
+            dispatcher.TryEnqueue(() =>
+                DiscoveryStatus.Text = $"Probing… {p.Probed}/{p.Total} ({p.Found} found)");
+        svc.Progress += onProgress;
+
+        DiscoveryStatus.Text = "Starting…";
+        try
+        {
+            var result = await svc.ScanAsync(ViewModel.DiscoverySubnet);
+            DiscoveryStatus.Text = result.IsSuccess
+                ? $"Done — {result}"
+                : $"Failed — {result.Error}";
+        }
+        catch (Exception ex) { DiscoveryStatus.Text = $"Failed — {ex.Message}"; }
+        finally { svc.Progress -= onProgress; }
+    }
+
     private async Task ShowErrorAsync(string title, string body)
     {
         var dlg = new ContentDialog
@@ -325,6 +351,15 @@ public sealed partial class SettingsPage : Page
         // by their own visibility bindings untouched.
         foreach (var el in _hiddenByFilter) el.Visibility = Visibility.Visible;
         _hiddenByFilter.Clear();
+
+        // Setting Visibility=Visible above clobbers any x:Bind that
+        // was driving the element to Collapsed. x:Bind only re-fires
+        // when its source property changes, so a binding-driven element
+        // we previously hid stays Visible-by-restore even though the
+        // source still says Collapsed. Re-assert the known cases here
+        // — keep this list in sync as new conditional sections appear.
+        if (CustomPaletteEditor is not null)
+            CustomPaletteEditor.Visibility = ViewModel.CustomThemeVisibility;
 
         // Section pick: hide every section but the picked one (or all
         // for ALL). We only Collapse — never explicitly set Visible,

@@ -176,6 +176,24 @@ public sealed partial class ConnectionsPane : UserControl
                 sync.Click += async (_, _) => await SyncProxmoxRootAsync(node);
                 menu.Items.Add(sync);
             }
+            else if (!node.IsExternallyManaged)
+            {
+                // Delete group: nullifies the FK on every connection in
+                // it (they fall to ungrouped — see ConnectionRepository
+                // wired to DeleteBehavior.SetNull). Hidden for any
+                // externally-managed group (Proxmox source roots, the
+                // Discovered folder) — those are owned by their
+                // respective services and have their own removal paths
+                // (delete the source / disable scheduled scans).
+                menu.Items.Add(new MenuFlyoutSeparator());
+                var del = new MenuFlyoutItem
+                {
+                    Text = "Delete group",
+                    Icon = new SymbolIcon(Symbol.Delete),
+                };
+                del.Click += async (_, _) => await DeleteGroupAsync(node);
+                menu.Items.Add(del);
+            }
         }
 
         menu.ShowAt(ConnectionTree, pos);
@@ -239,6 +257,63 @@ public sealed partial class ConnectionsPane : UserControl
             };
             await NexusRDM.Services.DialogHost.ShowAsync(dlg);
         }
+    }
+
+    private async Task DeleteGroupAsync(ConnectionTreeNode node)
+    {
+        if (node.GroupId is not { } groupId) return;
+
+        // Refuse on sub-groups: the FK between groups is Restrict, so a
+        // direct delete would just throw. Recursive cascade is doable
+        // but error-prone — the user is better served by deleting from
+        // the inside out, which keeps the blast radius visible.
+        var hasSubGroups = node.Children.Any(c => c.GroupId is not null);
+        if (hasSubGroups)
+        {
+            var blocked = new ContentDialog
+            {
+                Title             = "Group has sub-groups",
+                Content           = $"\"{node.DisplayName}\" contains nested groups. Delete those first, then try again.",
+                CloseButtonText   = "OK",
+                XamlRoot          = XamlRoot,
+            };
+            await NexusRDM.Services.DialogHost.ShowAsync(blocked);
+            return;
+        }
+
+        var connectionCount = node.Children.Count(c => c.Profile is not null);
+        var msg = connectionCount == 0
+            ? $"Delete the group \"{node.DisplayName}\"?"
+            : $"Delete the group \"{node.DisplayName}\"? Its {connectionCount} connection(s) will move to the top level (no group). The connections themselves are kept.";
+
+        var confirm = new ContentDialog
+        {
+            Title             = "Delete group?",
+            Content           = msg,
+            PrimaryButtonText = "Delete",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+            XamlRoot          = XamlRoot,
+        };
+        if (await NexusRDM.Services.DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
+            return;
+
+        var svc = App.Services.GetRequiredService<NexusRDM.Core.Interfaces.IConnectionService>();
+        try { await svc.DeleteGroupAsync(groupId); }
+        catch (Exception ex)
+        {
+            var dlg = new ContentDialog
+            {
+                Title           = "Could not delete group",
+                Content         = ex.Message,
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            };
+            await NexusRDM.Services.DialogHost.ShowAsync(dlg);
+            return;
+        }
+
+        await ViewModel.LoadAsync();
     }
 
     private async Task OpenWebConsoleAsync(ConnectionTreeNode node)

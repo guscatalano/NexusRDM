@@ -290,6 +290,59 @@ public sealed partial class MainWindow : Window
         if (SessionTabs.SelectedItem is TabViewItem t && t.Content is ISessionView v) v.PopOut();
     }
 
+    // ── Sidebar splitter (drag to resize the connections pane) ──────────
+
+    /// <summary>True between PointerPressed and PointerReleased on the
+    /// splitter; PointerMoved only resizes when this is set so other
+    /// pointer events (e.g. hover-only) don't accidentally drag.</summary>
+    private bool   _splitterDragging;
+    /// <summary>Anchor point captured at PointerPressed in main-window
+    /// coordinates. Move deltas are computed against this; we don't use
+    /// the per-event delta because PointerMoved fires at variable rates
+    /// and accumulating floats drifts.</summary>
+    private double _splitterStartX;
+    private double _splitterStartWidth;
+
+    // Cursor handling intentionally omitted: ProtectedCursor is
+    // a `protected` member, only settable from a UIElement subclass.
+    // Subclassing Border just to override the cursor for a 4-px
+    // splitter is more weight than it's worth — the visible bar
+    // already reads as draggable, and PointerPressed gives us hit
+    // feedback. If we ever want a true resize cursor we can swap in
+    // the CommunityToolkit GridSplitter or add a custom-control.
+    private void SidebarSplitter_PointerEntered(object sender, PointerRoutedEventArgs e) { }
+    private void SidebarSplitter_PointerExited(object sender, PointerRoutedEventArgs e)  { }
+
+    private void SidebarSplitter_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not UIElement el) return;
+        _splitterDragging   = true;
+        _splitterStartX     = e.GetCurrentPoint(this.Content).Position.X;
+        _splitterStartWidth = SidebarColumn.ActualWidth;
+        el.CapturePointer(e.Pointer);
+    }
+
+    private void SidebarSplitter_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_splitterDragging) return;
+        var x       = e.GetCurrentPoint(this.Content).Position.X;
+        var newWidth = _splitterStartWidth + (x - _splitterStartX);
+        // Honor ColumnDefinition's clamps directly so the pane can't
+        // collapse out from under the user or run past the safety cap.
+        var min = SidebarColumn.MinWidth;
+        var max = SidebarColumn.MaxWidth;
+        if (double.IsFinite(min) && newWidth < min) newWidth = min;
+        if (double.IsFinite(max) && newWidth > max) newWidth = max;
+        SidebarColumn.Width = new GridLength(newWidth);
+    }
+
+    private void SidebarSplitter_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_splitterDragging) return;
+        _splitterDragging = false;
+        if (sender is UIElement el) el.ReleasePointerCapture(e.Pointer);
+    }
+
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
     {
         _sidebarCollapsed = !_sidebarCollapsed;

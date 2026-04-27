@@ -170,6 +170,7 @@ public partial class App : Application
         services.AddSingleton<Services.ProxmoxSyncService>();
         services.AddSingleton<Services.ProxmoxPowerService>();
         services.AddSingleton<Services.ProxmoxConsoleService>();
+        services.AddSingleton<Services.NetworkDiscoveryService>();
 
         services.AddTransient<MainViewModel>();
         services.AddTransient<ConnectionsViewModel>();

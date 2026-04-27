@@ -123,14 +123,29 @@
                 <!-- CONNECTIONS + TAB VIEW -->
                 <Grid x:Name="ConnView">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="360" />
-                        <ColumnDefinition Width="1" />
+                        <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="640" />
+                        <ColumnDefinition Width="4" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
                     <views:ConnectionsPane x:Name="ConnectionsPane"
                                            Grid.Column="0"
                                            Background="{StaticResource NxBg1}" />
+
+                    <!-- Hand-rolled splitter: a 4-px Border that captures
+                         pointer drags and adjusts SidebarColumn.Width.
+                         WinUI 3 doesn't ship a built-in GridSplitter, and
+                         dragging a column boundary is a 20-line problem
+                         that doesn't justify a new package. -->
+                    <Border x:Name="SidebarSplitter"
+                            Grid.Column="1"
+                            Background="{StaticResource NxBrd}"
+                            ManipulationMode="TranslateX"
+                            PointerPressed="SidebarSplitter_PointerPressed"
+                            PointerMoved="SidebarSplitter_PointerMoved"
+                            PointerReleased="SidebarSplitter_PointerReleased"
+                            PointerEntered="SidebarSplitter_PointerEntered"
+                            PointerExited="SidebarSplitter_PointerExited" />
 
                     <!-- When collapsed: a thin reveal strip with an
                          expand button. The pane itself sits at width 0,
