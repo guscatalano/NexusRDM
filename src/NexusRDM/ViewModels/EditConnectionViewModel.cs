@@ -78,11 +78,35 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     /// by the connections tree to render a per-row icon. Empty means
     /// "use the protocol default" (set by <see cref="NexusRDM.Services.ConnectionIcons.DefaultFor"/>).</summary>
     [ObservableProperty] private string             _iconGlyph = string.Empty;
+    partial void OnIconGlyphChanged(string value)
+    {
+        // Light up the chosen item in the picker.
+        foreach (var i in IconItems) i.IsSelected = i.Glyph == value;
+    }
 
-    /// <summary>Catalog the picker iterates; each entry is rendered as
-    /// a small button in the edit panel.</summary>
-    public IReadOnlyList<NexusRDM.Services.IconChoice> IconChoices { get; } =
-        NexusRDM.Services.ConnectionIcons.All;
+    /// <summary>Optional override colour for the row icon. Null = let
+    /// the connections tree paint the icon in its connection-status
+    /// colour (green/red); a value paints the glyph in that colour and
+    /// shows a separate small status dot beside it.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IconColorBrush))]
+    [NotifyPropertyChangedFor(nameof(HasCustomIconColor))]
+    private Windows.UI.Color? _iconColor;
+    partial void OnIconColorChanged(Windows.UI.Color? value)
+    {
+        var paint = value ?? Windows.UI.Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
+        foreach (var i in IconItems) i.ApplyColor(paint);
+    }
+
+    public bool HasCustomIconColor => IconColor.HasValue;
+    public Microsoft.UI.Xaml.Media.SolidColorBrush IconColorBrush =>
+        new(IconColor ?? Windows.UI.Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0));
+
+    /// <summary>Picker items — one per glyph in
+    /// <see cref="NexusRDM.Services.ConnectionIcons.All"/>, wrapped to
+    /// expose IsSelected/Background/BorderBrush so the chosen icon
+    /// gets a clearly visible accent border.</summary>
+    public System.Collections.ObjectModel.ObservableCollection<NexusRDM.Services.IconPickerItem> IconItems { get; } = new();
 
     /// <summary>Group picker entries — populated by <see cref="LoadGroupsAsync"/>
     /// from the existing list of <see cref="Group"/>s plus a synthetic
@@ -394,6 +418,11 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         // *Error / *ErrorVisibility properties the XAML binds to.
         ErrorsChanged += OnViewModelErrorsChanged;
 
+        // Build the icon picker once; OnIconGlyphChanged / OnIconColorChanged
+        // mutate IsSelected / GlyphBrush so the visuals stay in sync.
+        foreach (var c in NexusRDM.Services.ConnectionIcons.All)
+            IconItems.Add(new NexusRDM.Services.IconPickerItem(c.Glyph, c.Name));
+
         if (existing is null) return;
 
         DisplayName   = existing.DisplayName;
@@ -405,6 +434,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         Tags          = existing.Tags;
         GroupId       = existing.GroupId;
         IconGlyph     = existing.IconGlyph ?? string.Empty;
+        IconColor     = ParseHex(existing.IconColorHex);
         CredentialKey = existing.CredentialKey;
 
         // SaveCredential defaults to true (the common case). Only opt out
@@ -537,6 +567,8 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         Tags            = Tags.Trim(),
         GroupId         = GroupId,
         IconGlyph       = string.IsNullOrWhiteSpace(IconGlyph) ? null : IconGlyph,
+        IconColorHex    = IconColor is null ? null
+                          : $"#{IconColor.Value.A:X2}{IconColor.Value.R:X2}{IconColor.Value.G:X2}{IconColor.Value.B:X2}",
         CredentialKey   = credKey,
         RdpSettingsJson = Protocol == ConnectionProtocol.Rdp
             ? System.Text.Json.JsonSerializer.Serialize(new RdpOptions
@@ -589,4 +621,23 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
     private static string? NullIfBlank(string s) =>
         string.IsNullOrWhiteSpace(s) ? null : s;
+
+    /// <summary>Parse a stored <c>#AARRGGBB</c> / <c>#RRGGBB</c> string
+    /// into a <see cref="Windows.UI.Color"/>; null on any failure.</summary>
+    private static Windows.UI.Color? ParseHex(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        try
+        {
+            var s = hex.TrimStart('#');
+            if (s.Length == 6) s = "FF" + s;
+            var argb = Convert.ToUInt32(s, 16);
+            return Windows.UI.Color.FromArgb(
+                (byte)((argb >> 24) & 0xFF),
+                (byte)((argb >> 16) & 0xFF),
+                (byte)((argb >>  8) & 0xFF),
+                (byte)( argb        & 0xFF));
+        }
+        catch { return null; }
+    }
 }

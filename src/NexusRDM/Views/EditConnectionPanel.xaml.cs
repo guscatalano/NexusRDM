@@ -55,6 +55,12 @@ public sealed partial class EditConnectionPanel : UserControl
     private void IconNone_Click(object sender, RoutedEventArgs e) =>
         ViewModel.IconGlyph = string.Empty;
 
+    private void IconColorChanged(ColorPicker sender, ColorChangedEventArgs args) =>
+        ViewModel.IconColor = args.NewColor;
+
+    private void IconColorClear_Click(object sender, RoutedEventArgs e) =>
+        ViewModel.IconColor = null;
+
     // Tracks every element the search filter has hidden so we can restore
     // exactly those, leaving alone things that bindings (e.g. SSH/RDP
     // protocol-section visibility) had collapsed independently.

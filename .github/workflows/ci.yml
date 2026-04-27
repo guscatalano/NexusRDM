@@ -1,0 +1,131 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the most recent run per branch matters; cancel any in-flight one
+# when a fresh push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-and-test:
+    # WinUI 3 / WindowsAppSDK is Windows-only; no other host platform
+    # can build the NexusRDM.csproj surface.
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # The msbuild action puts the VS-bundled msbuild + WindowsAppSDK
+      # build targets on PATH. `dotnet build` alone misses the
+      # MrtCore PRI tasks the WinUI 3 project pulls in.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore
+        # Restore each project explicitly — there's no .sln to traverse.
+        run: |
+          dotnet restore src\NexusRDM.Core\NexusRDM.Core.csproj
+          dotnet restore src\NexusRDM.Data\NexusRDM.Data.csproj
+          dotnet restore src\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj
+          dotnet restore src\NexusRDM\NexusRDM.csproj
+          dotnet restore tests\NexusRDM.Core.Tests\NexusRDM.Core.Tests.csproj
+          dotnet restore tests\NexusRDM.Data.Tests\NexusRDM.Data.Tests.csproj
+          dotnet restore tests\NexusRDM.Tests.ViewModels\NexusRDM.Tests.ViewModels.csproj
+
+      - name: Build app (x64 Debug)
+        # Use msbuild so the WinUI 3 PRI / RuntimeIdentifier targets fire
+        # correctly. dotnet build can pick up the wrong SDK and miss
+        # `Microsoft.Build.Packaging.Pri.Tasks`.
+        run: msbuild src\NexusRDM\NexusRDM.csproj /p:Configuration=Debug /p:Platform=x64 /v:minimal /nologo
+
+      - name: Build ViewModel tests
+        run: msbuild tests\NexusRDM.Tests.ViewModels\NexusRDM.Tests.ViewModels.csproj /p:Configuration=Debug /p:Platform=x64 /v:minimal /nologo
+
+      - name: Run Core tests
+        # Pure netcoreapp project — `dotnet test` is fine here.
+        run: dotnet test tests\NexusRDM.Core.Tests\NexusRDM.Core.Tests.csproj --configuration Debug --logger "trx;LogFileName=core.trx" --results-directory artifacts\test-results
+
+      - name: Run Data tests
+        run: dotnet test tests\NexusRDM.Data.Tests\NexusRDM.Data.Tests.csproj --configuration Debug --logger "trx;LogFileName=data.trx" --results-directory artifacts\test-results
+
+      - name: Run ViewModel tests
+        # Use vstest against the msbuild output — `dotnet test` on this
+        # project pulls a .NET SDK that lacks the WindowsAppSDK build
+        # targets and fails before reaching test discovery.
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path tests\NexusRDM.Tests.ViewModels\bin\x64\Debug -Filter NexusRDM.Tests.ViewModels.dll -Recurse | Select-Object -First 1
+          if (-not $dll) { throw "ViewModel test assembly not found." }
+          vstest.console.exe $dll.FullName /Platform:x64 /Logger:"trx;LogFileName=vm.trx" /ResultsDirectory:artifacts\test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          if-no-files-found: ignore
+
+      - name: Upload app build
+        # Only on the main branch — saves storage on PR runs.
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexusrdm-debug-x64
+          path: src/NexusRDM/bin/x64/Debug/**/win-x64/**
+          if-no-files-found: warn
+
+  release:
+    # Tag-driven release: publishes a Release-mode self-contained build
+    # as a zip archive attached to the GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    needs: build-and-test
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Publish (Release x64)
+        run: msbuild src\NexusRDM\NexusRDM.csproj /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:PublishDir=publish\ /v:minimal /nologo
+
+      - name: Zip publish output
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path src\NexusRDM\publish\* -DestinationPath "NexusRDM-$tag-win-x64.zip"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NexusRDM-*-win-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

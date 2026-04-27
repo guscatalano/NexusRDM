@@ -253,11 +253,45 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         string.IsNullOrEmpty(IconGlyph) ? Visibility.Collapsed : Visibility.Visible;
 
     /// <summary>Color for the row icon. Groups use a distinct amber so
-    /// they pop against connection rows; connections re-use the
-    /// status-driven palette (green=connected, red=otherwise).</summary>
-    public Color IconColor => Profile is null
-        ? Color.FromArgb(0xFF, 0xF0, 0xA7, 0x32)   // amber folder
-        : DotColor;
+    /// they pop against connection rows. Connections honour any
+    /// per-profile <c>IconColorHex</c> override; otherwise fall back to
+    /// the status-driven palette (green=connected, red=otherwise).</summary>
+    public Color IconColor
+    {
+        get
+        {
+            if (Profile is null) return Color.FromArgb(0xFF, 0xF0, 0xA7, 0x32);
+            if (TryParseHex(Profile.IconColorHex) is { } overrideColor) return overrideColor;
+            return DotColor;
+        }
+    }
+
+    /// <summary>True when the profile has a custom icon colour pinned —
+    /// the connections tree shows a small status dot beside the icon in
+    /// that case so connection state is still visible at a glance.</summary>
+    public bool HasCustomIconColor =>
+        Profile is { IconColorHex: { Length: > 0 } } &&
+        TryParseHex(Profile.IconColorHex) is not null;
+
+    public Visibility StatusDotVisibility =>
+        Profile is not null && HasCustomIconColor ? Visibility.Visible : Visibility.Collapsed;
+
+    private static Color? TryParseHex(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        try
+        {
+            var s = hex.TrimStart('#');
+            if (s.Length == 6) s = "FF" + s;
+            var argb = Convert.ToUInt32(s, 16);
+            return Color.FromArgb(
+                (byte)((argb >> 24) & 0xFF),
+                (byte)((argb >> 16) & 0xFF),
+                (byte)((argb >>  8) & 0xFF),
+                (byte)( argb        & 0xFF));
+        }
+        catch { return null; }
+    }
 
     /// <summary>Bold name for groups so the hierarchy reads at a glance,
     /// regular weight for connections.</summary>

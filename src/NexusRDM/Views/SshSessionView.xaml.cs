@@ -11,19 +11,31 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 {
     public SshSessionViewModel ViewModel { get; }
     private bool _connectStarted;
+    private readonly bool _isPoppedClone;
 
-    public SshSessionView(SshSessionViewModel vm)
+    // Strong refs to event handlers so the popped clone can unsubscribe
+    // when its window closes (otherwise the closures keep the view
+    // alive forever, holding refs to the now-orphaned Terminal).
+    private EventHandler<byte[]>?      _dataHandler;
+    private EventHandler<byte[]>?      _userInputHandler;
+    private SizeChangedEventHandler?   _terminalSizeHandler;
+
+    public SshSessionView(SshSessionViewModel vm) : this(vm, alreadyConnected: false) { }
+
+    /// <summary>Construct a view bound to <paramref name="vm"/>. When
+    /// <paramref name="alreadyConnected"/> is true, the OnLoaded path
+    /// skips <c>ConnectAsync</c> — used by the pop-out path which
+    /// creates a fresh view sharing the original session.</summary>
+    public SshSessionView(SshSessionViewModel vm, bool alreadyConnected)
     {
-        ViewModel = vm;
+        ViewModel       = vm;
+        _connectStarted = alreadyConnected;
+        _isPoppedClone  = alreadyConnected;
         InitializeComponent();
 
         HostLabel.Text       = $"{vm.Host}";
         HostStatusLabel.Text = vm.DisplayName;
 
-        // Make this UserControl the keyboard input target. Listening with
-        // handledEventsToo guarantees we still see input even if a child marks
-        // the event handled — which is how we keep typing working regardless of
-        // which descendant currently holds focus.
         IsTabStop  = true;
         AddHandler(KeyDownEvent,
             new KeyEventHandler(OnAnyKeyDown), handledEventsToo: true);
@@ -31,35 +43,43 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             new TypedEventHandler<UIElement, CharacterReceivedRoutedEventArgs>(OnAnyCharacterReceived),
             handledEventsToo: true);
 
-        ViewModel.DataReceived += (_, data) =>
+        _dataHandler = (_, data) =>
             DispatcherQueue.TryEnqueue(() => Terminal.Feed(data));
+        ViewModel.DataReceived += _dataHandler;
 
-        Terminal.UserInput += async (_, data) =>
-            await ViewModel.SendInputAsync(data);
+        _userInputHandler = (_, data) => _ = ViewModel.SendInputAsync(data);
+        Terminal.UserInput += _userInputHandler;
 
-        Terminal.SizeChanged += async (_, _) =>
+        _terminalSizeHandler = async (_, _) =>
         {
             var (cols, rows) = Terminal.TerminalSize;
             SizeLabel.Text   = $"{cols}×{rows}";
             await ViewModel.ResizeAsync(cols, rows);
         };
+        Terminal.SizeChanged += _terminalSizeHandler;
 
         Loaded += OnLoaded;
     }
 
-    /// <summary>
-    /// Track the main window's content height and stretch RootGrid to match
-    /// it (minus chrome). The TabView's content host hugs the UserControl's
-    /// DesiredSize, so layout-only "Stretch" can't fill the tab area —
-    /// we have to push an explicit Height down.
-    /// </summary>
+    /// <summary>Unsubscribe every event handler so this view can be
+    /// garbage-collected. Called by the original view when the popped
+    /// clone's window closes.</summary>
+    public void Detach()
+    {
+        if (_dataHandler is not null)         ViewModel.DataReceived -= _dataHandler;
+        if (_userInputHandler is not null)    Terminal.UserInput     -= _userInputHandler;
+        if (_terminalSizeHandler is not null) Terminal.SizeChanged   -= _terminalSizeHandler;
+        _dataHandler         = null;
+        _userInputHandler    = null;
+        _terminalSizeHandler = null;
+    }
+
     private void HookSizeTracking()
     {
         if (App.MainWin?.Content is not FrameworkElement root) return;
 
         void Update()
         {
-            // Subtract title bar (32) + tab strip (~40) + small bottom margin.
             var available = root.ActualHeight - 80;
             if (available > 200) RootGrid.Height = available;
         }
@@ -70,13 +90,12 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // Always reclaim focus when the tab is shown — TabView re-attaches
-        // content on activation and focus drifts to the tab strip otherwise.
         Focus(FocusState.Programmatic);
 
-        HookSizeTracking();
+        // Popped clone hosts a fresh window whose AppWindow has its own
+        // size; HookSizeTracking would target the main window instead.
+        if (!_isPoppedClone) HookSizeTracking();
 
-        // Connect exactly once per tab lifetime.
         if (_connectStarted) return;
         _connectStarted = true;
 
@@ -96,10 +115,6 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private async void OnAnyKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        // handledEventsToo:true on the AddHandler means we *also* see events
-        // that the TerminalControl already handled — but it sent the bytes,
-        // so we must not send them a second time. Without this guard, every
-        // keystroke duplicates ("a" → "aa") whenever the terminal has focus.
         if (e.Handled) return;
         var bytes = Terminal.TranslateSpecialKeyForView(e.Key);
         if (bytes is { Length: > 0 })
@@ -111,30 +126,34 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private async void OnAnyCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs e)
     {
-        if (e.Handled) return;  // see OnAnyKeyDown — same dedup rule
+        if (e.Handled) return;
         if (e.Character < 0x20 || e.Character == 0x7F) return;
         await ViewModel.SendInputAsync(Encoding.UTF8.GetBytes(new[] { e.Character }));
         e.Handled = true;
     }
 
-    /// <summary>Push a synthetic line of text into the terminal renderer for diagnostics.</summary>
     private void WriteTrace(string line) =>
         Terminal.Feed(Encoding.UTF8.GetBytes(line + "\r\n"));
 
     // ── Window-mode controls (toolbar buttons + global hotkeys) ──────────
 
     private Microsoft.UI.Xaml.Window? _poppedWindow;
+    private SshSessionView?           _poppedView;
     private TabViewItem?              _hostTab;
+
+    /// <summary>The window we live in when <c>_isPoppedClone</c>. Set by
+    /// the original after constructing the clone, before activating —
+    /// lets the clone close its own window on hotkey or toolbar click.</summary>
+    private Microsoft.UI.Xaml.Window? _hostingWindowForClone;
 
     private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
     private void PopOut_Click(object sender, RoutedEventArgs e)     => PopOut();
 
-    /// <summary>Toggles full-screen on whichever window currently hosts
-    /// this view. If we're not popped out, the main window flips between
-    /// the FullScreen presenter and the default Overlapped one.</summary>
     public void ToggleFullScreen()
     {
-        var win = _poppedWindow ?? App.MainWin;
+        // Popped clone: target its own hosting window, not the main one.
+        var win = _isPoppedClone ? _hostingWindowForClone
+                                 : (_poppedWindow ?? App.MainWin);
         if (win?.AppWindow is not { } aw) return;
 
         if (aw.Presenter is Microsoft.UI.Windowing.FullScreenPresenter)
@@ -143,12 +162,18 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             aw.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
     }
 
-    /// <summary>Detaches the view from its host tab and into a new
-    /// always-on-top window. Calling again on an already-popped session
-    /// closes the popped window, which re-attaches the view via the
-    /// Closed handler.</summary>
     public void PopOut()
     {
+        // If we ARE the popped clone, "Pop out" closes the floating
+        // window (which re-attaches the original on its Closed handler).
+        if (_isPoppedClone)
+        {
+            try { _hostingWindowForClone?.Close(); }
+            catch { /* tearing down */ }
+            return;
+        }
+
+        // If we already have a popped window, toggle off.
         if (_poppedWindow is not null)
         {
             try { _poppedWindow.Close(); } catch { /* tearing down */ }
@@ -159,58 +184,49 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         var sessionTabs = (App.MainWin.Content as FrameworkElement)?.FindName("SessionTabs") as TabView;
         _hostTab = sessionTabs?.TabItems.OfType<TabViewItem>()
             .FirstOrDefault(t => ReferenceEquals(t.Content, this));
+        if (_hostTab is null) return;
 
-        if (_hostTab is null)
-        {
-            CreatePoppedWindow();
-            return;
-        }
+        // Park the tab with the placeholder FIRST. Activating the new
+        // window below steals foreground focus from MainWindow; an
+        // unfocused TabView won't re-render its active tab's content
+        // presenter until the tab is reselected, leaving the user
+        // looking at a stale "still in tab" view until they click off
+        // and back. Swapping content while MainWindow still has focus
+        // forces an immediate repaint.
+        _hostTab.Content = BuildPoppedPlaceholder();
 
-        var tab = _hostTab;
+        // Build a brand-new view bound to the SAME ViewModel so the
+        // popped window has its own UIElement tree. This avoids the
+        // cross-XamlRoot Window.Content assignment that throws
+        // "Value does not fall within the expected range" — both views
+        // render the live data feed via the shared VM.
+        _poppedView = new SshSessionView(ViewModel, alreadyConnected: true);
 
-        // WinUI 3 keeps the UserControl's XamlRoot bound to its current
-        // window even after we swap the tab's content; assigning it as
-        // another Window's Content before that's released throws
-        // "Value does not fall within the expected range". The Unloaded
-        // event is the moment XAML actually clears the binding, so we
-        // wait for it (and one extra dispatcher hop) before reparenting.
-        void OnUnloadedForPopOut(object sender, RoutedEventArgs e)
-        {
-            Unloaded -= OnUnloadedForPopOut;
-            DispatcherQueue.TryEnqueue(CreatePoppedWindow);
-        }
-        Unloaded += OnUnloadedForPopOut;
-        tab.Content = BuildPoppedPlaceholder();
-    }
-
-    private void CreatePoppedWindow()
-    {
         var win = new Microsoft.UI.Xaml.Window
         {
             Title   = $"Nexus RDM — {ViewModel.DisplayName}",
-            Content = this,
+            Content = _poppedView,
         };
+        _poppedView._hostingWindowForClone = win;
         _poppedWindow = win;
         App.SecondaryWindows.Add(win);
         win.Activate();
+
         win.Closed += (_, _) =>
         {
             App.SecondaryWindows.Remove(win);
+            try { _poppedView?.Detach(); } catch (Exception ex) { CrashLogger.Log(ex, "popped Detach"); }
+            _poppedView   = null;
             _poppedWindow = null;
             var tab = _hostTab;
-            _hostTab  = null;
-            if (tab is null) return;
-
-            // Same wait-for-Unloaded discipline going back to the tab,
-            // for the same reason: the popped Window's XamlRoot
-            // ownership doesn't release until our Unloaded event fires.
-            void OnUnloadedForReAttach(object sender, RoutedEventArgs e)
-            {
-                Unloaded -= OnUnloadedForReAttach;
-                DispatcherQueue.TryEnqueue(() => tab.Content = this);
-            }
-            Unloaded += OnUnloadedForReAttach;
-            win.Content = null;
+            _hostTab = null;
+            // Re-attach the original view to the tab. Skip when the app is
+            // tearing down — at shutdown the secondary-window cleanup loop
+            // closes us while the main window's XamlRoot is already
+            // disposing, and assigning Content throws E_INVALIDARG.
+            if (tab is null || App.IsShuttingDown) return;
+            try { tab.Content = this; }
+            catch (Exception ex) { CrashLogger.Log(ex, "popped re-attach"); }
         };
     }
 
