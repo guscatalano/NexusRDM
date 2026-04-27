@@ -24,13 +24,22 @@ public sealed partial class IconPickerItem : ObservableObject
     [NotifyPropertyChangedFor(nameof(Background))]
     private bool _isSelected;
 
-    [ObservableProperty] private Brush _glyphBrush =
-        new SolidColorBrush(Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0));
+    // Lazy default — building a SolidColorBrush at field-init time
+    // throws COMException on the headless CI runner (no XAML host).
+    // Concrete UI consumers always overwrite this via ApplyColor before
+    // first paint anyway, so leaving it null until then is safe.
+    [ObservableProperty] private Brush? _glyphBrush;
 
     public IconPickerItem(string glyph, string name)
     {
         Glyph = glyph;
         Name  = name;
+        // Best-effort: only allocate the default brush when the XAML
+        // runtime is available. Tests run without it; production runs
+        // with it. Catching COMException here is the cleanest split
+        // — every other path is silent.
+        try { _glyphBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0)); }
+        catch (System.Runtime.InteropServices.COMException) { /* test env */ }
     }
 
     public Thickness BorderThickness => IsSelected ? new Thickness(2) : new Thickness(1);

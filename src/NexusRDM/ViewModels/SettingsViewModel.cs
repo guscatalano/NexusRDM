@@ -216,9 +216,28 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>TCP-probe ports 22 / 3389 during Proxmox sync to pick
     /// the right protocol. Off → ostype/tag heuristic only.</summary>
     [ObservableProperty] private bool   _proxmoxProbeProtocol     = true;
-    partial void OnDiscoveryEnabledChanged(bool value)             => SettingsStore.RaiseDiscoverySettingsChanged();
-    partial void OnDiscoverySubnetChanged(string value)            => SettingsStore.RaiseDiscoverySettingsChanged();
-    partial void OnDiscoveryIntervalMinutesChanged(int value)      => SettingsStore.RaiseDiscoverySettingsChanged();
+    // Persist BEFORE raising. The base OnPropertyChanged (which calls
+    // PersistAll) runs AFTER source-generator partial methods, so a
+    // subscriber that re-reads SettingsStore — like
+    // NetworkDiscoveryService.RestartTimer reading
+    // ReadDiscoveryEnabled() from disk — would otherwise see the stale
+    // pre-toggle value and skip its cleanup. Persisting inline
+    // sequences disk write → event raise → handler read correctly.
+    partial void OnDiscoveryEnabledChanged(bool value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseDiscoverySettingsChanged();
+    }
+    partial void OnDiscoverySubnetChanged(string value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseDiscoverySettingsChanged();
+    }
+    partial void OnDiscoveryIntervalMinutesChanged(int value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseDiscoverySettingsChanged();
+    }
     partial void OnDiscoveryReverseDnsChanged(bool value)          => SettingsStore.RaiseDiscoverySettingsChanged();
     partial void OnDiscoveryShortHostnameChanged(bool value)       => SettingsStore.RaiseDiscoverySettingsChanged();
 

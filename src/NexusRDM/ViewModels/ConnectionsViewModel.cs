@@ -147,11 +147,21 @@ public sealed partial class ConnectionsViewModel : ObservableObject
             // install before any source is registered).
             var proxmoxRoots = await LoadProxmoxRootMapAsync();
 
-            RootItems.Clear();
+            // Build the desired tree shape, then diff-merge it into
+            // RootItems. Earlier this was Clear()+Add(), which made
+            // every refresh recreate every TreeViewItem (visible flash
+            // + lost expansion / selection / animations). The merge
+            // reuses existing node instances when their key (profile
+            // or group id) is unchanged, so a sync that only edits
+            // DisplayName / Host updates the row in place.
+            var desired = new List<ConnectionTreeNode>();
             foreach (var p in profiles.Where(p => p.GroupId is null).OrderBy(p => p.DisplayName))
-                RootItems.Add(new ConnectionTreeNode(p));
+                desired.Add(new ConnectionTreeNode(p));
             foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.SortOrder))
-                RootItems.Add(BuildGroupNode(g, profiles, proxmoxRoots));
+                desired.Add(BuildGroupNode(g, profiles, proxmoxRoots));
+
+            MergeChildren(RootItems, desired);
+
             // Initial paint: reflect any sessions already open against
             // these profiles (e.g. tabs reopened from a prior search).
             RefreshConnectionStatus();
@@ -162,6 +172,57 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         }
         finally { IsLoading = false; }
     }
+
+    /// <summary>Merge <paramref name="src"/> into <paramref name="dst"/>
+    /// by id. Existing nodes whose key still appears in src are kept
+    /// and updated in place (delegated to UpdateFromProfile /
+    /// UpdateFromGroupNode); nodes no longer in src are removed; new
+    /// keys are inserted in source order. Recurses into Children so
+    /// the whole tree merges in one pass.</summary>
+    private static void MergeChildren(
+        ObservableCollection<ConnectionTreeNode> dst,
+        List<ConnectionTreeNode> src)
+    {
+        var desiredKeys = src.Select(KeyOf).ToList();
+        var desiredKeySet = new HashSet<string>(desiredKeys);
+
+        // Drop items not in src.
+        for (int i = dst.Count - 1; i >= 0; i--)
+            if (!desiredKeySet.Contains(KeyOf(dst[i])))
+                dst.RemoveAt(i);
+
+        var existingByKey = dst.ToDictionary(KeyOf);
+
+        // Walk src in order, updating / inserting / reordering.
+        for (int i = 0; i < src.Count; i++)
+        {
+            var s = src[i];
+            var key = desiredKeys[i];
+
+            if (existingByKey.TryGetValue(key, out var d))
+            {
+                if (d.Profile is not null && s.Profile is not null)
+                    d.UpdateFromProfile(s.Profile);
+                else if (d.Profile is null && s.Profile is null)
+                    d.UpdateFromGroupNode(s);
+
+                MergeChildren(d.Children, s.Children.ToList());
+
+                var idx = dst.IndexOf(d);
+                if (idx != i) dst.Move(idx, i);
+            }
+            else
+            {
+                dst.Insert(i, s);
+                existingByKey[key] = s;
+            }
+        }
+    }
+
+    private static string KeyOf(ConnectionTreeNode n) =>
+        n.Profile is { } p ? "p:" + p.Id
+        : n.GroupId is { } g ? "g:" + g
+        : "?";
 
     private static async Task<Dictionary<Guid, Guid>> LoadProxmoxRootMapAsync()
     {
@@ -273,14 +334,34 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     private static readonly Color DisconnectedColor = Color.FromArgb(0xFF, 0xFF, 0x6B, 0x6B); // red
     private static readonly Color GroupColor        = Color.FromArgb(0xFF, 0x60, 0x60, 0x70); // grey
 
-    public string             DisplayName    { get; }
-    public string             BadgeText      { get; }
-    public Visibility         BadgeVisibility { get; }
-    public ConnectionProfile? Profile        { get; }
+    // Mutable so the diff-merge in ConnectionsViewModel.LoadAsync can
+    // update existing nodes in place rather than replacing them. The
+    // observability (PropertyChanged) keeps the WinUI bindings in
+    // sync — TreeView no longer recreates TreeViewItems on a refresh
+    // when only display fields changed.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
+    private string _displayName = string.Empty;
+    [ObservableProperty] private string     _badgeText       = string.Empty;
+    [ObservableProperty] private Visibility _badgeVisibility = Visibility.Collapsed;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IconGlyph))]
+    [NotifyPropertyChangedFor(nameof(IconVisibility))]
+    [NotifyPropertyChangedFor(nameof(IconColor))]
+    [NotifyPropertyChangedFor(nameof(HasCustomIconColor))]
+    [NotifyPropertyChangedFor(nameof(StatusDotVisibility))]
+    [NotifyPropertyChangedFor(nameof(DotColor))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontWeight))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
+    [NotifyPropertyChangedFor(nameof(PingIconVisibility))]
+    private ConnectionProfile? _profile;
+
     public ObservableCollection<ConnectionTreeNode> Children { get; } = [];
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DotColor))]
+    [NotifyPropertyChangedFor(nameof(IconColor))]
     private bool _isLiveConnected;
 
     public Color DotColor => Profile is null
@@ -347,6 +428,22 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         ? new Windows.UI.Text.FontWeight(600)   // SemiBold
         : new Windows.UI.Text.FontWeight(400);  // Normal
 
+    /// <summary>Italic for groups owned by an external system (Proxmox
+    /// sync, auto-discovery) so they read as "managed elsewhere" at a
+    /// glance — pairs with the AUTO pill on the same row.</summary>
+    public Windows.UI.Text.FontStyle DisplayNameFontStyle =>
+        Profile is null && IsExternallyManaged
+            ? Windows.UI.Text.FontStyle.Italic
+            : Windows.UI.Text.FontStyle.Normal;
+
+    /// <summary>"AUTO" pill drawn on auto-managed group rows. Hidden
+    /// elsewhere; the pill is in addition to the italic name and gives
+    /// users a one-glance signal that delete/rename here won't stick.</summary>
+    public Visibility AutoManagedBadgeVisibility =>
+        Profile is null && IsExternallyManaged
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
     // ── Ping status (drives a small icon next to the row) ────────────────
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PingIconColor))]
@@ -406,24 +503,7 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
         BadgeVisibility = Visibility.Visible;
         IsManaged       = p.IsManaged;
-
-        // Seed ping state from PingService's last-known cache so the
-        // latency column doesn't reset to "?" every time the tree
-        // reloads (sync, scan completion, settings change). The cache
-        // outlives tree-node lifetimes; new nodes pick up where old
-        // nodes left off until the next ping cycle refreshes them.
-        try
-        {
-            var ping = App.Services?.GetService(typeof(NexusRDM.Services.PingService))
-                       as NexusRDM.Services.PingService;
-            if (ping is not null)
-            {
-                var (state, ms) = ping.GetLast(p.Id);
-                _pingState = state;
-                _latencyMs = ms;
-            }
-        }
-        catch { /* App.Services unavailable at construction (tests) — defaults are fine */ }
+        SeedPingState(p.Id);
     }
 
     public ConnectionTreeNode(Group g)
@@ -432,6 +512,51 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         DisplayName     = g.Name;
         BadgeText       = string.Empty;
         BadgeVisibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Pull this node's ping state from PingService's
+    /// last-known cache so the latency column survives tree reloads
+    /// (sync, scan completion, settings change). The cache outlives
+    /// tree-node lifetimes; new nodes pick up where old nodes left
+    /// off until the next ping cycle refreshes them.</summary>
+    private void SeedPingState(Guid connectionId)
+    {
+        try
+        {
+            var ping = App.Services?.GetService(typeof(NexusRDM.Services.PingService))
+                       as NexusRDM.Services.PingService;
+            if (ping is not null)
+            {
+                var (state, ms) = ping.GetLast(connectionId);
+                _pingState = state;
+                _latencyMs = ms;
+            }
+        }
+        catch { /* App.Services unavailable at construction (tests) — defaults are fine */ }
+    }
+
+    /// <summary>Re-bind to a fresh <see cref="ConnectionProfile"/>.
+    /// Called by the diff-merge in <see cref="ConnectionsViewModel.LoadAsync"/>
+    /// to update mutable fields in place when the existing node still
+    /// represents the same connection (matched by Id). Avoids the
+    /// flicker that <c>RootItems.Clear()+Add()</c> caused.</summary>
+    public void UpdateFromProfile(ConnectionProfile p)
+    {
+        Profile         = p;
+        DisplayName     = p.DisplayName;
+        BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
+        BadgeVisibility = Visibility.Visible;
+        IsManaged       = p.IsManaged;
+    }
+
+    /// <summary>In-place update for group nodes. Reads display fields
+    /// from the source node rather than a Group instance because the
+    /// caller has already constructed the desired-state node.</summary>
+    public void UpdateFromGroupNode(ConnectionTreeNode src)
+    {
+        DisplayName     = src.DisplayName;
+        ProxmoxSourceId = src.ProxmoxSourceId;
+        IsDiscoveryRoot = src.IsDiscoveryRoot;
     }
 
     /// <summary>Underlying Group.Id when this node represents a group;
@@ -443,7 +568,9 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     /// <summary>True when the underlying profile was imported from a
     /// Proxmox sync. Surfaces a small "P" pill in the tree so the user
     /// can tell synced rows from manual ones at a glance.</summary>
-    public bool IsManaged { get; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ManagedBadgeVisibility))]
+    private bool _isManaged;
 
     public Visibility ManagedBadgeVisibility =>
         IsManaged ? Visibility.Visible : Visibility.Collapsed;
@@ -451,7 +578,12 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     /// <summary>Set on group nodes that are the root group of a
     /// registered Proxmox source. Drives the "Sync now" entry in the
     /// right-click menu and could later drive a cluster glyph.</summary>
-    public Guid? ProxmoxSourceId { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProxmoxSourceRoot))]
+    [NotifyPropertyChangedFor(nameof(IsExternallyManaged))]
+    [NotifyPropertyChangedFor(nameof(AutoManagedBadgeVisibility))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
+    private Guid? _proxmoxSourceId;
 
     public bool IsProxmoxSourceRoot => ProxmoxSourceId.HasValue;
 
@@ -459,7 +591,11 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     /// right-click menu can hide its delete entry. The group is
     /// owned by <see cref="NexusRDM.Services.NetworkDiscoveryService"/>
     /// — disabling scheduled scans removes it.</summary>
-    public bool IsDiscoveryRoot { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsExternallyManaged))]
+    [NotifyPropertyChangedFor(nameof(AutoManagedBadgeVisibility))]
+    [NotifyPropertyChangedFor(nameof(DisplayNameFontStyle))]
+    private bool _isDiscoveryRoot;
 
     /// <summary>True when this group is owned by an external system
     /// (Proxmox sync or auto-discovery) and should not be deletable

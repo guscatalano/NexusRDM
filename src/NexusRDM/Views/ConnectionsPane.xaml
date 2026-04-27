@@ -78,8 +78,17 @@
                      Foreground="{StaticResource NxAccent}"
                      Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
 
-        <TreeView Grid.Row="2"
-                  x:Name="ConnectionTree"
+        <!-- Horizontal scroller around the tree so very wide rows
+             (long display names + multiple badges + ping latency) can
+             scroll into view when the user prefers a narrow pane.
+             Vertical scrolling is unchanged — TreeView keeps its own
+             vertical virtualization. -->
+        <ScrollViewer Grid.Row="2"
+                      HorizontalScrollMode="Auto"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollMode="Disabled"
+                      VerticalScrollBarVisibility="Disabled">
+        <TreeView x:Name="ConnectionTree"
                   ItemsSource="{x:Bind ViewModel.RootItems, Mode=OneWay}"
                   SelectionMode="Single"
                   ItemInvoked="ConnectionTree_ItemInvoked"
@@ -106,8 +115,24 @@
                             <TextBlock Text="{x:Bind DisplayName}"
                                        FontSize="12"
                                        FontWeight="{x:Bind DisplayNameFontWeight}"
+                                       FontStyle="{x:Bind DisplayNameFontStyle}"
                                        Foreground="{StaticResource NxTx1}"
                                        VerticalAlignment="Center" />
+                            <!-- AUTO pill on group rows that are
+                                 externally managed (Proxmox sync,
+                                 auto-discovery). Pairs with italic name
+                                 to make "you don't own this folder"
+                                 readable at a glance. -->
+                            <Border Background="{StaticResource NxAccent}"
+                                    CornerRadius="3"
+                                    Padding="4,1"
+                                    Visibility="{x:Bind AutoManagedBadgeVisibility, Mode=OneWay}"
+                                    ToolTipService.ToolTip="Auto-managed — this folder is owned by a service (Proxmox sync or network discovery) and can't be deleted from the tree.">
+                                <TextBlock Text="AUTO"
+                                           FontSize="9"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource NxTx1}" />
+                            </Border>
                             <Border Background="{StaticResource NxBg2}"
                                     CornerRadius="3"
                                     Padding="4,1"
@@ -150,6 +175,7 @@
                 </DataTemplate>
             </TreeView.ItemTemplate>
         </TreeView>
+        </ScrollViewer>
 
     </Grid>
 </UserControl>

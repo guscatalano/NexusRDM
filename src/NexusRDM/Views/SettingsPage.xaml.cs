@@ -102,28 +102,56 @@ public sealed partial class SettingsPage : Page
 
     // ── Network discovery ────────────────────────────────────────────────
 
-    private async void DiscoveryScanNow_Click(object sender, RoutedEventArgs e)
+    /// <summary>Re-entrance flag: a second click while the previous
+    /// scan is still in flight is a no-op. Cheaper than relying on the
+    /// service's own scan-cancellation logic for UX feedback, and it
+    /// stops onProgress/onComplete handlers from stacking up.</summary>
+    private bool _scanInFlight;
+
+    private void DiscoveryScanNow_Click(object sender, RoutedEventArgs e)
     {
+        // Fire-and-forget by design. Earlier this method awaited the
+        // scan, which (despite Task.Run inside the service) routinely
+        // showed up as a UI lock — most likely because the WinUI
+        // sync-context resumption on the post-await continuation lined
+        // up against discovery+ping thread-pool contention. Going
+        // strictly event-driven here means the click returns the next
+        // tick and nothing on the UI thread waits on the scan task.
+        if (_scanInFlight) return;
+
         var svc = App.Services.GetRequiredService<NexusRDM.Services.NetworkDiscoveryService>();
         var dispatcher = DispatcherQueue;
 
-        // Live progress text. Unsubscribed before we return so a stale
-        // subscription doesn't pile up across repeated Scan-now clicks.
-        EventHandler<NexusRDM.Services.DiscoveryProgress> onProgress = (_, p) =>
+        EventHandler<NexusRDM.Services.DiscoveryProgress>? onProgress = null;
+        EventHandler<NexusRDM.Services.DiscoveryResult>?  onComplete = null;
+
+        onProgress = (_, p) =>
             dispatcher.TryEnqueue(() =>
                 DiscoveryStatus.Text = $"Probing… {p.Probed}/{p.Total} ({p.Found} found)");
-        svc.Progress += onProgress;
+
+        onComplete = (_, r) =>
+        {
+            // Detach BOTH handlers before touching UI so a delayed
+            // Progress event after completion can't keep them alive.
+            svc.Progress       -= onProgress;
+            svc.ScanCompleted  -= onComplete;
+            dispatcher.TryEnqueue(() =>
+            {
+                _scanInFlight = false;
+                DiscoveryStatus.Text = r.IsSuccess
+                    ? $"Done — {r}"
+                    : $"Failed — {r.Error}";
+            });
+        };
+
+        svc.Progress      += onProgress;
+        svc.ScanCompleted += onComplete;
 
         DiscoveryStatus.Text = "Starting…";
-        try
-        {
-            var result = await svc.ScanAsync(ViewModel.DiscoverySubnet);
-            DiscoveryStatus.Text = result.IsSuccess
-                ? $"Done — {result}"
-                : $"Failed — {result.Error}";
-        }
-        catch (Exception ex) { DiscoveryStatus.Text = $"Failed — {ex.Message}"; }
-        finally { svc.Progress -= onProgress; }
+        _scanInFlight = true;
+        // No await: the service runs the scan on a thread-pool thread
+        // and reports completion via ScanCompleted above.
+        _ = svc.ScanAsync(ViewModel.DiscoverySubnet);
     }
 
     private async Task ShowErrorAsync(string title, string body)
