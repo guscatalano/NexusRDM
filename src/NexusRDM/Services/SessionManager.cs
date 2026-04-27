@@ -55,7 +55,7 @@ public sealed class OpenSession : IAsyncDisposable
     /// reconnect-from-toolbar — the new IRdpSession replaces the disposed
     /// one so SessionManager's tab-switch SetVisible calls still hit a
     /// valid form.</summary>
-    internal void ReplaceRdpSession(IRdpSession s) => RdpSession = s;
+    public void ReplaceRdpSession(IRdpSession s) => RdpSession = s;
 
     internal OpenSession(ConnectionProfile profile,
         ISshSession? sshSession = null, IRdpSession? rdpSession = null)
