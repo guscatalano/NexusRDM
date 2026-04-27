@@ -38,8 +38,26 @@ public class ConnectionProfile
     public DateTime CreatedAt       { get; set; } = DateTime.UtcNow;
     public DateTime? LastConnectedAt { get; set; }
 
+    /// <summary>FK to <see cref="ProxmoxSource"/> when this row was
+    /// imported from a Proxmox cluster sync. Null for user-created
+    /// connections.</summary>
+    public Guid? ExternalSourceId { get; set; }
+
+    /// <summary>Stable identifier in the source system. For Proxmox:
+    /// <c>"{node}/{type}/{vmid}"</c> (e.g. <c>"pve1/qemu/100"</c>).
+    /// Used by the sync engine to match existing rows on subsequent
+    /// passes.</summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>True when the row's host/name/protocol fields are
+    /// owned by the sync engine. Editor locks those fields and a sync
+    /// pass can overwrite them; user-set fields (credentials, icon,
+    /// tags) are always preserved.</summary>
+    public bool IsManaged { get; set; }
+
     // Navigation
-    public Group? Group { get; set; }
+    public Group?         Group           { get; set; }
+    public ProxmoxSource? ExternalSource  { get; set; }
 
     public static int DefaultPort(ConnectionProtocol p) => p == ConnectionProtocol.Rdp ? 3389 : 22;
 }

@@ -116,6 +116,20 @@
                                            FontSize="10"
                                            Foreground="{StaticResource NxTx3}" />
                             </Border>
+                            <!-- "P" pill for connections imported from a
+                                 Proxmox sync. Lets the user tell managed
+                                 rows from manual ones at a glance — paired
+                                 with field locks in the editor. -->
+                            <Border Background="{StaticResource NxAccent}"
+                                    CornerRadius="3"
+                                    Padding="4,1"
+                                    Visibility="{x:Bind ManagedBadgeVisibility}"
+                                    ToolTipService.ToolTip="Imported from Proxmox — managed by sync">
+                                <TextBlock Text="P"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{StaticResource NxTx1}" />
+                            </Border>
                             <!-- Ping status icon. Color comes from the
                                  PingState enum and only renders when ping
                                  is enabled in settings. -->

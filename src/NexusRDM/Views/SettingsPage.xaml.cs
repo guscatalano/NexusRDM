@@ -11,7 +11,8 @@ namespace NexusRDM.Views;
 
 public sealed partial class SettingsPage : Page
 {
-    public SettingsViewModel ViewModel { get; }
+    public SettingsViewModel        ViewModel  { get; }
+    public ProxmoxSourcesViewModel  ProxmoxVm  { get; } = new();
 
     public SettingsPage()
     {
@@ -28,6 +29,87 @@ public sealed partial class SettingsPage : Page
                 : "Database file not yet created — it'll be made on next save.";
         }
         catch (Exception ex) { DbCreatedText.Text = $"(Could not read timestamp: {ex.Message})"; }
+
+        _ = ProxmoxVm.LoadAsync();
+    }
+
+    // ── Proxmox sources ──────────────────────────────────────────────────
+
+    private async void ProxmoxAdd_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ProxmoxSourceEditDialog { XamlRoot = this.XamlRoot };
+        var result = await dlg.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        try { await ProxmoxVm.SaveAsync(dlg.Result.ToModel(), dlg.SecretText); }
+        catch (Exception ex) { await ShowErrorAsync("Could not save source", ex.Message); }
+    }
+
+    private async void ProxmoxEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        var row = ProxmoxVm.Sources.FirstOrDefault(s => s.Id == id);
+        if (row is null) return;
+
+        var dlg = new ProxmoxSourceEditDialog(row) { XamlRoot = this.XamlRoot };
+        var result = await dlg.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        try { await ProxmoxVm.SaveAsync(dlg.Result.ToModel(), dlg.SecretText); }
+        catch (Exception ex) { await ShowErrorAsync("Could not save source", ex.Message); }
+    }
+
+    private async void ProxmoxDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        var row = ProxmoxVm.Sources.FirstOrDefault(s => s.Id == id);
+        if (row is null) return;
+
+        var confirm = new ContentDialog
+        {
+            XamlRoot          = this.XamlRoot,
+            Title             = "Remove Proxmox source?",
+            Content           = $"Removing '{row.Name}' deletes every connection imported from this cluster ({row.BaseUrl}). Manual connections are not affected.",
+            PrimaryButtonText = "Remove",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        try { await ProxmoxVm.DeleteAsync(id); }
+        catch (Exception ex) { await ShowErrorAsync("Could not delete source", ex.Message); }
+    }
+
+    private async void ProxmoxTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        var row = ProxmoxVm.Sources.FirstOrDefault(s => s.Id == id);
+        if (row is null) return;
+
+        row.LastTestResult = "Testing…";
+        await ProxmoxVm.TestAsync(row);
+    }
+
+    private async void ProxmoxSync_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        var row = ProxmoxVm.Sources.FirstOrDefault(s => s.Id == id);
+        if (row is null) return;
+
+        row.LastTestResult = "Syncing…";
+        await ProxmoxVm.SyncAsync(row);
+    }
+
+    private async Task ShowErrorAsync(string title, string body)
+    {
+        var dlg = new ContentDialog
+        {
+            XamlRoot        = this.XamlRoot,
+            Title           = title,
+            Content         = body,
+            CloseButtonText = "OK",
+        };
+        await dlg.ShowAsync();
     }
 
     private async void ExportDb_Click(object sender, RoutedEventArgs e)

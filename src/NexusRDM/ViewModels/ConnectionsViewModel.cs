@@ -1,5 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using NexusRDM.Core.Interfaces;
@@ -28,7 +30,8 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     public ConnectionsViewModel(
         IConnectionService svc,
         NexusRDM.Services.SessionManager sessions,
-        NexusRDM.Services.PingService pingService)
+        NexusRDM.Services.PingService pingService,
+        NexusRDM.Services.ProxmoxSyncService proxmoxSync)
     {
         _svc      = svc;
         _sessions = sessions;
@@ -42,6 +45,17 @@ public sealed partial class ConnectionsViewModel : ObservableObject
 
         // Re-configure when the user flips the ping settings.
         SettingsStore.PingSettingsChanged += (_, _) => ApplyPingSettings();
+
+        // Refresh the tree after a Proxmox sync — the cluster may have
+        // added/removed/renamed VMs and the user expects to see those
+        // immediately, not on next manual refresh.
+        proxmoxSync.SourceSynced += (_, _) =>
+        {
+            var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
+                           ?? App.MainWin?.DispatcherQueue;
+            if (dispatcher is null) { _ = LoadAsync(); return; }
+            dispatcher.TryEnqueue(() => _ = LoadAsync());
+        };
     }
 
     private void OnPingUpdated(object? sender, NexusRDM.Services.PingUpdate u)
@@ -117,11 +131,18 @@ public sealed partial class ConnectionsViewModel : ObservableObject
                 ? await _svc.GetAllAsync()
                 : await _svc.SearchAsync(query);
             var groups = await _svc.GetGroupsAsync();
+
+            // Map each Proxmox source's RootGroupId → SourceId so we can
+            // tag the matching group node and light up the "Sync now"
+            // context-menu entry. Read fails are non-fatal (e.g. fresh
+            // install before any source is registered).
+            var proxmoxRoots = await LoadProxmoxRootMapAsync();
+
             RootItems.Clear();
             foreach (var p in profiles.Where(p => p.GroupId is null).OrderBy(p => p.DisplayName))
                 RootItems.Add(new ConnectionTreeNode(p));
             foreach (var g in groups.Where(g => g.ParentId is null).OrderBy(g => g.SortOrder))
-                RootItems.Add(BuildGroupNode(g, profiles));
+                RootItems.Add(BuildGroupNode(g, profiles, proxmoxRoots));
             // Initial paint: reflect any sessions already open against
             // these profiles (e.g. tabs reopened from a prior search).
             RefreshConnectionStatus();
@@ -133,13 +154,28 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         finally { IsLoading = false; }
     }
 
-    private static ConnectionTreeNode BuildGroupNode(Group g, IReadOnlyList<ConnectionProfile> all)
+    private static async Task<Dictionary<Guid, Guid>> LoadProxmoxRootMapAsync()
+    {
+        try
+        {
+            using var scope = App.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<NexusRDM.Data.Context.NexusDbContext>();
+            return await db.ProxmoxSources
+                .Where(s => s.RootGroupId != null)
+                .ToDictionaryAsync(s => s.RootGroupId!.Value, s => s.Id);
+        }
+        catch { return new Dictionary<Guid, Guid>(); }
+    }
+
+    private static ConnectionTreeNode BuildGroupNode(
+        Group g, IReadOnlyList<ConnectionProfile> all, Dictionary<Guid, Guid> proxmoxRoots)
     {
         var node = new ConnectionTreeNode(g);
+        if (proxmoxRoots.TryGetValue(g.Id, out var srcId)) node.ProxmoxSourceId = srcId;
         foreach (var p in all.Where(p => p.GroupId == g.Id).OrderBy(p => p.DisplayName))
             node.Children.Add(new ConnectionTreeNode(p));
         foreach (var child in g.Children.OrderBy(x => x.SortOrder))
-            node.Children.Add(BuildGroupNode(child, all));
+            node.Children.Add(BuildGroupNode(child, all, proxmoxRoots));
         return node;
     }
 
@@ -346,6 +382,7 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         DisplayName     = p.DisplayName;
         BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
         BadgeVisibility = Visibility.Visible;
+        IsManaged       = p.IsManaged;
     }
 
     public ConnectionTreeNode(Group g)
@@ -354,4 +391,19 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         BadgeText       = string.Empty;
         BadgeVisibility = Visibility.Collapsed;
     }
+
+    /// <summary>True when the underlying profile was imported from a
+    /// Proxmox sync. Surfaces a small "P" pill in the tree so the user
+    /// can tell synced rows from manual ones at a glance.</summary>
+    public bool IsManaged { get; }
+
+    public Visibility ManagedBadgeVisibility =>
+        IsManaged ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Set on group nodes that are the root group of a
+    /// registered Proxmox source. Drives the "Sync now" entry in the
+    /// right-click menu and could later drive a cluster glyph.</summary>
+    public Guid? ProxmoxSourceId { get; set; }
+
+    public bool IsProxmoxSourceRoot => ProxmoxSourceId.HasValue;
 }

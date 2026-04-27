@@ -81,6 +81,41 @@
                             </Grid>
                         </Border>
 
+                        <!-- Managed-by-Proxmox banner. Shown only when the
+                             connection was imported from a sync; the
+                             managed columns below are read-only in that
+                             state, and the next sync will overwrite any
+                             local edits anyway. Detach is the escape
+                             hatch — it severs the FK and re-enables the
+                             fields permanently. -->
+                        <Border Visibility="{x:Bind ViewModel.IsManagedVisibility, Mode=OneWay}"
+                                Background="#332B7BC0"
+                                BorderBrush="#802B7BC0"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="10,6"
+                                Margin="0,4,0,4">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="Managed by Proxmox · Display name and host are kept in sync with the cluster (rename / IP changes flow through). Protocol and port stay editable — the auto-pick is a heuristic, your choice sticks across syncs. Click Detach to take full manual ownership."
+                                           FontSize="11"
+                                           Foreground="{StaticResource NxTx1}"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="1"
+                                        Click="DetachManaged_Click"
+                                        Background="{StaticResource NxBg2}"
+                                        BorderBrush="{StaticResource NxBrd}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="10,4"
+                                        Margin="10,0,0,0"
+                                        FontSize="11"
+                                        Foreground="{StaticResource NxTx1}"
+                                        Content="Detach" />
+                            </Grid>
+                        </Border>
+
                         <TextBlock Text="GENERAL"
                                    FontSize="10" FontWeight="SemiBold"
                                    Foreground="{StaticResource NxTx3}"
@@ -88,13 +123,19 @@
 
                         <TextBox Header="Display name" PlaceholderText="e.g. Production Web Server"
                                  Text="{x:Bind ViewModel.DisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InvertBoolConverter}}" />
+                                 IsEnabled="{x:Bind ViewModel.IsManagedFieldsEnabled, Mode=OneWay}" />
                         <TextBlock Text="{x:Bind ViewModel.DisplayNameError, Mode=OneWay}"
                                    Visibility="{x:Bind ViewModel.DisplayNameErrorVisibility, Mode=OneWay}"
                                    FontSize="11"
                                    Foreground="{StaticResource NxRed}"
                                    Margin="0,2,0,0" />
 
+                        <!-- Protocol stays editable on managed rows: the
+                             auto-heuristic (#nexus:* tags + ostype) is a
+                             best guess; users frequently want to flip
+                             SSH↔RDP for VMs we mis-classified. The sync
+                             engine no longer overwrites Protocol on
+                             update, so this pick is sticky. -->
                         <ComboBox Header="Protocol" HorizontalAlignment="Stretch"
                                   ItemsSource="{x:Bind ViewModel.ProtocolOptions}"
                                   DisplayMemberPath="Display"
@@ -103,7 +144,8 @@
                         <Grid ColumnDefinitions="*,Auto,110">
                             <TextBox Grid.Column="0" Header="Host / IP"
                                      PlaceholderText="hostname or 192.168.x.x"
-                                     Text="{x:Bind ViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                     Text="{x:Bind ViewModel.Host, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{x:Bind ViewModel.IsManagedFieldsEnabled, Mode=OneWay}" />
                             <TextBlock Grid.Column="1" Text=":" VerticalAlignment="Bottom" Margin="6,0,6,8"
                                        Foreground="{StaticResource NxTx2}" />
                             <NumberBox Grid.Column="2" Header="Port" Minimum="1" Maximum="65535"

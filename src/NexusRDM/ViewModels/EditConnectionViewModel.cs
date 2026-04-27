@@ -12,6 +12,12 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     private readonly IConnectionService _svc;
     private readonly Guid?              _existingId;
 
+    /// <summary>Cached so saving a managed connection doesn't blow
+    /// away its link to a Proxmox source. <see cref="BuildProfile"/>
+    /// always writes these straight back.</summary>
+    private Guid?  _externalSourceId;
+    private string? _externalId;
+
     [ObservableProperty]
     [NotifyDataErrorInfo]
     [Required(ErrorMessage = "Name is required")]
@@ -360,6 +366,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
+    [NotifyPropertyChangedFor(nameof(IsManagedFieldsEnabled))]
     private bool _isBusy = false;
 
     [ObservableProperty]
@@ -376,6 +383,33 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     public bool   IsEditing => _existingId.HasValue;
     public string Title     => IsEditing ? "Edit Connection" : "New Connection";
     public List<Group> Groups { get; private set; } = [];
+
+    /// <summary>True when the connection is currently bound to a
+    /// Proxmox sync. Used by the editor to lock managed fields and show
+    /// the "Managed by Proxmox" banner.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsManagedVisibility))]
+    [NotifyPropertyChangedFor(nameof(IsManagedFieldsEnabled))]
+    private bool _isManaged;
+
+    public Visibility IsManagedVisibility    => IsManaged ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Single derived flag the managed-field IsEnabled bindings
+    /// hang off. Combines "not busy" (existing rule) with "not managed"
+    /// so a single binding handles both cases without a multi-binding.</summary>
+    public bool IsManagedFieldsEnabled => !IsBusy && !IsManaged;
+
+    /// <summary>Sever the link to the external (Proxmox) source so this
+    /// row becomes a normal manual connection on the next Save.
+    /// Cancelling the editor afterward does NOT undo the detach if the
+    /// user already saved — but inside the editor session, it's just a
+    /// VM-level mutation until Save commits.</summary>
+    public void DetachFromExternal()
+    {
+        IsManaged         = false;
+        _externalSourceId = null;
+        _externalId       = null;
+    }
 
     public sealed record NamedOption<T>(string Display, T Value);
 
@@ -425,8 +459,11 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
         if (existing is null) return;
 
-        DisplayName   = existing.DisplayName;
-        Host          = existing.Host;
+        DisplayName       = existing.DisplayName;
+        Host              = existing.Host;
+        IsManaged         = existing.IsManaged;
+        _externalSourceId = existing.ExternalSourceId;
+        _externalId       = existing.ExternalId;
         // Protocol must be set before Port — OnProtocolChanged resets Port to the
         // protocol default (22/3389), and would clobber the persisted port otherwise.
         Protocol      = existing.Protocol;
@@ -560,12 +597,15 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
 
     private ConnectionProfile BuildProfile(string? credKey) => new()
     {
-        DisplayName     = DisplayName.Trim(),
-        Host            = Host.Trim(),
-        Port            = Port,
-        Protocol        = Protocol,
-        Tags            = Tags.Trim(),
-        GroupId         = GroupId,
+        DisplayName      = DisplayName.Trim(),
+        Host             = Host.Trim(),
+        Port             = Port,
+        Protocol         = Protocol,
+        Tags             = Tags.Trim(),
+        GroupId          = GroupId,
+        IsManaged        = IsManaged,
+        ExternalSourceId = _externalSourceId,
+        ExternalId       = _externalId,
         IconGlyph       = string.IsNullOrWhiteSpace(IconGlyph) ? null : IconGlyph,
         IconColorHex    = IconColor is null ? null
                           : $"#{IconColor.Value.A:X2}{IconColor.Value.R:X2}{IconColor.Value.G:X2}{IconColor.Value.B:X2}",
