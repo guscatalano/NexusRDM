@@ -2,6 +2,17 @@ using NexusRDM.Core.Models;
 
 namespace NexusRDM.Core.Interfaces;
 
+/// <summary>One entry in an RDP session's event log. Captured by the
+/// session and surfaced to the UI for the "RDP events" pop-up. Detail is
+/// free-form (e.g. a disconnect reason, an error code).</summary>
+public sealed record RdpEventEntry(DateTime Timestamp, string Kind, string Detail)
+{
+    /// <summary>Pre-formatted timestamp for binding directly from XAML —
+    /// x:Bind doesn't accept string-literal arguments inside method
+    /// calls, so we expose the formatted form as a property.</summary>
+    public string TimeText => Timestamp.ToString("HH:mm:ss.fff");
+}
+
 /// <summary>
 /// Abstraction over the Windows MSTSC/AxMSTSCLib RDP ActiveX control.
 /// The concrete implementation lives in the UI project where it can host the Win32 HWND.
@@ -14,6 +25,13 @@ public interface IRdpSession : IDisposable
     event EventHandler?        Connected;
     event EventHandler<string>? Disconnected;   // arg = reason string
     event EventHandler<string>? FatalError;
+
+    /// <summary>Catch-all stream of session lifecycle events for the
+    /// "RDP events" diagnostic window. Fires for Connecting / Connected /
+    /// Disconnected / FatalError plus internal milestones (form created,
+    /// OCX initialized, pop-out toggled, etc.). Subscribers should expect
+    /// events on arbitrary threads.</summary>
+    event EventHandler<RdpEventEntry>? RdpEvent;
 
     /// <summary>Begin the RDP session. <paramref name="hwndParent"/> is the
     /// HWND that should own the resulting remote-desktop window (typically

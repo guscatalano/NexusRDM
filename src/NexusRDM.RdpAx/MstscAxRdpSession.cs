@@ -32,6 +32,7 @@ public sealed class MstscAxRdpSession : IRdpSession
     private Thread?                    _thread;
     private Form?                      _form;
     private MsRdpClientAxHost?         _ax;
+    private OcxEventSink?              _eventSink;
     private nint                       _ownerHwnd;
     private Rectangle                  _bounds;
     private bool                       _disposed;
@@ -54,6 +55,40 @@ public sealed class MstscAxRdpSession : IRdpSession
     public event EventHandler?         Connected;
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? FatalError;
+    public event EventHandler<RdpEventEntry>? RdpEvent;
+
+    private void Log(string kind, string detail = "")
+    {
+        RdpEvent?.Invoke(this, new RdpEventEntry(DateTime.Now, kind, detail));
+
+        // Bridge OCX dispinterface events into the IRdpSession surface so
+        // the ViewModel sees the lifecycle correctly. Without this the
+        // session only fires Disconnected from FormClosed — but the OCX
+        // disconnects internally without closing its host form, so the UI
+        // would stay stuck in "Connected" until the user clicks Disconnect.
+        switch (kind)
+        {
+            case "OnDisconnected":
+                Disconnected?.Invoke(this, $"OCX disconnect (reason {detail})");
+                // Tear down the host form so the panel area shows the
+                // disconnected overlay — the form is borderless and would
+                // otherwise sit there as a black rectangle.
+                var f1 = _form;
+                if (f1 is { IsDisposed: false })
+                {
+                    try { f1.BeginInvoke(() => f1.Close()); } catch { /* tearing down */ }
+                }
+                break;
+            case "OnFatalError":
+                FatalError?.Invoke(this, $"OCX fatal error (code {detail})");
+                var f2 = _form;
+                if (f2 is { IsDisposed: false })
+                {
+                    try { f2.BeginInvoke(() => f2.Close()); } catch { /* tearing down */ }
+                }
+                break;
+        }
+    }
 
     public MstscAxRdpSession(ConnectionProfile profile, string username, string password)
     {
@@ -68,6 +103,8 @@ public sealed class MstscAxRdpSession : IRdpSession
         if (_thread is not null) return;
         _ownerHwnd = hwndParent;
         _bounds    = new Rectangle(x, y, Math.Max(400, width), Math.Max(300, height));
+
+        Log("Connecting", $"{_profile.Host}:{_profile.Port} as {_username} (mstscax)");
 
         _thread = new Thread(RunForm)
         {
@@ -128,6 +165,7 @@ public sealed class MstscAxRdpSession : IRdpSession
             form.HandleCreated += (_, _) =>
             {
                 _formHwnd = form.Handle;
+                Log("HandleCreated", $"hwnd=0x{_formHwnd:X}");
                 // Initial placement (raw pixel screen coords from caller).
                 // Owner is established in Shown — WinForms overwrites
                 // GWLP_HWNDPARENT during its own Show() pipeline if we set
@@ -156,6 +194,7 @@ public sealed class MstscAxRdpSession : IRdpSession
                 if (ax is null)
                 {
                     Connected?.Invoke(this, EventArgs.Empty);
+                    Log("Connected", "(test-fake mode — no OCX)");
                     return;
                 }
                 try
@@ -163,6 +202,7 @@ public sealed class MstscAxRdpSession : IRdpSession
                     ax.CreateControl();
                     dynamic ocx = ax.Ocx
                         ?? throw new InvalidOperationException("MsRdpClient COM object not available.");
+                    Log("OcxCreated", "MsRdpClient9NotSafeForScripting");
 
                     var rdp = _profile.RdpSettings();
                     ocx.Server                                 = _profile.Host;
@@ -184,10 +224,22 @@ public sealed class MstscAxRdpSession : IRdpSession
                     if (!string.IsNullOrEmpty(rdp.Domain))
                         ocx.Domain = rdp.Domain;
 
+                    // Subscribe to the OCX's dispinterface so every event
+                    // it raises (login, network status, fatal codes, auto-
+                    // reconnect, etc.) flows into the RDP-events log.
+                    try { _eventSink = OcxEventSink.Attach(ax.Ocx, Log); }
+                    catch (Exception ex) { Log("SinkError", ex.Message); }
+
                     ocx.Connect();
+                    Log("OcxConnect", $"{_profile.Host}:{_profile.Port}");
                     Connected?.Invoke(this, EventArgs.Empty);
+                    Log("Connected", $"{_profile.Host}:{_profile.Port}");
                 }
-                catch (Exception ex) { FatalError?.Invoke(this, ex.Message); }
+                catch (Exception ex)
+                {
+                    FatalError?.Invoke(this, ex.Message);
+                    Log("FatalError", ex.Message);
+                }
             };
 
             // When focus moves to the WinUI window, restack the form just
@@ -242,6 +294,7 @@ public sealed class MstscAxRdpSession : IRdpSession
             {
                 _formHwnd = 0;
                 Disconnected?.Invoke(this, "window closed");
+                Log("Disconnected", "window closed");
             };
 
             Application.Run(form);
@@ -463,6 +516,8 @@ public sealed class MstscAxRdpSession : IRdpSession
     {
         if (_disposed) return;
         _disposed = true;
+        try { _eventSink?.Dispose(); } catch { /* OCX may be gone */ }
+        _eventSink = null;
         Disconnect();
     }
 

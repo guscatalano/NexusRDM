@@ -49,7 +49,13 @@ public sealed class OpenSession : IAsyncDisposable
     public string             DisplayName  { get; }
     public ConnectionProtocol Protocol     { get; }
     public ISshSession?       SshSession   { get; }
-    public IRdpSession?       RdpSession   { get; }
+    public IRdpSession?       RdpSession   { get; private set; }
+
+    /// <summary>Swap the live RDP session reference after a
+    /// reconnect-from-toolbar — the new IRdpSession replaces the disposed
+    /// one so SessionManager's tab-switch SetVisible calls still hit a
+    /// valid form.</summary>
+    internal void ReplaceRdpSession(IRdpSession s) => RdpSession = s;
 
     internal OpenSession(ConnectionProfile profile,
         ISshSession? sshSession = null, IRdpSession? rdpSession = null)
