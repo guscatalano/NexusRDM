@@ -229,7 +229,7 @@ public sealed class ProxmoxSyncService
             ? null
             : $"{r.Node}/{r.Type}/{r.Vmid}";
 
-    private static ConnectionProtocol ResolveProtocol(
+    internal static ConnectionProtocol ResolveProtocol(
         TagDirectives d, ProxmoxDefaultProtocol fallback, string? rawTags, string? ostype)
     {
         if (d.ForceRdp) return ConnectionProtocol.Rdp;
@@ -322,7 +322,7 @@ public sealed class ProxmoxSyncService
         return ConnectionProtocol.Ssh;
     }
 
-    private static string ResolveHost(
+    internal static string ResolveHost(
         TagDirectives d, ProxmoxClusterResource r, string? discoveredIp)
     {
         if (!string.IsNullOrEmpty(d.Host))     return d.Host!;
@@ -377,7 +377,7 @@ public sealed class ProxmoxSyncService
     /// <summary>Walks <c>net0..net3</c> for an entry of the shape
     /// <c>"name=eth0,...,ip=10.0.0.5/24,..."</c> and returns the
     /// stripped IP. Returns null for DHCP-configured nics.</summary>
-    private static string? TryParseLxcStaticIp(ProxmoxVmConfig config)
+    internal static string? TryParseLxcStaticIp(ProxmoxVmConfig config)
     {
         foreach (var raw in new[] { config.Net0, config.Net1, config.Net2, config.Net3 })
         {
@@ -403,7 +403,7 @@ public sealed class ProxmoxSyncService
     /// Filters out <c>lo</c>, <c>docker*</c>, <c>br-*</c>, <c>veth*</c>,
     /// and <c>tun*</c> by interface name so the user's Docker bridge
     /// or VPN address doesn't take precedence over the primary NIC.</summary>
-    private static string? PickBestIp(IEnumerable<ProxmoxAgentInterface> interfaces)
+    internal static string? PickBestIp(IEnumerable<ProxmoxAgentInterface> interfaces)
     {
         var primary = interfaces.Where(IsPrimaryInterface).ToList();
         var pool    = primary.Count > 0 ? primary : interfaces.ToList();
@@ -444,7 +444,7 @@ public sealed class ProxmoxSyncService
         return true;
     }
 
-    private static TagDirectives ParseTags(string? tags)
+    internal static TagDirectives ParseTags(string? tags)
     {
         var d = new TagDirectives();
         if (string.IsNullOrEmpty(tags)) return d;
@@ -480,7 +480,7 @@ public sealed class ProxmoxSyncService
         return d;
     }
 
-    private sealed class TagDirectives
+    internal sealed class TagDirectives
     {
         public bool    ForceRdp;
         public bool    ForceSsh;

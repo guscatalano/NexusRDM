@@ -50,4 +50,11 @@
     <ProjectReference Include="..\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets the ViewModel test project reach the internal sync /
+         discovery helpers (ParseTags, ResolveProtocol, etc.) without
+         having to make every pure helper public. -->
+    <InternalsVisibleTo Include="NexusRDM.Tests.ViewModels" />
+  </ItemGroup>
+
 </Project>
