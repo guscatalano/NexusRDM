@@ -245,7 +245,7 @@ public sealed class HyperVClient
     /// PROPERTY children. We parse looking for <c>NetworkAddressIPv4</c>
     /// whose Data is a semicolon-separated address list and pick the
     /// first non-loopback / non-link-local IPv4.</summary>
-    private static string? TryExtractIp(string xml)
+    internal static string? TryExtractIp(string xml)
     {
         try
         {
