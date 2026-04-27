@@ -199,6 +199,29 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnPingIntervalSecondsChanged(int value) => SettingsStore.RaisePingSettingsChanged();
     partial void OnPingShowLatencyChanged(bool value)    => SettingsStore.RaisePingSettingsChanged();
 
+    /// <summary>Subnet sweep for SSH/RDP listeners. Off by default so a
+    /// fresh install doesn't surprise users with traffic. /16 cap is
+    /// enforced by the service — anything larger is rejected outright
+    /// rather than silently truncated.</summary>
+    [ObservableProperty] private bool   _discoveryEnabled         = false;
+    [ObservableProperty] private string _discoverySubnet          = "192.168.1.0/24";
+    [ObservableProperty] private int    _discoveryIntervalMinutes = 60;
+    /// <summary>Look up the PTR record for each hit. Off = display
+    /// raw IP only (faster, avoids leaking IPs to upstream DNS).</summary>
+    [ObservableProperty] private bool   _discoveryReverseDns      = true;
+    /// <summary>Strip everything after the first dot — <c>host.lan</c>
+    /// becomes <c>host</c>. Useful when your AD/dnsmasq returns FQDNs
+    /// and you want compact tree rows.</summary>
+    [ObservableProperty] private bool   _discoveryShortHostname   = false;
+    /// <summary>TCP-probe ports 22 / 3389 during Proxmox sync to pick
+    /// the right protocol. Off → ostype/tag heuristic only.</summary>
+    [ObservableProperty] private bool   _proxmoxProbeProtocol     = true;
+    partial void OnDiscoveryEnabledChanged(bool value)             => SettingsStore.RaiseDiscoverySettingsChanged();
+    partial void OnDiscoverySubnetChanged(string value)            => SettingsStore.RaiseDiscoverySettingsChanged();
+    partial void OnDiscoveryIntervalMinutesChanged(int value)      => SettingsStore.RaiseDiscoverySettingsChanged();
+    partial void OnDiscoveryReverseDnsChanged(bool value)          => SettingsStore.RaiseDiscoverySettingsChanged();
+    partial void OnDiscoveryShortHostnameChanged(bool value)       => SettingsStore.RaiseDiscoverySettingsChanged();
+
     /// <summary>Hotkey strings, e.g. <c>"Ctrl+Tab"</c>. Free-form so the
     /// user can wire any single combo; parsed by <see cref="SettingsStore.ParseHotkey"/>.
     /// MainWindow re-registers accelerators when these change.</summary>
@@ -294,6 +317,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("PingEnabled",         out var pe))  PingEnabled         = Convert.ToBoolean(pe);
         if (s.TryGetValue("PingIntervalSeconds", out var pi))  PingIntervalSeconds = Math.Max(5, Convert.ToInt32(pi));
         if (s.TryGetValue("PingShowLatency",     out var pl))  PingShowLatency     = Convert.ToBoolean(pl);
+        if (s.TryGetValue("DiscoveryEnabled",          out var de))  DiscoveryEnabled         = Convert.ToBoolean(de);
+        if (s.TryGetValue("DiscoverySubnet",           out var ds))  DiscoverySubnet          = Convert.ToString(ds) ?? DiscoverySubnet;
+        if (s.TryGetValue("DiscoveryIntervalMinutes", out var di))   DiscoveryIntervalMinutes = Math.Clamp(Convert.ToInt32(di), 5, 1440);
+        if (s.TryGetValue("DiscoveryReverseDns",       out var dr))  DiscoveryReverseDns      = Convert.ToBoolean(dr);
+        if (s.TryGetValue("DiscoveryShortHostname",    out var dsh)) DiscoveryShortHostname   = Convert.ToBoolean(dsh);
+        if (s.TryGetValue("ProxmoxProbeProtocol",      out var pp))  ProxmoxProbeProtocol     = Convert.ToBoolean(pp);
     }
 
     [RelayCommand]
@@ -347,6 +376,12 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["PingEnabled"]         = PingEnabled,
             ["PingIntervalSeconds"] = PingIntervalSeconds,
             ["PingShowLatency"]     = PingShowLatency,
+            ["DiscoveryEnabled"]          = DiscoveryEnabled,
+            ["DiscoverySubnet"]           = DiscoverySubnet,
+            ["DiscoveryIntervalMinutes"]  = DiscoveryIntervalMinutes,
+            ["DiscoveryReverseDns"]       = DiscoveryReverseDns,
+            ["DiscoveryShortHostname"]    = DiscoveryShortHostname,
+            ["ProxmoxProbeProtocol"]      = ProxmoxProbeProtocol,
         });
     }
 
@@ -535,6 +570,57 @@ public static class SettingsStore
         var s = Read();
         if (!s.TryGetValue("PingShowLatency", out var v)) return false;
         try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+
+    /// <summary>Mirrors the ping-settings event: the auto-discovery
+    /// service subscribes to re-arm its timer when the user toggles
+    /// the feature, edits the subnet, or changes the interval.</summary>
+    public static event EventHandler? DiscoverySettingsChanged;
+    public static void RaiseDiscoverySettingsChanged() =>
+        DiscoverySettingsChanged?.Invoke(null, EventArgs.Empty);
+
+    public static bool ReadDiscoveryEnabled()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DiscoveryEnabled", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+    public static string ReadDiscoverySubnet()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DiscoverySubnet", out var v)) return "192.168.1.0/24";
+        var str = Convert.ToString(v);
+        return string.IsNullOrWhiteSpace(str) ? "192.168.1.0/24" : str;
+    }
+    public static int ReadDiscoveryIntervalMinutes()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DiscoveryIntervalMinutes", out var v)) return 60;
+        try { return Math.Clamp(Convert.ToInt32(v), 5, 1440); } catch { return 60; }
+    }
+    public static bool ReadDiscoveryReverseDns()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DiscoveryReverseDns", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
+    }
+    public static bool ReadDiscoveryShortHostname()
+    {
+        var s = Read();
+        if (!s.TryGetValue("DiscoveryShortHostname", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
+    }
+
+    /// <summary>Probe ports 22 and 3389 against each discovered VM IP
+    /// during Proxmox sync to pick the protocol authoritatively. When
+    /// off, the sync falls back to the ostype/tag heuristic (faster,
+    /// avoids touching guest sockets, but mis-classifies xrdp/OpenSSH
+    /// setups).</summary>
+    public static bool ReadProxmoxProbeProtocol()
+    {
+        var s = Read();
+        if (!s.TryGetValue("ProxmoxProbeProtocol", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
     }
 
     /// <summary>Reads a custom-theme color from settings, or returns

@@ -31,7 +31,8 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         IConnectionService svc,
         NexusRDM.Services.SessionManager sessions,
         NexusRDM.Services.PingService pingService,
-        NexusRDM.Services.ProxmoxSyncService proxmoxSync)
+        NexusRDM.Services.ProxmoxSyncService proxmoxSync,
+        NexusRDM.Services.NetworkDiscoveryService discovery)
     {
         _svc      = svc;
         _sessions = sessions;
@@ -49,13 +50,21 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         // Refresh the tree after a Proxmox sync — the cluster may have
         // added/removed/renamed VMs and the user expects to see those
         // immediately, not on next manual refresh.
-        proxmoxSync.SourceSynced += (_, _) =>
-        {
-            var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
-                           ?? App.MainWin?.DispatcherQueue;
-            if (dispatcher is null) { _ = LoadAsync(); return; }
-            dispatcher.TryEnqueue(() => _ = LoadAsync());
-        };
+        proxmoxSync.SourceSynced += (_, _) => RefreshTreeFromBackground();
+
+        // Same for auto-discovery: a finished scan may have inserted
+        // new connections under "Discovered". Failed scans (Error != null)
+        // also fire ScanCompleted but Inserted will be 0; LoadAsync is
+        // a cheap no-op in that case.
+        discovery.ScanCompleted += (_, _) => RefreshTreeFromBackground();
+    }
+
+    private void RefreshTreeFromBackground()
+    {
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
+                       ?? App.MainWin?.DispatcherQueue;
+        if (dispatcher is null) { _ = LoadAsync(); return; }
+        dispatcher.TryEnqueue(() => _ = LoadAsync());
     }
 
     private void OnPingUpdated(object? sender, NexusRDM.Services.PingUpdate u)
@@ -172,6 +181,9 @@ public sealed partial class ConnectionsViewModel : ObservableObject
     {
         var node = new ConnectionTreeNode(g);
         if (proxmoxRoots.TryGetValue(g.Id, out var srcId)) node.ProxmoxSourceId = srcId;
+        if (string.Equals(g.Name, NexusRDM.Services.NetworkDiscoveryService.DiscoveredGroupName,
+                          StringComparison.Ordinal))
+            node.IsDiscoveryRoot = true;
         foreach (var p in all.Where(p => p.GroupId == g.Id).OrderBy(p => p.DisplayName))
             node.Children.Add(new ConnectionTreeNode(p));
         foreach (var child in g.Children.OrderBy(x => x.SortOrder))
@@ -339,6 +351,7 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PingIconColor))]
     [NotifyPropertyChangedFor(nameof(PingIconVisibility))]
+    [NotifyPropertyChangedFor(nameof(LatencyText))]
     private NexusRDM.Services.PingState _pingState = NexusRDM.Services.PingState.Unknown;
 
     [ObservableProperty]
@@ -355,6 +368,7 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     /// status icon entirely when ping is off.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PingIconVisibility))]
+    [NotifyPropertyChangedFor(nameof(LatencyVisibility))]
     private bool _pingEnabled;
 
     public Color PingIconColor => PingState switch
@@ -368,12 +382,21 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     public Visibility PingIconVisibility =>
         Profile is not null && PingEnabled ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>What goes in the latency cell. <c>"?"</c> covers the
+    /// "ping is enabled but we haven't got a measurement yet" case
+    /// (Unknown / Pinging / Failed) so the column doesn't visibly
+    /// flicker between numbers and blanks as states change.</summary>
     public string LatencyText =>
         LatencyMs is { } ms && PingState == NexusRDM.Services.PingState.Ok
-            ? $"{ms} ms" : string.Empty;
+            ? $"{ms} ms"
+            : "?";
 
+    /// <summary>Show the latency cell whenever the user opted into the
+    /// column AND ping is actually running for this row. We hide it
+    /// for groups (Profile == null) and when ping is globally off so
+    /// the "?" doesn't appear next to rows that aren't being polled.</summary>
     public Visibility LatencyVisibility =>
-        ShowLatency && !string.IsNullOrEmpty(LatencyText)
+        ShowLatency && Profile is not null && PingEnabled
             ? Visibility.Visible : Visibility.Collapsed;
 
     public ConnectionTreeNode(ConnectionProfile p)
@@ -383,14 +406,39 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
         BadgeVisibility = Visibility.Visible;
         IsManaged       = p.IsManaged;
+
+        // Seed ping state from PingService's last-known cache so the
+        // latency column doesn't reset to "?" every time the tree
+        // reloads (sync, scan completion, settings change). The cache
+        // outlives tree-node lifetimes; new nodes pick up where old
+        // nodes left off until the next ping cycle refreshes them.
+        try
+        {
+            var ping = App.Services?.GetService(typeof(NexusRDM.Services.PingService))
+                       as NexusRDM.Services.PingService;
+            if (ping is not null)
+            {
+                var (state, ms) = ping.GetLast(p.Id);
+                _pingState = state;
+                _latencyMs = ms;
+            }
+        }
+        catch { /* App.Services unavailable at construction (tests) — defaults are fine */ }
     }
 
     public ConnectionTreeNode(Group g)
     {
+        GroupId         = g.Id;
         DisplayName     = g.Name;
         BadgeText       = string.Empty;
         BadgeVisibility = Visibility.Collapsed;
     }
+
+    /// <summary>Underlying Group.Id when this node represents a group;
+    /// null for connection-profile nodes. Surfaced so the right-click
+    /// "Delete group" menu can call IConnectionService.DeleteGroupAsync
+    /// without re-querying the DB.</summary>
+    public Guid? GroupId { get; }
 
     /// <summary>True when the underlying profile was imported from a
     /// Proxmox sync. Surfaces a small "P" pill in the tree so the user
@@ -406,4 +454,16 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     public Guid? ProxmoxSourceId { get; set; }
 
     public bool IsProxmoxSourceRoot => ProxmoxSourceId.HasValue;
+
+    /// <summary>Set on the auto-created <c>Discovered</c> group so the
+    /// right-click menu can hide its delete entry. The group is
+    /// owned by <see cref="NexusRDM.Services.NetworkDiscoveryService"/>
+    /// — disabling scheduled scans removes it.</summary>
+    public bool IsDiscoveryRoot { get; set; }
+
+    /// <summary>True when this group is owned by an external system
+    /// (Proxmox sync or auto-discovery) and should not be deletable
+    /// from the tree's right-click menu. Centralised so new auto-
+    /// managed group types can hook in without touching the menu.</summary>
+    public bool IsExternallyManaged => IsProxmoxSourceRoot || IsDiscoveryRoot;
 }

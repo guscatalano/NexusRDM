@@ -71,11 +71,16 @@ jobs:
         # Use vstest against the msbuild output — `dotnet test` on this
         # project pulls a .NET SDK that lacks the WindowsAppSDK build
         # targets and fails before reaching test discovery.
+        #
+        # `dotnet vstest` instead of `vstest.console.exe`: the bare exe
+        # isn't on PATH on windows-latest runners (the VS install is
+        # there but its bin dir isn't surfaced). The dotnet dispatcher
+        # ships with the SDK we already set up and runs the same engine.
         shell: pwsh
         run: |
           $dll = Get-ChildItem -Path tests\NexusRDM.Tests.ViewModels\bin\x64\Debug -Filter NexusRDM.Tests.ViewModels.dll -Recurse | Select-Object -First 1
           if (-not $dll) { throw "ViewModel test assembly not found." }
-          vstest.console.exe $dll.FullName /Platform:x64 /Logger:"trx;LogFileName=vm.trx" /ResultsDirectory:artifacts\test-results
+          dotnet vstest $dll.FullName /Platform:x64 /Logger:"trx;LogFileName=vm.trx" /ResultsDirectory:artifacts\test-results
 
       - name: Upload test results
         if: always()
