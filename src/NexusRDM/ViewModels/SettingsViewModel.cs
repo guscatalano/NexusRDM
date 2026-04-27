@@ -2,18 +2,22 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
 using NexusRDM.Core.Models;
+using NexusRDM.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace NexusRDM.ViewModels;
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
-    // Index order MUST match the SettingsPage ComboBox: 0=Dark, 1=Light, 2=System.
-    [ObservableProperty] private int    _themeIndex      = 0;
-    partial void OnThemeIndexChanged(int value) => ApplyTheme(value);
+    /// <summary>Catalog of palettes — bound to the ComboBox in SettingsPage.</summary>
+    public IReadOnlyList<NxTheme> Themes { get; } = ThemeService.All;
+
+    [ObservableProperty] private NxTheme _selectedTheme = ThemeService.Default;
+    partial void OnSelectedThemeChanged(NxTheme value) => ThemeService.Apply(value);
     [ObservableProperty] private string _defaultSshUser  = string.Empty;
     [ObservableProperty] private int    _defaultSshPort  = 22;
     [ObservableProperty] private int    _defaultRdpPort  = 3389;
@@ -54,7 +58,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void Load()
     {
         var s = SettingsStore.Read();
-        if (s.TryGetValue("ThemeIndex",  out var t))  ThemeIndex     = Convert.ToInt32(t);
+        if (s.TryGetValue("ThemeId",     out var ti)) SelectedTheme = ThemeService.ById(Convert.ToString(ti));
         if (s.TryGetValue("SshUser",     out var u))  DefaultSshUser = Convert.ToString(u) ?? string.Empty;
         if (s.TryGetValue("SshPort",     out var sp)) DefaultSshPort = Convert.ToInt32(sp);
         if (s.TryGetValue("RdpPort",     out var rp)) DefaultRdpPort = Convert.ToInt32(rp);
@@ -69,7 +73,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         SettingsStore.Write(new Dictionary<string, object>
         {
-            ["ThemeIndex"]  = ThemeIndex,
+            ["ThemeId"]     = SelectedTheme.Id,
             ["SshUser"]     = DefaultSshUser,
             ["SshPort"]     = DefaultSshPort,
             ["RdpPort"]     = DefaultRdpPort,
@@ -79,46 +83,18 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["ConfirmCloseActive"] = ConfirmCloseActive,
         });
 
-        ApplyTheme(ThemeIndex);
+        ThemeService.Apply(SelectedTheme);
     }
 
-    /// <summary>Pushes the theme to every open WinUI window. Called both
-    /// from Save (so the persisted value takes effect after restart) and
-    /// from <c>OnThemeIndexChanged</c> for instant feedback. WinUI 3
-    /// doesn't propagate <c>ElementTheme</c> across windows, so we have
-    /// to walk every secondary window too — without this the RDP-events
-    /// pop-up would stay on the previous theme until reopened.</summary>
-    private static void ApplyTheme(int idx)
-    {
-        // Index → ElementTheme: 0=Dark, 1=Light, 2=System.
-        var theme = idx switch
-        {
-            1 => ElementTheme.Light,
-            2 => ElementTheme.Default,
-            _ => ElementTheme.Dark,
-        };
-
-        void Apply(Window? w)
-        {
-            if (w?.Content is FrameworkElement fe) fe.RequestedTheme = theme;
-        }
-
-        // Guarded — Load() runs before MainWin is assigned during DI build.
-        if (App.MainWin is not null) Apply(App.MainWin);
-        foreach (var w in App.SecondaryWindows.ToArray()) Apply(w);
-    }
-
-    /// <summary>Reads the persisted theme index from disk and applies it
-    /// to the main window. Called from App startup right after MainWin
-    /// is created so the chosen theme is in effect from the first frame
-    /// instead of only after the user visits the Settings page.</summary>
+    /// <summary>Reads the persisted theme id from disk and applies it.
+    /// Called from App startup right after MainWin is created so the
+    /// chosen palette is in effect from the first frame instead of only
+    /// after the user visits the Settings page.</summary>
     public static void ApplyPersistedTheme()
     {
         var s = SettingsStore.Read();
-        if (s.TryGetValue("ThemeIndex", out var t))
-        {
-            try { ApplyTheme(Convert.ToInt32(t)); } catch { /* corrupt — fall through */ }
-        }
+        s.TryGetValue("ThemeId", out var id);
+        ThemeService.Apply(ThemeService.ById(Convert.ToString(id)));
     }
 }
 
