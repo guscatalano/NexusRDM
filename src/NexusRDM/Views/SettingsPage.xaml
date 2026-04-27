@@ -48,6 +48,28 @@
                            Foreground="{StaticResource NxTx3}"
                            Margin="0,0,0,10" />
 
+                <!-- Font size — applied as a uniform scale on the main
+                     window content; small/medium/large maps to 0.85×/1.0×/1.15×. -->
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Font size" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Applies app-wide via a uniform UI scale." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.FontSizeIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="120">
+                            <ComboBoxItem Content="Small" />
+                            <ComboBoxItem Content="Medium" />
+                            <ComboBoxItem Content="Large" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
                 <!-- Theme row -->
                 <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
                     <Grid ColumnDefinitions="*,Auto">
@@ -167,6 +189,57 @@
                     </Grid>
                 </Border>
 
+                <TextBlock Text="RDP BACKEND PATHS"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <!-- mstsc.exe override -->
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="mstsc.exe path" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                        <TextBlock FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap"
+                                   Text="Override the system Remote Desktop client. Leave empty to use the mstsc.exe on PATH." />
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                            <TextBox Grid.Column="0"
+                                     Text="{x:Bind ViewModel.MstscExePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     PlaceholderText="(system default)"
+                                     FontSize="12" />
+                            <Button Grid.Column="1" Content="Browse…" Click="BrowseMstscExe_Click" FontSize="11" />
+                            <Button Grid.Column="2" Content="Validate"
+                                    Command="{x:Bind ViewModel.ValidateMstscExeCommand}"
+                                    FontSize="11" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.MstscExeStatus, Mode=OneWay}"
+                                   FontSize="11" Foreground="{StaticResource NxTx2}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- mstscax.dll override -->
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="mstscax.dll path" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                        <TextBlock FontSize="11"
+                                   Foreground="{StaticResource NxTx3}"
+                                   TextWrapping="Wrap"
+                                   Text="Side-loads a custom Remote Desktop ActiveX via a SxS activation context — the override DLL is used for new sessions instead of the system mstscax. Empty falls back to the system registration. Validate runs DllGetClassObject + CreateInstance to confirm the DLL really supplies MsRdpClient9." />
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                            <TextBox Grid.Column="0"
+                                     Text="{x:Bind ViewModel.MstscAxPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     PlaceholderText="(system default)"
+                                     FontSize="12" />
+                            <Button Grid.Column="1" Content="Browse…" Click="BrowseMstscAx_Click" FontSize="11" />
+                            <Button Grid.Column="2" Content="Validate"
+                                    Command="{x:Bind ViewModel.ValidateMstscAxCommand}"
+                                    FontSize="11" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.MstscAxStatus, Mode=OneWay}"
+                                   FontSize="11" Foreground="{StaticResource NxTx2}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Text="SAFETY"
                            FontSize="10" CharacterSpacing="60"
                            Foreground="{StaticResource NxTx3}"
@@ -186,6 +259,43 @@
                                       IsOn="{x:Bind ViewModel.DebugMode, Mode=TwoWay}"
                                       OnContent=""
                                       OffContent="" />
+                    </Grid>
+                </Border>
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Click behavior" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Single- or double-click in the connection list to open." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.ClickBehaviorIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="160">
+                            <ComboBoxItem Content="Single-click to connect" />
+                            <ComboBoxItem Content="Double-click to connect" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Audit log retention (days)" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock Text="Older entries are deleted at app startup. Default 7." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <NumberBox Grid.Column="1"
+                                   Value="{x:Bind ViewModel.AuditRetentionDays, Mode=TwoWay}"
+                                   Minimum="1" Maximum="365"
+                                   SpinButtonPlacementMode="Compact"
+                                   Background="{StaticResource NxBg2}"
+                                   BorderBrush="{StaticResource NxBrd}"
+                                   Foreground="{StaticResource NxTx1}"
+                                   FontSize="12"
+                                   Width="90" />
                     </Grid>
                 </Border>
 

@@ -47,7 +47,7 @@
         </Border>
 
         <Grid Grid.Row="1"
-              ColumnDefinitions="130,90,*,140"
+              ColumnDefinitions="130,90,200,*"
               Padding="16,5"
               BorderBrush="{StaticResource NxBrd}"
               BorderThickness="0,0,0,1">
@@ -71,7 +71,7 @@
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="models:AuditEntry">
-                    <Grid ColumnDefinitions="130,90,*,140">
+                    <Grid ColumnDefinitions="130,90,200,*">
                         <TextBlock Grid.Column="0" Text="{x:Bind OccurredAt}"
                                    FontSize="12" Foreground="{StaticResource NxTx2}"
                                    VerticalAlignment="Center" />
@@ -85,7 +85,8 @@
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                         <TextBlock Grid.Column="3" Text="{x:Bind Detail}"
                                    FontSize="11" Foreground="{StaticResource NxTx2}"
-                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>

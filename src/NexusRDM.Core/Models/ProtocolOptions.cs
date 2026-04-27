@@ -8,6 +8,13 @@ namespace NexusRDM.Core.Models;
 public class RdpOptions
 {
     // ── Display ──────────────────────────────────────────────────────────
+    /// <summary>Per-connection resolution preference. When the value
+    /// resolves to a fixed size (1920×1080 etc.), <see cref="Width"/>
+    /// and <see cref="Height"/> are derived from it; otherwise the
+    /// session's runtime resolver fills them in (match-monitor /
+    /// match-panel). Defaults to the same option as the global
+    /// "Default resolution" setting.</summary>
+    public RdpDefaultResolution PreferredResolution { get; set; } = RdpDefaultResolution.MatchMonitor;
     public int    Width            { get; set; } = 1920;
     public int    Height           { get; set; } = 1080;
     public bool   FullScreen       { get; set; } = false;

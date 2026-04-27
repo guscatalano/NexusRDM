@@ -70,30 +70,67 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool   _smartSizing = true;
     partial void OnSmartSizingChanged(bool value) => _session.SetSmartSizing(value);
 
-    /// <summary>Common RDP session resolutions. Selecting one calls
-    /// IMsRdpClient9.UpdateSessionDisplaySettings on the live session — the
-    /// remote server renegotiates without dropping the connection.</summary>
-    public IReadOnlyList<string> Resolutions { get; } = new[]
+    /// <summary>Resolution presets — same set as the global setting,
+    /// so picking a value here is consistent with the default-resolution
+    /// dropdown on the Settings page. Match-monitor / match-panel are
+    /// resolved by the View (which has the hwnd + panel size); fixed
+    /// sizes are forwarded directly to the OCX via SetResolution.</summary>
+    public IReadOnlyList<RdpDefaultResolution> Resolutions { get; } = new[]
     {
-        "1024 × 768",
-        "1280 × 720",
-        "1366 × 768",
-        "1600 × 900",
-        "1920 × 1080",
-        "2560 × 1440",
+        RdpDefaultResolution.MatchMonitor,
+        RdpDefaultResolution.MatchPanel,
+        RdpDefaultResolution.Res1024x768,
+        RdpDefaultResolution.Res1280x720,
+        RdpDefaultResolution.Res1366x768,
+        RdpDefaultResolution.Res1600x900,
+        RdpDefaultResolution.Res1920x1080,
+        RdpDefaultResolution.Res2560x1440,
+        RdpDefaultResolution.Res3840x2160,
     };
 
-    [ObservableProperty] private string? _selectedResolution;
-    partial void OnSelectedResolutionChanged(string? value)
+    /// <summary>Human label for a <see cref="RdpDefaultResolution"/>;
+    /// kept here so the toolbar ComboBox can use a function-style
+    /// x:Bind without dragging in a converter.</summary>
+    public static string FormatResolution(RdpDefaultResolution r) => r switch
     {
-        if (string.IsNullOrWhiteSpace(value)) return;
-        // Format: "<w> × <h>" (Unicode multiplication sign U+00D7).
-        var parts = value.Split('×', 'x', 'X');
-        if (parts.Length != 2) return;
-        if (!int.TryParse(parts[0].Trim(), out var w)) return;
-        if (!int.TryParse(parts[1].Trim(), out var h)) return;
-        _session.SetResolution(w, h);
+        RdpDefaultResolution.MatchMonitor  => "Match monitor",
+        RdpDefaultResolution.MatchPanel    => "Match panel size",
+        RdpDefaultResolution.Res1024x768   => "1024 × 768",
+        RdpDefaultResolution.Res1280x720   => "1280 × 720",
+        RdpDefaultResolution.Res1366x768   => "1366 × 768",
+        RdpDefaultResolution.Res1600x900   => "1600 × 900",
+        RdpDefaultResolution.Res1920x1080  => "1920 × 1080",
+        RdpDefaultResolution.Res2560x1440  => "2560 × 1440",
+        RdpDefaultResolution.Res3840x2160  => "3840 × 2160",
+        _ => r.ToString(),
+    };
+
+    /// <summary>Raised when the user picks a resolution preset that
+    /// needs to be resolved against the live host (match-monitor /
+    /// match-panel). The view subscribes, computes raw pixel dims, and
+    /// calls back into <see cref="SetResolution(int, int)"/>.</summary>
+    public event EventHandler<RdpDefaultResolution>? ResolutionPresetRequested;
+
+    [ObservableProperty] private RdpDefaultResolution? _selectedResolution;
+    partial void OnSelectedResolutionChanged(RdpDefaultResolution? value)
+    {
+        if (value is null) return;
+        var (w, h) = FixedResolutionPixels(value.Value);
+        if (w > 0 && h > 0) _session.SetResolution(w, h);
+        else                ResolutionPresetRequested?.Invoke(this, value.Value);
     }
+
+    private static (int W, int H) FixedResolutionPixels(RdpDefaultResolution r) => r switch
+    {
+        RdpDefaultResolution.Res1024x768  => (1024,  768),
+        RdpDefaultResolution.Res1280x720  => (1280,  720),
+        RdpDefaultResolution.Res1366x768  => (1366,  768),
+        RdpDefaultResolution.Res1600x900  => (1600,  900),
+        RdpDefaultResolution.Res1920x1080 => (1920, 1080),
+        RdpDefaultResolution.Res2560x1440 => (2560, 1440),
+        RdpDefaultResolution.Res3840x2160 => (3840, 2160),
+        _                                 => (0, 0),
+    };
 
     public RdpSessionViewModel(
         ConnectionProfile profile,
@@ -175,6 +212,11 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         _lastBounds = (x, y, width, height);
         _session.Resize(x, y, width, height);
     }
+
+    /// <summary>Public passthrough used by the View when it needs to
+    /// resolve a preset (match-monitor / match-panel) into raw pixel
+    /// dims and push them onto the live OCX session.</summary>
+    public void SetResolution(int width, int height) => _session.SetResolution(width, height);
 
     public void BringToFront()           => _session.BringToFront();
     public void SetVisible(bool visible) => _session.SetVisible(visible);

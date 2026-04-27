@@ -17,6 +17,8 @@ public sealed class FakeRdpSession : IRdpSession
     public event EventHandler<string>?      Disconnected;
     public event EventHandler<string>?      FatalError;
     public event EventHandler<RdpEventEntry>? RdpEvent;
+    public event EventHandler?                ReAttached;
+    public void RaiseReAttached() => ReAttached?.Invoke(this, EventArgs.Empty);
 
     // Recorded calls — tuples kept tiny so test assertions stay readable.
     public List<(nint hwnd, int x, int y, int w, int h)> Connects { get; } = new();

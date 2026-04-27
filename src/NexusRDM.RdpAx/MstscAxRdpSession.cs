@@ -61,6 +61,7 @@ public sealed class MstscAxRdpSession : IRdpSession
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? FatalError;
     public event EventHandler<RdpEventEntry>? RdpEvent;
+    public event EventHandler?                ReAttached;
 
     private void Log(string kind, string detail = "")
     {
@@ -142,6 +143,12 @@ public sealed class MstscAxRdpSession : IRdpSession
             // 596-px panel ending up as a 348-px form.
             try { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); }
             catch { /* Win10 1607+ only; older falls through */ }
+
+            // Activate the SxS override (if any) on this STA thread so
+            // CoCreateInstance for MsRdpClient9 hits the user's DLL.
+            // Activation contexts are per-thread, so the override has to
+            // be pushed here rather than at app startup.
+            using var _override = MstscAxOverride.Push();
 
             using var form = new Form
             {
@@ -368,6 +375,10 @@ public sealed class MstscAxRdpSession : IRdpSession
                     SetWindowPos(form.Handle, _ownerHwnd,
                                  _bounds.X, _bounds.Y, _bounds.Width, _bounds.Height,
                                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    // Tell the host to re-apply tab visibility — if the
+                    // user popped out, switched tabs, then closed the
+                    // pop-out, the form should hide again.
+                    ReAttached?.Invoke(this, EventArgs.Empty);
                 }
                 catch { /* tearing down */ }
             };
