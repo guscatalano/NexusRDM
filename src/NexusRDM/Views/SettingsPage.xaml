@@ -790,6 +790,18 @@
                                FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
                 </StackPanel>
 
+                <!-- The Hyperlink inline opens NavigateUri in the
+                     default browser automatically — no Click handler
+                     needed. Keeps the rest of the line as flat text
+                     so only the name is clickable. -->
+                <TextBlock FontSize="11"
+                           Foreground="{StaticResource NxTx2}"
+                           Margin="0,6,0,0">
+                    <Run Text="Created by " />
+                    <Hyperlink NavigateUri="https://github.com/guscatalano">Gus Catalano</Hyperlink>
+                    <Run Text=", with help from Claude." />
+                </TextBlock>
+
             </StackPanel>
         </ScrollViewer>
 
