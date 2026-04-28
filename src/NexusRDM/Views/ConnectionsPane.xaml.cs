@@ -89,113 +89,107 @@ public sealed partial class ConnectionsPane : UserControl
             ShowContextMenu(node, e.GetPosition(ConnectionTree));
     }
 
-    /// <summary>Persist drag-reorder results. WinUI's TreeView mutates
-    /// the in-memory ObservableCollection<ConnectionTreeNode> when the
-    /// user drops, but the underlying ConnectionProfile.GroupId in
-    /// the DB stays stale until we write it. This handler walks the
-    /// dropped items, computes each one's new parent group from
-    /// <c>NewParentItem</c>, and pushes the change through
-    /// IConnectionService — the same path the editor's Save button
-    /// uses, so the round-trip behavior is identical.</summary>
+    /// <summary>Persist drag-reorder results. WinUI's TreeView
+    /// mutates the in-memory tree on drop, but never writes back to
+    /// our store — so without this handler, every drag was a visual
+    /// no-op that vanished on next reload.
+    ///
+    /// The previous version gated on <c>args.DropResult == Move</c>
+    /// and read <c>args.NewParentItem</c>. Both turned out to be
+    /// unreliable for TreeView's in-tree reorder path: <c>DropResult</c>
+    /// can be <c>None</c> for sibling reorders, and <c>NewParentItem</c>
+    /// is null when dropping between items at the root. So we now
+    /// reconcile the post-drop tree against the DB instead — walk
+    /// every node, compare its actual tree-parent to its persisted
+    /// GroupId / ParentId, write any differences. Reliable in every
+    /// drop scenario at the cost of one tree-walk per drag.</summary>
     private async void ConnectionTree_DragItemsCompleted(
         TreeView sender, TreeViewDragItemsCompletedEventArgs args)
     {
-        if (args.DropResult != Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move)
-            return;
-
-        // Resolve the target group id once. If the drop target is a
-        // connection, walk up to the connection's actual parent group
-        // — TreeView lets you drop on leaves, but our model can't
-        // nest connections inside connections.
-        var newParent = args.NewParentItem as ConnectionTreeNode;
-        Guid? newGroupId;
-        if (newParent is null)                 newGroupId = null;
-        else if (newParent.Profile is null)    newGroupId = newParent.GroupId; // group node
-        else                                   newGroupId = ParentGroupIdOf(newParent); // connection → its parent group
-
         var svc = App.Services.GetRequiredService<NexusRDM.Core.Interfaces.IConnectionService>();
         var changed = false;
 
-        foreach (var raw in args.Items)
+        // Connections: parent = the group node containing this row,
+        // or null if at the root.
+        foreach (var (node, parent) in EnumerateWithParent(ViewModel.RootItems, parentGroupId: null))
         {
-            if (raw is not ConnectionTreeNode item) continue;
-
+            if (node.Profile is not { } profile) continue;
+            if (profile.GroupId == parent) continue;
             try
             {
-                if (item.Profile is { } profile)
-                {
-                    if (profile.GroupId == newGroupId) continue;
-                    profile.GroupId = newGroupId;
-                    await svc.UpdateAsync(profile);
-                    changed = true;
-                }
-                else if (item.GroupId is { } groupId)
-                {
-                    // Group move. Block cycles: dropping a group
-                    // under itself or any descendant would orphan the
-                    // tree. Also block dropping onto a connection
-                    // (we'd be attaching a group to a leaf).
-                    if (newParent?.Profile is not null) continue;
-                    if (newGroupId == groupId) continue;
-                    if (newGroupId is { } target && IsDescendantOf(target, groupId)) continue;
-
-                    var allGroups = await svc.GetGroupsAsync();
-                    var group = allGroups.FirstOrDefault(g => g.Id == groupId);
-                    if (group is null) continue;
-                    if (group.ParentId == newGroupId) continue;
-                    group.ParentId = newGroupId;
-                    await svc.UpdateGroupAsync(group);
-                    changed = true;
-                }
+                profile.GroupId = parent;
+                await svc.UpdateAsync(profile);
+                changed = true;
             }
             catch (Exception ex)
             {
-                NexusRDM.Services.CrashLogger.Log(ex, "tree drag-drop persist");
+                NexusRDM.Services.CrashLogger.Log(ex, "tree drag persist (connection)");
             }
         }
 
-        // Reload from DB so the visible tree matches the persisted
-        // state — especially after errors, where TreeView's in-memory
-        // move may have happened but the DB write didn't.
+        // Groups: load all groups once so we can look up the current
+        // ParentId without a per-group round-trip. Then compare each
+        // tree group node's actual parent to its persisted ParentId.
+        try
+        {
+            var allGroups = (await svc.GetGroupsAsync()).ToDictionary(g => g.Id);
+            foreach (var (node, parent) in EnumerateWithParent(ViewModel.RootItems, parentGroupId: null))
+            {
+                if (node.Profile is not null) continue;
+                if (node.GroupId is not { } gid) continue;
+                if (!allGroups.TryGetValue(gid, out var group)) continue;
+                if (group.ParentId == parent) continue;
+
+                // Cycle guard: refuse a move that would put the group
+                // under itself or any of its descendants.
+                if (parent is { } target && (target == gid || IsDescendantOf(target, gid)))
+                    continue;
+
+                group.ParentId = parent;
+                await svc.UpdateGroupAsync(group);
+                changed = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            NexusRDM.Services.CrashLogger.Log(ex, "tree drag persist (group)");
+        }
+
         if (changed) await ViewModel.LoadAsync();
     }
 
-    /// <summary>Walks RootItems looking for the group node whose
-    /// <c>Children</c> contains <paramref name="needle"/>; returns
-    /// that group's Id (or null if needle is at the root).</summary>
-    private Guid? ParentGroupIdOf(ConnectionTreeNode needle)
+    /// <summary>Yields every node in the tree paired with its
+    /// effective parent GroupId. The recursion descends into a
+    /// group's children using that group's id as the parent;
+    /// connection nodes have empty children so we don't have to
+    /// special-case them.</summary>
+    internal static IEnumerable<(ConnectionTreeNode Node, Guid? ParentGroupId)>
+        EnumerateWithParent(IEnumerable<ConnectionTreeNode> items, Guid? parentGroupId)
     {
-        return Find(ViewModel.RootItems, needle)?.GroupId;
-
-        static ConnectionTreeNode? Find(IEnumerable<ConnectionTreeNode> within, ConnectionTreeNode target)
+        foreach (var n in items)
         {
-            foreach (var n in within)
-            {
-                if (n.Children.Contains(target)) return n;
-                var deeper = Find(n.Children, target);
-                if (deeper is not null) return deeper;
-            }
-            return null;
+            yield return (n, parentGroupId);
+            // For group nodes, descend with this group's id as the
+            // parent. For connection nodes, Children should be empty;
+            // if anything ever leaks through, we keep the same parent
+            // (a connection can't actually be a parent).
+            var nextParent = n.Profile is null && n.GroupId is { } id ? id : parentGroupId;
+            foreach (var deeper in EnumerateWithParent(n.Children, nextParent))
+                yield return deeper;
         }
     }
 
-    /// <summary>True if <paramref name="candidateChild"/> is the same
-    /// as, or a descendant of, <paramref name="ancestor"/>. Used to
-    /// reject cyclic group moves before they hit the DB.</summary>
-    private bool IsDescendantOf(Guid candidateChild, Guid ancestor)
+    /// <summary>True if <paramref name="candidateChild"/> is anywhere
+    /// inside the subtree rooted at <paramref name="ancestor"/>.
+    /// Used to reject cyclic group moves before they hit the DB.</summary>
+    internal static bool IsDescendantOf(Guid candidateChild, Guid ancestor,
+        IEnumerable<ConnectionTreeNode>? roots = null)
     {
-        var queue = new Queue<ConnectionTreeNode>();
-        foreach (var n in ViewModel.RootItems) queue.Enqueue(n);
-        while (queue.Count > 0)
+        roots ??= Array.Empty<ConnectionTreeNode>();
+        foreach (var n in roots)
         {
-            var node = queue.Dequeue();
-            if (node.GroupId == ancestor)
-            {
-                // Found the ancestor — check whether candidateChild
-                // is anywhere in its subtree.
-                return ContainsGroup(node, candidateChild);
-            }
-            foreach (var c in node.Children) queue.Enqueue(c);
+            if (n.GroupId == ancestor) return ContainsGroup(n, candidateChild);
+            if (IsDescendantOf(candidateChild, ancestor, n.Children)) return true;
         }
         return false;
 
@@ -207,6 +201,9 @@ public sealed partial class ConnectionsPane : UserControl
             return false;
         }
     }
+
+    private bool IsDescendantOf(Guid candidateChild, Guid ancestor)
+        => IsDescendantOf(candidateChild, ancestor, ViewModel.RootItems);
 
     private void ShowContextMenu(ConnectionTreeNode node, Windows.Foundation.Point pos)
     {
@@ -322,8 +319,8 @@ public sealed partial class ConnectionsPane : UserControl
             }
             else if (node.IsHyperVRoot)
             {
-                // Hyper-V root group: Sync-now triggers the local WMI
-                // enumeration. Mirrors the Proxmox root behaviour.
+                // Hyper-V root group: manual Sync-now and start/stop
+                // for the long-lived background-sync agent.
                 menu.Items.Add(new MenuFlyoutSeparator());
                 var sync = new MenuFlyoutItem
                 {
@@ -332,6 +329,20 @@ public sealed partial class ConnectionsPane : UserControl
                 };
                 sync.Click += async (_, _) => await SyncHyperVRootAsync();
                 menu.Items.Add(sync);
+
+                var hv = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
+                if (hv.IsBackgroundLoopRunning)
+                {
+                    var stop = new MenuFlyoutItem { Text = "Stop background sync" };
+                    stop.Click += (_, _) => hv.StopBackgroundLoop();
+                    menu.Items.Add(stop);
+                }
+                else
+                {
+                    var start = new MenuFlyoutItem { Text = "Start background sync (UAC)" };
+                    start.Click += async (_, _) => await StartHyperVBackgroundLoopAsync();
+                    menu.Items.Add(start);
+                }
             }
             else if (!node.IsExternallyManaged)
             {
@@ -569,6 +580,36 @@ public sealed partial class ConnectionsPane : UserControl
             {
                 Title           = "Could not open vmconnect",
                 Content         = ex.Message + "\n\nvmconnect.exe ships with the Hyper-V tools — install 'Hyper-V Management Tools' if it's missing.",
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
+    }
+
+    private async Task StartHyperVBackgroundLoopAsync()
+    {
+        var hv = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
+        try
+        {
+            await hv.StartBackgroundLoopAsync();
+            await NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = "Background sync started",
+                Content         = "The elevated agent is now running. Hyper-V state will refresh on the configured interval until the app closes.",
+                CloseButtonText = "OK",
+                XamlRoot        = XamlRoot,
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled UAC — no toast needed.
+        }
+        catch (Exception ex)
+        {
+            await NexusRDM.Services.DialogHost.ShowAsync(new ContentDialog
+            {
+                Title           = "Could not start background sync",
+                Content         = ex.Message,
                 CloseButtonText = "OK",
                 XamlRoot        = XamlRoot,
             });

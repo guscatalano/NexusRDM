@@ -12,9 +12,15 @@ using System.Xml.Linq;
 // CLI:
 //   NexusRDM.HyperVAgent list  <output.json>
 //   NexusRDM.HyperVAgent power <vmid> <start|shutdown|stop|reboot|save> <output.json>
+//   NexusRDM.HyperVAgent loop  <interval-seconds> <output.json> <sentinel-pid>
 //
 // Exit codes: 0 = ok, 1 = handled error (output.json contains an
 // {error} payload), 2 = bad args (no JSON written).
+//
+// `loop` is the long-lived background-sync mode: re-list every
+// <interval-seconds>, rewriting the same output file each time.
+// <sentinel-pid> is the parent NexusRDM process id; if that process
+// disappears we exit cleanly so we don't strand an elevated orphan.
 
 namespace NexusRDM.HyperVAgent;
 
@@ -54,6 +60,14 @@ internal static class Program
                     File.WriteAllText(output, JsonSerializer.Serialize(new { returnValue = rv }, JsonOpts));
                     return 0;
                 }
+                case "loop":
+                {
+                    if (args.Length < 4) return 2;
+                    if (!int.TryParse(args[1], out var seconds) || seconds < 5) return 2;
+                    var output = args[2];
+                    int.TryParse(args[3], out var sentinelPid);
+                    return RunLoop(seconds, output, sentinelPid);
+                }
                 default:
                     return 2;
             }
@@ -89,6 +103,53 @@ internal static class Program
         var scope = new ManagementScope(Scope, options);
         scope.Connect();
         return scope;
+    }
+
+    /// <summary>Long-lived list+sleep loop. Writes JSON to
+    /// <paramref name="outputPath"/> each pass; transient WMI errors
+    /// don't bring the loop down — they're written into the file as
+    /// an {error} payload so the parent can surface them. Exits when
+    /// the sentinel parent process dies, so we never leak an
+    /// elevated orphan.</summary>
+    private static int RunLoop(int seconds, string outputPath, int sentinelPid)
+    {
+        // Write a placeholder immediately so the parent can prove the
+        // file was created (vs. UAC denied → no file ever exists).
+        try { File.WriteAllText(outputPath, "[]"); } catch { }
+
+        while (true)
+        {
+            try
+            {
+                var vms = ListVms();
+                var json = JsonSerializer.Serialize(vms, JsonOpts);
+                // Atomic-ish write: temp + replace so the parent
+                // never reads a half-written buffer.
+                var tmp = outputPath + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, outputPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    File.WriteAllText(outputPath, JsonSerializer.Serialize(new
+                    {
+                        error = ex.Message,
+                        type  = ex.GetType().FullName,
+                    }, JsonOpts));
+                }
+                catch { /* parent will see the staleness in the file mtime */ }
+            }
+
+            if (sentinelPid > 0)
+            {
+                try { using var _ = System.Diagnostics.Process.GetProcessById(sentinelPid); }
+                catch { return 0; } // parent gone
+            }
+
+            Thread.Sleep(seconds * 1000);
+        }
     }
 
     private static List<HyperVVmDto> ListVms()

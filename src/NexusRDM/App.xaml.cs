@@ -157,6 +157,44 @@ public partial class App : Application
                 });
             };
             MainWin.Activate();
+
+            // Kick off a Proxmox sync of every enabled source on
+            // launch so the tree's power-state glyphs reflect reality
+            // from the first paint, instead of forcing the user to
+            // hit "Sync now" before anything's known. Best-effort and
+            // strictly background — failures land in CrashLogger.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var sync = Services.GetRequiredService<Services.ProxmoxSyncService>();
+                    await sync.SyncAllAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    CrashLogger.Log(ex, "startup ProxmoxSyncAll", fatal: false);
+                }
+            });
+
+            // Same for Hyper-V if the user opted into background sync.
+            // Spawns the elevated agent loop once (UAC prompts at this
+            // point); from then on it runs silently and updates state
+            // on the configured interval.
+            if (SettingsStore.ReadHyperVBackgroundSync())
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var hv = Services.GetRequiredService<Services.HyperVSyncService>();
+                        await hv.StartBackgroundLoopAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        CrashLogger.Log(ex, "startup HyperVBackgroundSync", fatal: false);
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {

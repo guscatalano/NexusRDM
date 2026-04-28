@@ -745,6 +745,10 @@
                                        TextWrapping="Wrap" />
                         </Border>
 
+                        <CheckBox Content="Run background sync (one UAC prompt at app startup)"
+                                  IsChecked="{x:Bind ViewModel.HyperVBackgroundSync, Mode=TwoWay}"
+                                  ToolTipService.ToolTip="When on, NexusRDM spawns the elevated agent in 'loop' mode at launch — UAC prompts once, then it refreshes Hyper-V state silently on the configured interval. Off → manual sync only." />
+
                         <CheckBox Content="TCP-probe ports 22 / 3389 to pick protocol on import"
                                   IsChecked="{x:Bind ViewModel.HyperVProbeProtocol, Mode=TwoWay}" />
                         <CheckBox Content="Show power state icon (running / stopped / paused) in tree"

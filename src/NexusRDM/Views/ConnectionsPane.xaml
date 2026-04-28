@@ -275,18 +275,20 @@
                                        VerticalAlignment="Center" />
                             <!-- AUTO pill on group rows that are
                                  externally managed (Proxmox sync,
-                                 auto-discovery). Pairs with italic name
-                                 to make "you don't own this folder"
-                                 readable at a glance. -->
-                            <Border Background="{StaticResource NxAccent}"
+                                 auto-discovery). Muted on purpose —
+                                 the SSH/RDP protocol badge needs to
+                                 dominate visually since it conveys
+                                 connection-level info, while AUTO is
+                                 just metadata about who owns the
+                                 folder. -->
+                            <Border Background="{StaticResource NxBg2}"
                                     CornerRadius="3"
                                     Padding="4,1"
                                     Visibility="{x:Bind AutoManagedBadgeVisibility, Mode=OneWay}"
                                     ToolTipService.ToolTip="Auto-managed — this folder is owned by a service (Proxmox sync or network discovery) and can't be deleted from the tree.">
                                 <TextBlock Text="AUTO"
                                            FontSize="9"
-                                           FontWeight="Bold"
-                                           Foreground="{StaticResource NxTx1}" />
+                                           Foreground="{StaticResource NxTx3}" />
                             </Border>
                             <Border Background="{StaticResource NxBg2}"
                                     CornerRadius="3"

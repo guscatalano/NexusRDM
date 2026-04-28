@@ -235,6 +235,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int  _hyperVSyncIntervalMinutes = 15;
     [ObservableProperty] private bool _hyperVProbeProtocol      = true;
     [ObservableProperty] private bool _hyperVShowPowerState     = true;
+    /// <summary>Spawn the elevated agent in long-lived "loop" mode
+    /// at app startup. One UAC prompt at launch; silent thereafter.</summary>
+    [ObservableProperty] private bool _hyperVBackgroundSync     = false;
+    partial void OnHyperVBackgroundSyncChanged(bool value)
+    {
+        if (!_loading) PersistAll();
+    }
     partial void OnHyperVShowPowerStateChanged(bool value)
     {
         if (!_loading) PersistAll();
@@ -382,6 +389,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("HyperVSyncIntervalMinutes", out var hi))  HyperVSyncIntervalMinutes = Math.Clamp(Convert.ToInt32(hi), 1, 1440);
         if (s.TryGetValue("HyperVProbeProtocol",       out var hp))  HyperVProbeProtocol      = Convert.ToBoolean(hp);
         if (s.TryGetValue("HyperVShowPowerState",      out var hsp)) HyperVShowPowerState     = Convert.ToBoolean(hsp);
+        if (s.TryGetValue("HyperVBackgroundSync",      out var hbs)) HyperVBackgroundSync     = Convert.ToBoolean(hbs);
     }
 
     [RelayCommand]
@@ -446,6 +454,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["HyperVSyncIntervalMinutes"] = HyperVSyncIntervalMinutes,
             ["HyperVProbeProtocol"]       = HyperVProbeProtocol,
             ["HyperVShowPowerState"]      = HyperVShowPowerState,
+            ["HyperVBackgroundSync"]      = HyperVBackgroundSync,
         });
     }
 
@@ -743,6 +752,19 @@ public static class SettingsStore
         var s = Read();
         if (!s.TryGetValue("HyperVShowPowerState", out var v)) return true;
         try { return Convert.ToBoolean(v); } catch { return true; }
+    }
+
+    /// <summary>When on, NexusRDM tries to spawn the elevated agent
+    /// in long-lived "loop" mode at startup. UAC prompts once; from
+    /// then on the agent runs in the background and refreshes Hyper-V
+    /// state every <see cref="ReadHyperVSyncIntervalMinutes"/>
+    /// minutes without further prompts. Off by default — opt-in
+    /// because of the launch-time UAC dialog.</summary>
+    public static bool ReadHyperVBackgroundSync()
+    {
+        var s = Read();
+        if (!s.TryGetValue("HyperVBackgroundSync", out var v)) return false;
+        try { return Convert.ToBoolean(v); } catch { return false; }
     }
 
     /// <summary>Same shape as <see cref="ProxmoxDisplaySettingsChanged"/>:
