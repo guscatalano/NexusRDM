@@ -27,13 +27,16 @@ public sealed partial class ConnectionsViewModel : ObservableObject
 
     private readonly NexusRDM.Services.PingService _ping;
 
+    private readonly NexusRDM.Services.DemoModeService _demo;
+
     public ConnectionsViewModel(
         IConnectionService svc,
         NexusRDM.Services.SessionManager sessions,
         NexusRDM.Services.PingService pingService,
         NexusRDM.Services.ProxmoxSyncService proxmoxSync,
         NexusRDM.Services.NetworkDiscoveryService discovery,
-        NexusRDM.Services.HyperVSyncService hyperVSync)
+        NexusRDM.Services.HyperVSyncService hyperVSync,
+        NexusRDM.Services.DemoModeService demo)
     {
         _svc      = svc;
         _sessions = sessions;
@@ -68,6 +71,10 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         // cluster / WMI roundtrip.
         SettingsStore.ProxmoxDisplaySettingsChanged += (_, _) => ApplyDisplaySettings();
         SettingsStore.HyperVDisplaySettingsChanged  += (_, _) => ApplyDisplaySettings();
+
+        // Toggling demo mode swaps the entire tree source — refresh.
+        _demo = demo;
+        _demo.IsActiveChanged += (_, _) => RefreshTreeFromBackground();
     }
 
     private void ApplyDisplaySettings()
@@ -166,16 +173,38 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var profiles = string.IsNullOrWhiteSpace(query)
-                ? await _svc.GetAllAsync()
-                : await _svc.SearchAsync(query);
-            var groups = await _svc.GetGroupsAsync();
+            IReadOnlyList<ConnectionProfile> profiles;
+            IReadOnlyList<Group>             groups;
+            Dictionary<Guid, Guid>           proxmoxRoots;
 
-            // Map each Proxmox source's RootGroupId → SourceId so we can
-            // tag the matching group node and light up the "Sync now"
-            // context-menu entry. Read fails are non-fatal (e.g. fresh
-            // install before any source is registered).
-            var proxmoxRoots = await LoadProxmoxRootMapAsync();
+            if (_demo.IsActive)
+            {
+                // Demo mode: ignore the DB entirely. Real connections
+                // are still safe on disk; the user just doesn't see
+                // them while exploring fake data.
+                var allProfiles = _demo.GetProfiles();
+                profiles = string.IsNullOrWhiteSpace(query)
+                    ? allProfiles
+                    : allProfiles.Where(p =>
+                            p.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+                         || p.Host.Contains(query, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                groups = _demo.GetGroups();
+                // Synthetic Proxmox source id so the AUTO badge fires
+                // and the "Sync now" menu shows up like real life.
+                proxmoxRoots = new Dictionary<Guid, Guid>
+                {
+                    [_demo.ProxmoxRootGroupId] = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+                };
+            }
+            else
+            {
+                profiles = string.IsNullOrWhiteSpace(query)
+                    ? await _svc.GetAllAsync()
+                    : await _svc.SearchAsync(query);
+                groups = await _svc.GetGroupsAsync();
+                proxmoxRoots = await LoadProxmoxRootMapAsync();
+            }
 
             // Build the desired tree shape, then diff-merge it into
             // RootItems. Earlier this was Clear()+Add(), which made
@@ -394,6 +423,14 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     private ConnectionProfile? _profile;
 
     public ObservableCollection<ConnectionTreeNode> Children { get; } = [];
+
+    /// <summary>Drives the TreeViewItem.IsExpanded binding. Defaults
+    /// to true so groups arrive expanded on first paint; the binding
+    /// is TwoWay so user collapses persist for the lifetime of the
+    /// tree node. Force-resetting to true on a node already at true
+    /// won't fire PropertyChanged, so callers that need to "force
+    /// expand" should toggle it briefly.</summary>
+    [ObservableProperty] private bool _isExpanded = true;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DotColor))]
@@ -651,6 +688,17 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     {
         try
         {
+            // Demo mode wins — its synthetic cache is the source of
+            // truth while active, regardless of source prefix.
+            if (App.Services?.GetService(typeof(NexusRDM.Services.DemoModeService))
+                is NexusRDM.Services.DemoModeService demo && demo.IsActive)
+            {
+                _powerState         = demo.GetPowerState(connectionId);
+                _powerStateUpdatedAt = demo.GetPowerStateUpdatedAtUtc();
+                _showPowerState     = true;
+                return;
+            }
+
             var isHv = Profile?.ExternalId is { } id
                        && id.StartsWith("hyperv:", StringComparison.Ordinal);
             if (isHv)
@@ -739,6 +787,19 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         if (Profile is null) return;
         try
         {
+            // Same demo-first ordering as SeedPowerState — without
+            // it, the diff-merge reuses existing nodes whose
+            // _powerState is still Unknown (cache was empty before
+            // demo activation), and the glyph never appears.
+            if (App.Services?.GetService(typeof(NexusRDM.Services.DemoModeService))
+                is NexusRDM.Services.DemoModeService demo && demo.IsActive)
+            {
+                PowerState         = demo.GetPowerState(Profile.Id);
+                PowerStateUpdatedAt = demo.GetPowerStateUpdatedAtUtc();
+                ShowPowerState     = true;
+                return;
+            }
+
             var isHv = Profile.ExternalId is { } id
                        && id.StartsWith("hyperv:", StringComparison.Ordinal);
             if (isHv && App.Services?.GetService(typeof(NexusRDM.Services.HyperVSyncService))

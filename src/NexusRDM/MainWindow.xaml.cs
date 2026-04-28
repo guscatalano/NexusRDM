@@ -63,6 +63,37 @@ public sealed partial class MainWindow : Window
         RebuildHotkeys();
 
         AddWelcomeTab();
+
+        // Demo mode UX: when the user starts the demo, widen the
+        // connections sidebar so the synthetic tree is visible at a
+        // glance (otherwise the user would have to manually drag the
+        // splitter to see what the tour is talking about). On exit,
+        // restore the prior width.
+        try
+        {
+            var demo = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
+            double savedWidth = SidebarColumn.Width.IsAbsolute ? SidebarColumn.Width.Value : 240;
+            demo.IsActiveChanged += (_, _) =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (demo.IsActive)
+                    {
+                        if (SidebarColumn.Width.IsAbsolute)
+                            savedWidth = SidebarColumn.Width.Value;
+                        // Pick something wide enough for the longest
+                        // demo row but still leaves the tab area
+                        // usable. Capped by SidebarColumn.MaxWidth.
+                        SidebarColumn.Width = new GridLength(360);
+                    }
+                    else
+                    {
+                        SidebarColumn.Width = new GridLength(savedWidth);
+                    }
+                });
+            };
+        }
+        catch { /* DI not ready — ignore */ }
     }
 
     private void OnSessionTabsSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -128,6 +159,39 @@ public sealed partial class MainWindow : Window
             Foreground = tx2,
         });
 
+        // Demo lives at the top so first-time users see "try it" before
+        // wading through the docs. The toggle button text flips between
+        // "Start demo" and "Exit demo" based on DemoModeService state.
+        stack.Children.Add(SectionHeader("DEMO", tx3));
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Try a tour of the app with fake servers, VMs, and folders. Your real connections stay safe — they're just hidden until you exit demo mode.",
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = tx2,
+        });
+        var demoButton = new Button
+        {
+            Content = "Start demo",
+            Padding = new Thickness(14, 6, 14, 6),
+            Background = accent,
+            Foreground = tx1,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            FontSize = 12,
+            Margin = new Thickness(0, 4, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        demoButton.Click += async (_, _) => await OnDemoButtonAsync(demoButton);
+        var demoTop = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
+        demoButton.Content = demoTop.IsActive ? "Exit demo" : "Start demo";
+        demoTop.IsActiveChanged += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+                demoButton.Content = demoTop.IsActive ? "Exit demo" : "Start demo");
+        };
+        stack.Children.Add(demoButton);
+
         stack.Children.Add(SectionHeader("GET STARTED", tx3));
         stack.Children.Add(StepCard(bg1, brd, accent, tx1, tx2, "1", "Add a connection",
             "Click “New” in the left pane. Pick SSH or RDP, fill in host/port, and choose how to authenticate."));
@@ -151,16 +215,81 @@ public sealed partial class MainWindow : Window
         stack.Children.Add(BulletLine("•  The Audit pane records every session open, close, and error.", tx2));
         stack.Children.Add(BulletLine("•  Settings let you change theme and default ports.",            tx2));
 
+
         scroller.Content = stack;
         root.Children.Add(scroller);
 
-        SessionTabs.TabItems.Add(new TabViewItem
+        var welcomeTab = new TabViewItem
         {
             Header     = "Home",
             Tag        = "welcome",
             Content    = root,
-            IconSource = new SymbolIconSource { Symbol = Symbol.Home }
-        });
+            IconSource = new SymbolIconSource { Symbol = Symbol.Home },
+        };
+        SessionTabs.TabItems.Add(welcomeTab);
+
+        // Lock the Home tab while demo mode is active — closing it
+        // would strand the user with no obvious "Exit demo" button.
+        // IsClosable controls TabView's X affordance; the tab itself
+        // stays mounted either way.
+        try
+        {
+            var demoLock = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
+            void Apply() => welcomeTab.IsClosable = !demoLock.IsActive;
+            Apply();
+            demoLock.IsActiveChanged += (_, _) => DispatcherQueue.TryEnqueue(Apply);
+        }
+        catch { /* DI not ready */ }
+    }
+
+    private async Task OnDemoButtonAsync(Button sender)
+    {
+        var demo = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
+        if (demo.IsActive)
+        {
+            demo.Deactivate();
+            return;
+        }
+
+        demo.Activate();
+
+        // Multi-step tour. Each step is a ContentDialog with
+        // Next/Skip — Next advances, Skip / X aborts. Skipping is
+        // intentional: power users don't need a six-screen orientation.
+        var steps = new (string Title, string Body)[]
+        {
+            ("Welcome to demo mode",
+             "You're now seeing fake connections. Your real ones are safely hidden until you exit. Click Next for a quick tour."),
+            ("The connections tree",
+             "On the left you'll find folders (\"Production servers\", \"Dev workstations\", a Proxmox cluster, a Hyper-V host, and a Discovered folder). Try expanding them and clicking a row."),
+            ("Power state at a glance",
+             "Synced VMs show a colored icon: ▶ green = running, ■ gray = stopped, ⏸ amber = paused. Hover for details. The '?' button next to Refresh has the full legend."),
+            ("Right-click for actions",
+             "Right-click any row for Connect / Edit / Delete. Right-click a managed VM for Power (Start/Stop/Reboot) and Open in vmconnect / Open Web Console. Right-click an auto-managed folder (italic, AUTO badge) for Sync now."),
+            ("Settings & integrations",
+             "The cog at the bottom-left opens Settings: themes, hotkeys, Proxmox sources, Hyper-V, network discovery. None of those run in demo mode — they only act on your real connections."),
+            ("Exit demo",
+             "When you're done, click \"Exit demo\" on the Home tab. Your real tree comes back exactly as you left it."),
+        };
+
+        if (sender.XamlRoot is null) return;
+        foreach (var (title, body) in steps)
+        {
+            var dlg = new ContentDialog
+            {
+                Title             = title,
+                Content           = body,
+                PrimaryButtonText = "Next",
+                CloseButtonText   = "Skip tour",
+                DefaultButton     = ContentDialogButton.Primary,
+                XamlRoot          = sender.XamlRoot,
+            };
+            try
+            {
+                if (await NexusRDM.Services.DialogHost.ShowAsync(dlg) != ContentDialogResult.Primary) break;
+            }
+            catch { break; }
+        }
     }
 
     private static TextBlock SectionHeader(string text, SolidColorBrush fg) => new()
@@ -303,15 +432,24 @@ public sealed partial class MainWindow : Window
     private double _splitterStartX;
     private double _splitterStartWidth;
 
-    // Cursor handling intentionally omitted: ProtectedCursor is
-    // a `protected` member, only settable from a UIElement subclass.
-    // Subclassing Border just to override the cursor for a 4-px
-    // splitter is more weight than it's worth — the visible bar
-    // already reads as draggable, and PointerPressed gives us hit
-    // feedback. If we ever want a true resize cursor we can swap in
-    // the CommunityToolkit GridSplitter or add a custom-control.
-    private void SidebarSplitter_PointerEntered(object sender, PointerRoutedEventArgs e) { }
-    private void SidebarSplitter_PointerExited(object sender, PointerRoutedEventArgs e)  { }
+    // Hover affordance instead of a cursor swap (ProtectedCursor is
+    // `protected` on UIElement and we'd need a custom control just
+    // to override it). The brightened bar makes the splitter
+    // discoverable; the tooltip on the Border explains what it does.
+    private void SidebarSplitter_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Microsoft.UI.Xaml.Controls.Border b
+         && Application.Current.Resources["NxAccent"] is Microsoft.UI.Xaml.Media.Brush accent)
+            b.Background = accent;
+    }
+
+    private void SidebarSplitter_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (_splitterDragging) return;
+        if (sender is Microsoft.UI.Xaml.Controls.Border b
+         && Application.Current.Resources["NxBrd"] is Microsoft.UI.Xaml.Media.Brush brd)
+            b.Background = brd;
+    }
 
     private void SidebarSplitter_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -341,6 +479,12 @@ public sealed partial class MainWindow : Window
         if (!_splitterDragging) return;
         _splitterDragging = false;
         if (sender is UIElement el) el.ReleasePointerCapture(e.Pointer);
+        // Snap the bar back to its resting color — the user's pointer
+        // may already have left the splitter region by the time the
+        // drag ends, in which case PointerExited won't fire.
+        if (sender is Microsoft.UI.Xaml.Controls.Border b
+         && Application.Current.Resources["NxBrd"] is Microsoft.UI.Xaml.Media.Brush brd)
+            b.Background = brd;
     }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e)
