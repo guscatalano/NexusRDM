@@ -319,12 +319,14 @@ else
         });
 
     // Encode the captured frames into multiple output formats.
-    // Two GIF qualities for README embeds (one small, one crisp),
-    // plus an MP4 if ffmpeg is on PATH (best size/quality ratio
-    // and what GitHub renders inline as a video element).
+    // Two GIF qualities (small for README embeds, hi-res for
+    // sharper playback) plus an MP4 when ffmpeg is on PATH. The
+    // hi-res GIF can hit ~130 MB and exceeds GitHub's 100 MB push
+    // limit on plain git, so the repo tracks it via Git LFS — see
+    // .gitattributes for the matching pattern.
     Console.WriteLine("Encoding outputs…");
-    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),     maxLongSide: 800,  outFps: 10);
-    capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"),  maxLongSide: 1280, outFps: 15);
+    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),    maxLongSide: 800,  outFps: 10);
+    capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"), maxLongSide: 1280, outFps: 15);
     await capture.SaveMp4Async(Path.Combine(outDir, "demo-tour.mp4"), outFps: 30);
 
     // Belt-and-suspenders: the edit panel may still be up if the

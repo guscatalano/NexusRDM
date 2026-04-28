@@ -68,3 +68,4 @@ coverage/
 # Claude Code local session metadata
 .claude/
 build_errors.txt
+
