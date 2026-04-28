@@ -24,7 +24,9 @@ The recorder launches the most-recently-built `NexusRDM.exe`, sizes the window t
 | `hyperv-sync.png`     | Settings → Hyper-V                                 |
 | `discovery.png`       | Settings → Network discovery                       |
 | `themes.png`          | Settings → Appearance                              |
-| `demo-tour.gif`       | ~11-second tour: context menus + edit panel        |
+| `demo-tour.gif`       | Low-res tour (~800px, 10fps) — small, README-friendly |
+| `demo-tour-hq.gif`    | Hi-res tour (~1280px, 15fps) — crisper, larger file |
+| `demo-tour.mp4`       | H.264 video (full-res, 30fps) — only if ffmpeg is on PATH |
 
 ## Limitations
 

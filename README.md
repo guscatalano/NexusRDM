@@ -2,9 +2,13 @@
 
 A modern, fast remote-desktop manager for Windows. Hold every SSH and RDP connection you care about in a single tabbed window — keep them organized, watch their state at a glance, and import whole clusters from Proxmox, Hyper-V, or a network sweep.
 
-> _Screenshot placeholder — main window with connections sidebar + active session tabs. Suggested capture: a couple of folders open in the tree, one SSH tab + one RDP tab side-by-side via the new tab view._
->
-> ![Main window](docs/screenshots/main-window.png)
+![Main window](docs/screenshots/main-window.png)
+
+A short tour through the demo mode (synthetic data only — no real hosts):
+
+![Demo tour](docs/screenshots/demo-tour.gif)
+
+> Screenshots and GIFs in this README are auto-generated. See [`tools/NexusRDM.DemoRecorder`](tools/NexusRDM.DemoRecorder) — it drives the app via FlaUI in demo mode and writes everything under `docs/screenshots/`.
 
 ---
 
@@ -32,21 +36,27 @@ Or build from source: open `NexusRDM.slnx` in Visual Studio 2022, set `NexusRDM`
 
 ## Connecting to things
 
-### Make a connection by hand
+### Make or edit a connection
 
-Click **+ New** in the sidebar, fill in name + host + protocol, hit save. The credential row defaults to "save in vault"; turn it off if you'd rather get prompted every time.
+Click **+ New** in the sidebar, fill in name + host + protocol, hit save. The credential row defaults to "save in vault"; turn it off if you'd rather get prompted every time. The Edit panel slides in from the right and shows protocol-specific options below the common fields.
 
-> _GIF placeholder — opening the New Connection panel, picking a protocol, entering creds, then double-clicking the new row to connect. Suggested length: 8–10s._
->
-> ![New connection](docs/screenshots/new-connection.gif)
+![Edit connection — SSH](docs/screenshots/edit-connection.png)
+
+Switch to **RDP** and the panel reveals resolution, color depth, audio mode, and gateway settings:
+
+![Edit connection — RDP](docs/screenshots/edit-connection-rdp.png)
+
+### Connect to something
+
+Open an SSH session and you get a real terminal pane. Demo mode shows a canned bash session so you can poke around without a real host.
+
+![SSH session](docs/screenshots/ssh-session.png)
 
 ### Right-click for everything else
 
 Every row's right-click menu gives you Connect / Edit / Delete. Folders give you New connection in group / Delete group / (and if it's a managed folder) Sync now.
 
-> _Screenshot placeholder — the right-click context menu open on a connection row, showing the full action list._
->
-> ![Right-click menu](docs/screenshots/context-menu.png)
+![Right-click menu](docs/screenshots/context-menu.png)
 
 ---
 
@@ -60,15 +70,11 @@ Once the source is registered, **Sync now** pulls every VM into a folder named a
 
 Right-click a synced VM for **Power** (Start / Shutdown / Reboot / Stop / Reset), **Open Web Console** (launches PVE's noVNC in your default browser), or **Detach from Proxmox** if you want manual ownership of that row.
 
-> _GIF placeholder — registering a Proxmox cluster, hitting Test, then Sync, watching VMs populate the tree under the cluster folder. Suggested length: 15–20s._
->
-> ![Proxmox sync](docs/screenshots/proxmox-sync.gif)
+![Proxmox sync](docs/screenshots/proxmox-sync.png)
 
 A small colored icon on each row shows the VM's power state — green ▶ running, gray ■ stopped, amber ⏸ paused. Hide it from Settings if it clutters narrow trees.
 
-> _Screenshot placeholder — the connections tree with a Proxmox cluster expanded, showing the AUTO badge on the folder, the P pill on each VM row, the running/stopped icons, and a sample SSH/RDP badge._
->
-> ![Power icons](docs/screenshots/power-icons.png)
+![Power icons](docs/screenshots/power-icons.png)
 
 ---
 
@@ -80,9 +86,7 @@ You need to be in the local **Hyper-V Administrators** group (same as `Get-VM` i
 
 Synced VMs show up under a `Hyper-V` folder. Right-click a VM for **Power** actions (via WMI's `RequestStateChange`), **Open in vmconnect** (launches Microsoft's console), or **Detach**.
 
-> _GIF placeholder — enabling Hyper-V sync, clicking Test, hitting Sync now, then right-clicking a VM and triggering Start. Suggested length: 12–15s._
->
-> ![Hyper-V sync](docs/screenshots/hyperv-sync.gif)
+![Hyper-V sync](docs/screenshots/hyperv-sync.png)
 
 ---
 
@@ -94,9 +98,7 @@ It TCP-probes ports 22 and 3389 across the 256 addresses, optionally reverses-DN
 
 The folder is auto-managed: turn the toggle off and the folder + its rows + their saved credentials go away. **Clear discovered devices** wipes the contents but keeps the folder for the next sweep.
 
-> _Screenshot placeholder — Network discovery section with a scan in progress (status row showing "Probing… 134/512 (3 found)") and the Discovered folder in the tree below. Suggested capture: split with the settings panel on the right and the connections sidebar on the left._
->
-> ![Network discovery](docs/screenshots/discovery.png)
+![Network discovery](docs/screenshots/discovery.png)
 
 ---
 
@@ -104,9 +106,7 @@ The folder is auto-managed: turn the toggle off and the folder + its rows + thei
 
 Eight built-in palettes including the original Dracula default. Pick **Custom** to edit every color individually with a color-picker per slot — changes apply live so you can dial in the exact look you want.
 
-> _Screenshot placeholder — the theme picker open with a few options visible, and the custom-palette editor expanded below. A side-by-side of two themes would also work great._
->
-> ![Themes](docs/screenshots/themes.png)
+![Themes](docs/screenshots/themes.png)
 
 ---
 

@@ -84,37 +84,32 @@ if (demoBtn is null)
         "See stderr above for the list of visible buttons.");
 }
 
-// Force OFF: the previous run may have left demo active. We want the
-// pre-demo screenshot to show a clean Home/sidebar, so flip OFF first
-// if any demo row is present. Detect via "pi-hole" — synthetic-only.
-if (TryFindRow(win, "pi-hole") is not null)
+// Make sure demo mode is ON before any screenshot. The recorder
+// must NEVER capture the user's real environment — every PNG and
+// the GIF should show synthetic data only. We click the toggle
+// only when demo is currently off (detected by the absence of a
+// known synthetic row).
+if (TryFindRow(win, "pi-hole") is null)
 {
-    Console.WriteLine("Demo was already on — toggling OFF for pre-demo shot…");
+    Console.WriteLine("Activating demo mode…");
     demoBtn.Click();
     Thread.Sleep(800);
-    // Wait for rows to disappear (up to 4s).
-    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
-    while (DateTime.UtcNow < deadline && TryFindRow(win, "pi-hole") is not null)
-        Thread.Sleep(250);
+    SkipTourDialogs(ua, win, maxSteps: 8);
 }
-Thread.Sleep(500);
-
-// 1. main-window.png — Home tab + sidebar (no demo yet).
-Snap.Window(win, Path.Combine(outDir, "main-window.png"));
-
-// 2. Activate demo. Click "Start demo" on the Home page.
-Console.WriteLine("Activating demo mode…");
-demoBtn.Click();
-Thread.Sleep(800);
-
-// Skip the multi-step tour by clicking Skip-tour on each dialog. We
-// run the recorder unattended; the tour is for end users.
-SkipTourDialogs(ua, win, maxSteps: 8);
+else
+{
+    Console.WriteLine("Demo mode already active — keeping it on.");
+    // Skip any tour dialog that may still be lingering from a
+    // prior interrupted run.
+    SkipTourDialogs(ua, win, maxSteps: 4);
+}
 
 // Confirm the synthetic tree populated. Without this, downstream
 // row lookups race the demo activation and silently no-op.
 if (!WaitForRow(win, "pi-hole", TimeSpan.FromSeconds(8)))
-    Console.WriteLine("  (warning: demo rows still not visible after 8s)");
+    throw new InvalidOperationException(
+        "Demo rows didn't appear after activating demo mode. " +
+        "Refusing to take screenshots — they would expose your real connections.");
 
 // Force every TreeViewItem to the Expanded state. The data binding
 // sets IsExpanded=true but virtualization can render collapsed; we
@@ -125,6 +120,9 @@ Thread.Sleep(400);
 // the UIA tree on the first sweep.
 ExpandAllTreeItems(win);
 Thread.Sleep(400);
+
+// 1. main-window.png — Home tab + sidebar with the demo tree.
+Snap.Window(win, Path.Combine(outDir, "main-window.png"));
 
 // 3. context-menu.png — right-click on a managed VM to show the
 // power / detach actions. We pick a known demo row by its name.
@@ -155,13 +153,13 @@ Snap.Window(win, Path.Combine(outDir, "power-icons.png"));
 
 // 4. ssh-session.png — open a real SSH session on a demo row. The
 // app is in demo mode, so DemoSshHandler returns a DemoSshSession
-// that emits canned bash output. Type `ls`+Enter to populate the
-// terminal so the screenshot has visible content.
+// that emits canned bash output. Type a few commands to populate
+// the terminal, then close the tab so the GIF flow can reopen
+// fresh later.
 Console.WriteLine("Capturing SSH session…");
 if (ConnectViaContextMenu(win, "pi-hole"))
 {
     Thread.Sleep(1500); // let banner + prompt land
-    // Send a couple of canned commands so the terminal isn't empty.
     Keyboard.Type("ls");
     Keyboard.Press(VirtualKeyShort.RETURN);
     Thread.Sleep(400);
@@ -172,6 +170,8 @@ if (ConnectViaContextMenu(win, "pi-hole"))
     Keyboard.Press(VirtualKeyShort.RETURN);
     Thread.Sleep(500);
     Snap.Window(win, Path.Combine(outDir, "ssh-session.png"));
+    CloseActiveTab();
+    Thread.Sleep(500);
 }
 else
 {
@@ -221,12 +221,11 @@ else
 // recorder. Instead we show motion via right-click context menus
 // (which we want in the README anyway) and the Edit panel.
 {
-    Console.WriteLine("Recording demo-tour.gif…");
-    await GifRecorder.RecordAsync(
+    Console.WriteLine("Recording demo tour…");
+    using var capture = await GifRecorder.RecordAsync(
         win,
-        Path.Combine(outDir, "demo-tour.gif"),
-        durationSeconds: 16,
-        targetFps: 10,
+        durationSeconds: 24,
+        captureFps: 15,
         driveUi: async () =>
         {
             await Task.Delay(400);
@@ -238,9 +237,28 @@ else
                 var b = pi.BoundingRectangle;
                 Mouse.RightClick(new System.Drawing.Point(
                     (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
-                await Task.Delay(1200);
+                await Task.Delay(1100);
                 Keyboard.Press(VirtualKeyShort.ESCAPE);
                 await Task.Delay(400);
+            }
+
+            // SSH demo: connect to pi-hole (DemoSshHandler returns a
+            // DemoSshSession), type a couple of commands so the
+            // terminal animates, then close the tab.
+            if (ConnectViaContextMenu(win, "pi-hole"))
+            {
+                await Task.Delay(1700); // banner + prompt land
+                Keyboard.Type("ls");
+                Keyboard.Press(VirtualKeyShort.RETURN);
+                await Task.Delay(700);
+                Keyboard.Type("uptime");
+                Keyboard.Press(VirtualKeyShort.RETURN);
+                await Task.Delay(700);
+                Keyboard.Type("whoami");
+                Keyboard.Press(VirtualKeyShort.RETURN);
+                await Task.Delay(900);
+                CloseActiveTab();
+                await Task.Delay(500);
             }
 
             // Open the edit panel on web-prod-01. While open: linger
@@ -279,6 +297,15 @@ else
                 await Task.Delay(500);
             }
         });
+
+    // Encode the captured frames into multiple output formats.
+    // Two GIF qualities for README embeds (one small, one crisp),
+    // plus an MP4 if ffmpeg is on PATH (best size/quality ratio
+    // and what GitHub renders inline as a video element).
+    Console.WriteLine("Encoding outputs…");
+    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),     maxLongSide: 800,  outFps: 10);
+    capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"),  maxLongSide: 1280, outFps: 15);
+    await capture.SaveMp4Async(Path.Combine(outDir, "demo-tour.mp4"), outFps: 30);
 
     // Belt-and-suspenders: the edit panel may still be up if the
     // GIF driver bailed early. Force-close before the next step so
@@ -417,6 +444,16 @@ static void SkipTourDialogs(UIA3Automation ua, Window root, int maxSteps)
         if (skip is null) return;
         try { skip.AsButton().Click(); } catch { try { skip.Click(); } catch { } }
     }
+}
+
+static void CloseActiveTab()
+{
+    // WinUI 3 TabView ships Ctrl+F4 as the built-in close-tab
+    // accelerator. Cleaner than walking the visual tree to find
+    // the per-tab X button (which moves around when tabs reflow).
+    Keyboard.Pressing(VirtualKeyShort.CONTROL);
+    Keyboard.Press(VirtualKeyShort.F4);
+    Keyboard.Release(VirtualKeyShort.CONTROL);
 }
 
 static bool ConnectViaContextMenu(Window root, string rowName)
