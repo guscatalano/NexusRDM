@@ -54,14 +54,15 @@ internal static class GifRecorder
         }
 
         /// <summary>
-        /// Encode an animated GIF from the captured frames.
+        /// Encode an animated GIF from the captured frames, capped at
+        /// <paramref name="maxBytes"/> on disk. If the first attempt
+        /// blows the budget we re-encode at progressively smaller
+        /// resolution / frame-rate until it fits or we exhaust the
+        /// fallback ladder. GitHub rejects pushes over 100 MB and
+        /// LFS bandwidth is metered, so we keep things lean by
+        /// default — 10 MB is comfortably under both ceilings.
         /// </summary>
-        /// <param name="outPath">Output file path.</param>
-        /// <param name="maxLongSide">Cap the longer dimension at this many
-        /// pixels. Use the captured size when the source is already smaller.</param>
-        /// <param name="outFps">Target frame rate. Sub-samples the captured
-        /// frames; can't exceed the capture fps.</param>
-        public void SaveGif(string outPath, int maxLongSide, int outFps)
+        public void SaveGif(string outPath, int maxLongSide, int outFps, long maxBytes = 10_000_000)
         {
             if (Frames.Count == 0)
             {
@@ -69,6 +70,36 @@ internal static class GifRecorder
                 return;
             }
 
+            // Fallback ladder. Each rung shrinks the long side and/or
+            // the frame rate; once any encode lands under the budget
+            // we keep that file. The first rung mirrors the caller's
+            // requested params so well-behaved demos pay no extra cost.
+            var rungs = new (int side, int fps)[]
+            {
+                (maxLongSide,         outFps),
+                (maxLongSide * 3 / 4, outFps),
+                (maxLongSide * 3 / 4, Math.Max(6, outFps - 2)),
+                (maxLongSide / 2,     Math.Max(6, outFps - 2)),
+                (maxLongSide / 2,     Math.Max(5, outFps - 4)),
+                (maxLongSide * 2 / 5, 5),
+            };
+
+            for (int i = 0; i < rungs.Length; i++)
+            {
+                var (side, fps) = rungs[i];
+                EncodeGifAt(outPath, side, fps);
+                var size = new FileInfo(outPath).Length;
+                Console.WriteLine($"  → {Path.GetFileName(outPath)} (cap {side}px @ {fps}fps, {size / 1024} KB)");
+                if (size <= maxBytes) return;
+                if (i < rungs.Length - 1)
+                    Console.WriteLine($"    over {maxBytes / 1024 / 1024} MB — re-encoding at smaller settings…");
+                else
+                    Console.WriteLine($"    (warning: still over {maxBytes / 1024 / 1024} MB at the smallest preset)");
+            }
+        }
+
+        private void EncodeGifAt(string outPath, int maxLongSide, int outFps)
+        {
             // Round capture area down to even dimensions — some GIF
             // viewers misrender odd-sized frames.
             double scale = Math.Min(1.0, (double)maxLongSide / Math.Max(CaptureWidth, CaptureHeight));
@@ -78,8 +109,6 @@ internal static class GifRecorder
             int outFrameMs = Math.Max(20, 1000 / Math.Max(1, outFps));
             int captureFrameMs = 1000 / Math.Max(1, CaptureFps);
 
-            // Build the down-sampled list. Walk the captured timeline
-            // in real ms and pick the nearest captured frame.
             var picked = new List<Bitmap>();
             try
             {
@@ -120,9 +149,6 @@ internal static class GifRecorder
                 var finishParams = new EncoderParameters(1);
                 finishParams.Param[0] = new EncoderParameter(Encoder.SaveFlag, (long)EncoderValue.Flush);
                 first.SaveAdd(finishParams);
-
-                var size = new FileInfo(outPath).Length;
-                Console.WriteLine($"  → {Path.GetFileName(outPath)} ({outW}x{outH}, {picked.Count} frames @ {outFps}fps, {size / 1024} KB)");
             }
             finally
             {
@@ -134,9 +160,11 @@ internal static class GifRecorder
         /// Encode an MP4 from the captured frames using ffmpeg via
         /// stdin (image2pipe → libx264). Skipped silently if ffmpeg
         /// isn't on PATH. MP4 is ~10× smaller than GIF for the same
-        /// visual quality and renders inline on GitHub.
+        /// visual quality and renders inline on GitHub. We re-encode
+        /// at higher CRF (lower quality) if the first attempt blows
+        /// past <paramref name="maxBytes"/>.
         /// </summary>
-        public async Task SaveMp4Async(string outPath, int outFps)
+        public async Task SaveMp4Async(string outPath, int outFps, long maxBytes = 10_000_000)
         {
             if (Frames.Count == 0) return;
             if (!FfmpegAvailable())
@@ -145,17 +173,35 @@ internal static class GifRecorder
                 return;
             }
 
+            // CRF ladder: 23 is "visually transparent" for screen
+            // recordings; 28 is noticeably softer but still readable.
+            // For a ~24s 1280×800 capture, 23 already produces a few
+            // megabytes — but a static-content tour can compress
+            // much smaller, and an animated one larger. Walk the
+            // ladder until we land under maxBytes.
+            int[] crfs = [23, 26, 30, 34];
+            for (int i = 0; i < crfs.Length; i++)
+            {
+                await EncodeMp4At(outPath, outFps, crfs[i]);
+                var size = new FileInfo(outPath).Length;
+                Console.WriteLine($"  → {Path.GetFileName(outPath)} (CRF {crfs[i]}, {size / 1024} KB)");
+                if (size <= maxBytes) return;
+                if (i < crfs.Length - 1)
+                    Console.WriteLine($"    over {maxBytes / 1024 / 1024} MB — re-encoding at higher CRF…");
+                else
+                    Console.WriteLine($"    (warning: still over {maxBytes / 1024 / 1024} MB at CRF {crfs[i]})");
+            }
+        }
+
+        private async Task EncodeMp4At(string outPath, int outFps, int crf)
+        {
             int outFrameMs = Math.Max(20, 1000 / Math.Max(1, outFps));
             int captureFrameMs = 1000 / Math.Max(1, CaptureFps);
 
-            // Pipe PNGs to ffmpeg over stdin. image2pipe with
-            // -framerate fixes the input clock; -r on the output
-            // sets the encoded framerate. We resample the captured
-            // timeline to outFps the same way the GIF saver does.
             var psi = new ProcessStartInfo("ffmpeg",
                 $"-y -hide_banner -loglevel error " +
                 $"-f image2pipe -framerate {outFps} -i - " +
-                $"-c:v libx264 -pix_fmt yuv420p -preset medium -crf 18 " +
+                $"-c:v libx264 -pix_fmt yuv420p -preset medium -crf {crf} " +
                 $"-movflags +faststart \"{outPath}\"")
             {
                 UseShellExecute = false,
@@ -184,10 +230,7 @@ internal static class GifRecorder
                 {
                     var err = await p.StandardError.ReadToEndAsync();
                     Console.Error.WriteLine($"  ffmpeg failed: {err}");
-                    return;
                 }
-                var size = new FileInfo(outPath).Length;
-                Console.WriteLine($"  → {Path.GetFileName(outPath)} ({CaptureWidth}x{CaptureHeight} @ {outFps}fps, {size / 1024} KB)");
             }
             catch (Exception ex)
             {
