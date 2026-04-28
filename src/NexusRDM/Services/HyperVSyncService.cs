@@ -114,10 +114,27 @@ public sealed class HyperVSyncService : IDisposable
     /// <see cref="HyperVSyncResult"/>'s Error field.</summary>
     public async Task<HyperVSyncResult> SyncAsync(CancellationToken ct = default)
     {
+        IReadOnlyList<HyperVVm> vms;
+        try { vms = await new HyperVClient().ListVmsAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex)
+        {
+            var fail = new HyperVSyncResult(0, 0, 0, ex.Message);
+            SyncCompleted?.Invoke(this, fail);
+            return fail;
+        }
+        return await ApplyVmsAsync(vms, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Diff-merge a pre-fetched list of VMs into the DB.
+    /// Used by both the manual <see cref="SyncAsync"/> path and the
+    /// background loop (which already has the data from the agent's
+    /// JSON file). Lifted out of SyncAsync so neither path
+    /// re-implements it.</summary>
+    private async Task<HyperVSyncResult> ApplyVmsAsync(IReadOnlyList<HyperVVm> vms, CancellationToken ct = default)
+    {
         try
         {
-            var client = new HyperVClient();
-            var vms = await client.ListVmsAsync(ct).ConfigureAwait(false);
+            // (legacy local "vms" var stays in scope for the body below)
 
             using var scope = _services.CreateScope();
             var db    = scope.ServiceProvider.GetRequiredService<NexusDbContext>();
@@ -206,6 +223,136 @@ public sealed class HyperVSyncService : IDisposable
             SyncCompleted?.Invoke(this, result);
             return result;
         }
+    }
+
+    // ── Background loop (long-lived elevated agent) ─────────────────────
+
+    private System.Diagnostics.Process? _loopProc;
+    private string?                     _loopOutputPath;
+    private Timer?                      _loopPoll;
+    private DateTime                    _loopLastFileWriteUtc = DateTime.MinValue;
+
+    /// <summary>True while the long-lived elevated agent is running.
+    /// Settings UI binds to this to flip the "start / stop" button
+    /// label.</summary>
+    public bool IsBackgroundLoopRunning => _loopProc is { HasExited: false };
+
+    /// <summary>Spawn the elevated agent in <c>loop</c> mode. UAC
+    /// prompts once at this call. After that the agent runs silently
+    /// and rewrites its output JSON every interval; we poll that
+    /// file and feed the data into <see cref="ApplyVmsAsync"/>, the
+    /// same diff-merge the manual Sync uses.</summary>
+    public async Task StartBackgroundLoopAsync()
+    {
+        if (IsBackgroundLoopRunning) return;
+
+        var exe = System.IO.Path.Combine(AppContext.BaseDirectory, "NexusRDM.HyperVAgent.exe");
+        if (!System.IO.File.Exists(exe))
+            throw new System.IO.FileNotFoundException(
+                "Hyper-V agent missing (NexusRDM.HyperVAgent.exe). Reinstall or rebuild.", exe);
+
+        var interval = Math.Max(1, SettingsStore.ReadHyperVSyncIntervalMinutes()) * 60;
+        _loopOutputPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            $"nexusrdm-hv-loop-{Guid.NewGuid():N}.json");
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName        = exe,
+            UseShellExecute = true,
+            Verb            = "runas",
+            CreateNoWindow  = true,
+            WindowStyle     = System.Diagnostics.ProcessWindowStyle.Hidden,
+        };
+        psi.ArgumentList.Add("loop");
+        psi.ArgumentList.Add(interval.ToString());
+        psi.ArgumentList.Add(_loopOutputPath);
+        psi.ArgumentList.Add(Environment.ProcessId.ToString());
+
+        try
+        {
+            _loopProc = System.Diagnostics.Process.Start(psi);
+        }
+        catch (System.ComponentModel.Win32Exception wex) when (wex.NativeErrorCode == 1223)
+        {
+            _loopOutputPath = null;
+            throw new OperationCanceledException("UAC prompt was cancelled.", wex);
+        }
+
+        if (_loopProc is null)
+        {
+            _loopOutputPath = null;
+            throw new InvalidOperationException("Failed to start Hyper-V agent loop.");
+        }
+
+        // Poll the output file at half the agent's interval (min 10s),
+        // ignore unchanged files via mtime, parse + apply on each new
+        // version. Background work — no UAC, no UI thread blocking.
+        var pollSeconds = Math.Max(10, interval / 2);
+        _loopPoll = new Timer(async _ => await PollLoopFileAsync().ConfigureAwait(false),
+            null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(pollSeconds));
+
+        await Task.CompletedTask;
+    }
+
+    public void StopBackgroundLoop()
+    {
+        _loopPoll?.Dispose();
+        _loopPoll = null;
+        try { _loopProc?.Kill(); } catch { /* may already be gone */ }
+        _loopProc = null;
+        if (_loopOutputPath is not null)
+        {
+            try { System.IO.File.Delete(_loopOutputPath); } catch { }
+            _loopOutputPath = null;
+        }
+    }
+
+    private async Task PollLoopFileAsync()
+    {
+        if (_loopOutputPath is null) return;
+        try
+        {
+            var fi = new System.IO.FileInfo(_loopOutputPath);
+            if (!fi.Exists || fi.Length == 0) return;
+            if (fi.LastWriteTimeUtc <= _loopLastFileWriteUtc) return; // nothing new
+            _loopLastFileWriteUtc = fi.LastWriteTimeUtc;
+
+            using var stream = System.IO.File.OpenRead(_loopOutputPath);
+            var doc = await System.Text.Json.JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out _))
+            {
+                // Agent surfaced a transient WMI error in its file —
+                // ignore for now; next iteration may succeed.
+                return;
+            }
+
+            // Agent's `loop` writes the same DTO shape as `list`.
+            var dtos = System.Text.Json.JsonSerializer.Deserialize<List<AgentLoopVmDto>>(
+                doc.RootElement.GetRawText(),
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (dtos is null) return;
+
+            var vms = dtos.Select(d => new HyperVVm(
+                d.Id ?? "",
+                d.Name ?? d.Id ?? "",
+                Enum.TryParse<HyperVVmState>(d.State, ignoreCase: true, out var s) ? s : HyperVVmState.Unknown,
+                d.Ip)).ToList();
+
+            await ApplyVmsAsync(vms).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            CrashLogger.Log(ex, "HyperV background poll");
+        }
+    }
+
+    private sealed class AgentLoopVmDto
+    {
+        public string?  Id    { get; set; }
+        public string?  Name  { get; set; }
+        public string?  State { get; set; }
+        public string?  Ip    { get; set; }
     }
 
     /// <summary>Wipe every Hyper-V-managed connection but keep the
@@ -301,6 +448,7 @@ public sealed class HyperVSyncService : IDisposable
     {
         _timer?.Dispose();
         _timer = null;
+        StopBackgroundLoop();
     }
 }
 
