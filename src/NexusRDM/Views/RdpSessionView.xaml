@@ -144,6 +144,75 @@
             <Border x:Name="RdpHostPanel"
                     Background="#0F0F12"
                     SizeChanged="RdpHostPanel_SizeChanged" />
+
+            <!-- Demo-mode fake desktop. Visible only when the
+                 underlying session is a DemoRdpSession (vm.IsDemo).
+                 Painted entirely in XAML primitives so we don't need
+                 a binary asset. The big "DEMO" watermark + obvious
+                 "fake desktop" copy makes it impossible to mistake
+                 for a real session, even at a glance in the README. -->
+            <Grid IsHitTestVisible="False"
+                  Visibility="{x:Bind ViewModel.IsDemo, Mode=OneWay}">
+                <Grid.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#1B3A6B" Offset="0" />
+                        <GradientStop Color="#2A5BA8" Offset="0.55" />
+                        <GradientStop Color="#3D7AC4" Offset="1" />
+                    </LinearGradientBrush>
+                </Grid.Background>
+
+                <!-- Center "monitor" card with the fake desktop content. -->
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="16"
+                            Margin="40">
+                    <TextBlock Text="DEMO"
+                               FontSize="96"
+                               FontWeight="Bold"
+                               Foreground="#80FFFFFF"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Simulated RDP session"
+                               FontSize="22"
+                               FontWeight="SemiBold"
+                               Foreground="White"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Demo mode shows a placeholder image instead of opening a real connection. Exit demo mode to use the real RDP backend."
+                               FontSize="13"
+                               Foreground="#CCFFFFFF"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               MaxWidth="480"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Fake taskbar at the bottom. Just enough chrome
+                     that the placeholder reads as "a Windows desktop"
+                     at a glance — no functional buttons. -->
+                <Border VerticalAlignment="Bottom"
+                        Height="40"
+                        Background="#CC1A1A1A"
+                        BorderBrush="#33FFFFFF"
+                        BorderThickness="0,1,0,0">
+                    <Grid ColumnDefinitions="48,*,Auto" Margin="6,0,12,0">
+                        <Border Grid.Column="0"
+                                Width="32" Height="32"
+                                CornerRadius="4"
+                                Background="#FF0078D4"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="⊞"
+                                       FontSize="20"
+                                       Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Grid.Column="2"
+                                   Text="DEMO  |  10:45 AM"
+                                   FontSize="12"
+                                   Foreground="#CCFFFFFF"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+            </Grid>
             <StackPanel HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Spacing="10"

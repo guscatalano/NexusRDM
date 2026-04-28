@@ -231,13 +231,18 @@ public partial class App : Application
             sp.GetRequiredService<Services.DemoModeService>()));
         // RDP backend is a dispatcher that picks Mstsc / MstscAx / FreeRdp at
         // session-open time based on the user's setting. The MstscAx factory
-        // lives in this project (Forms host); Core stays UI-agnostic.
-        services.AddSingleton<IRdpHandler>(_ => new RdpHandler(
+        // lives in this project (Forms host); Core stays UI-agnostic. We then
+        // wrap it in a demo decorator so demo mode returns a no-op
+        // DemoRdpSession (the view paints a fake-desktop overlay).
+        services.AddSingleton<RdpHandler>(_ => new RdpHandler(
             modeProvider:        SettingsStore.ReadRdpMode,
             mstscExePathProvider: SettingsStore.ReadMstscExePath,
             mstscAxFactory:  (profile, user, pass) => new MstscAxRdpSession(
                 profile, user, pass,
                 resolutionResolver: ResolveDesktopSize)));
+        services.AddSingleton<IRdpHandler>(sp => new Services.DemoRdpHandler(
+            sp.GetRequiredService<RdpHandler>(),
+            sp.GetRequiredService<Services.DemoModeService>()));
         services.AddSingleton<SessionManager>();
         services.AddSingleton<PingService>();
         services.AddNexusProxmox();

@@ -63,6 +63,12 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
     /// Disconnect button's Visibility so we don't need a value converter.</summary>
     public bool IsActive => !IsDisconnected;
 
+    /// <summary>True when the underlying session is a synthetic demo
+    /// stand-in (no real OCX hosted). The view binds to this to swap
+    /// the empty host panel for a fake-desktop overlay so demo-mode
+    /// users see something meaningful instead of a black rectangle.</summary>
+    public bool IsDemo => _session is NexusRDM.Services.DemoRdpSession;
+
     /// <summary>True = scale the remote desktop to fit the host window;
     /// false = native resolution with scrollbars. Bound TwoWay to a
     /// checkbox in the toolbar; the partial-method handler forwards the
