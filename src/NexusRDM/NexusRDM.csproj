@@ -8,23 +8,73 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
-    <!-- Unpackaged: no MSIX, no package identity required -->
-    <WindowsPackageType>None</WindowsPackageType>
-    <EnableMsixTooling>false</EnableMsixTooling>
-    <!-- Self-contained: bundles Windows App SDK DLLs, no installed runtime needed -->
-    <WindowsAppSdkSelfContained>true</WindowsAppSdkSelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>false</SelfContained>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+
+    <!-- Build-time switch. Default is the unpackaged dev loop; pass
+         /p:MsixPackage=true to msbuild (or use tools/build-msix.ps1)
+         to produce a signed .msix with package identity. The two
+         modes diverge significantly enough that we keep separate
+         property blocks below — mixing them silently produces an
+         unusable MSIX. -->
+    <MsixPackage Condition="'$(MsixPackage)' == ''">false</MsixPackage>
+  </PropertyGroup>
+
+  <!-- Unpackaged build (developer inner loop, "double-click EXE" zip
+       releases). Self-contained = bundles WindowsAppSDK DLLs, so end
+       users don't need a separate runtime install. -->
+  <PropertyGroup Condition="'$(MsixPackage)' != 'true'">
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsAppSdkSelfContained>true</WindowsAppSdkSelfContained>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!-- MSIX build. Single-project packaging (no separate .wapproj):
+       SDK creates the .msix from this project, signs it with the
+       configured cert, and emits to artifacts/msix/. SelfContained
+       = true so the package doesn't require the .NET runtime at
+       install time either — store-style sideloads work clean. -->
+  <PropertyGroup Condition="'$(MsixPackage)' == 'true'">
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSdkSelfContained>true</WindowsAppSdkSelfContained>
+    <SelfContained>true</SelfContained>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
+    <!-- Cert: developer self-signed for sideload testing. Override
+         with /p:PackageCertificateThumbprint=… when signing for
+         release with a real cert (Trusted Root or Store-issued). -->
+    <PackageCertificateKeyFile Condition="'$(PackageCertificateKeyFile)' == ''">NexusRDM_TemporaryKey.pfx</PackageCertificateKeyFile>
+    <AppxPackageDir Condition="'$(AppxPackageDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\msix\</AppxPackageDir>
+    <AppxBundle>Always</AppxBundle>
+    <AppxBundlePlatforms>x64</AppxBundlePlatforms>
+    <DefaultLanguage>en-US</DefaultLanguage>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+
+  <!-- MSIX-only items: package manifest + tile/splash assets. The
+       single-project SDK picks up Package.appxmanifest at the project
+       root automatically when EnableMsixTooling=true; the asset PNGs
+       are copied into the .msix package payload. -->
+  <ItemGroup Condition="'$(MsixPackage)' == 'true'">
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <Content Include="Assets\Square44x44Logo.png" />
+    <Content Include="Assets\Square150x150Logo.png" />
+    <Content Include="Assets\Wide310x150Logo.png" />
+    <Content Include="Assets\StoreLogo.png" />
+    <Content Include="Assets\SplashScreen.png" />
   </ItemGroup>
 
   <ItemGroup>
