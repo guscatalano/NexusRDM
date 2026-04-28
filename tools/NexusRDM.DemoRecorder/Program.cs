@@ -4,27 +4,33 @@ using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Input;
+using FlaUI.Core.Patterns;
 using FlaUI.Core.WindowsAPI;
 using FlaUI.UIA3;
 using NexusRDM.DemoRecorder;
 
-// Drive NexusRDM through the demo flow and snap PNGs at named
-// milestones. Output filenames match the placeholder paths in the
-// README so dropping them under docs/screenshots/ wires up the
-// embedded images automatically.
+// Drive NexusRDM through the demo flow and snap PNGs (+ a demo GIF)
+// at named milestones. Output filenames match the placeholder paths
+// in the README so dropping them under docs/screenshots/ wires up
+// the embedded images automatically.
 //
 // Usage:
-//   NexusRDM.DemoRecorder.exe [output-dir] [--gif]
-//     output-dir : where PNGs (and optional GIFs) land. Default
+//   NexusRDM.DemoRecorder.exe [output-dir]
+//     output-dir : where PNGs and the GIF land. Default
 //                  "docs/screenshots" relative to the repo root.
-//     --gif      : also record short GIFs of key flows. Requires
-//                  ffmpeg on PATH; skipped silently if missing.
 
 string outDir = "docs/screenshots";
-bool   wantGifs = false;
-foreach (var arg in args)
+// Default Debug — that's what developers actually iterate on, and
+// running the recorder against a stale Release build led to "newest
+// exe wins" picking the wrong copy. Override with --release if you
+// really want to capture the optimised binary.
+string config = "Debug";
+for (int i = 0; i < args.Length; i++)
 {
-    if      (arg == "--gif") wantGifs = true;
+    var arg = args[i];
+    if      (arg == "--release") config = "Release";
+    else if (arg == "--debug")   config = "Debug";
+    else if (arg == "--config" && i + 1 < args.Length) config = args[++i];
     else if (!arg.StartsWith("--")) outDir = arg;
 }
 
@@ -32,10 +38,12 @@ outDir = Path.GetFullPath(outDir);
 Directory.CreateDirectory(outDir);
 Console.WriteLine($"Output → {outDir}");
 
-var exe = LocateNexusRdmExe()
+var exe = LocateNexusRdmExe(config)
     ?? throw new FileNotFoundException(
-        "Couldn't locate a built NexusRDM.exe. Build the app once before running the recorder.");
+        $"Couldn't locate a built NexusRDM.exe under bin\\x64\\{config}. " +
+        $"Build the app first: msbuild src\\NexusRDM\\NexusRDM.csproj /p:Configuration={config} /p:Platform=x64");
 Console.WriteLine($"App    → {exe}");
+Console.WriteLine($"Config → {config}");
 
 using var app = Application.Launch(new ProcessStartInfo(exe) { UseShellExecute = false });
 using var ua  = new UIA3Automation();
@@ -48,24 +56,75 @@ TrySetSize(win, 1280, 800);
 win.Focus();
 Thread.Sleep(800);
 
+// Resolve the demo button up-front. We need it twice: once to force
+// the app into a known OFF state for the pre-demo screenshot, then
+// again to turn demo on for the rest of the captures.
+Console.WriteLine("Locating demo button…");
+Button? demoBtn = null;
+for (int attempt = 0; attempt < 20 && demoBtn is null; attempt++)
+{
+    demoBtn = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnStartDemo")) as Button;
+    if (demoBtn is null)
+    {
+        // Fallbacks if the build doesn't have the AutomationId yet
+        // (older builds, or in case it gets stripped during release).
+        demoBtn = win.FindFirstDescendant(cf => cf.ByName("Start demo")) as Button;
+        demoBtn ??= win.FindFirstDescendant(cf => cf.ByName("Exit demo")) as Button;
+        demoBtn ??= FindButtonByLabel(win, "Start demo");
+        demoBtn ??= FindButtonByLabel(win, "Exit demo");
+    }
+    if (demoBtn is null) Thread.Sleep(500);
+}
+if (demoBtn is null)
+{
+    DumpButtons(win);
+    throw new InvalidOperationException(
+        "Couldn't find the demo toggle button after 10s. " +
+        "Make sure NexusRDM was rebuilt with the AutomationId change. " +
+        "See stderr above for the list of visible buttons.");
+}
+
+// Force OFF: the previous run may have left demo active. We want the
+// pre-demo screenshot to show a clean Home/sidebar, so flip OFF first
+// if any demo row is present. Detect via "pi-hole" — synthetic-only.
+if (TryFindRow(win, "pi-hole") is not null)
+{
+    Console.WriteLine("Demo was already on — toggling OFF for pre-demo shot…");
+    demoBtn.Click();
+    Thread.Sleep(800);
+    // Wait for rows to disappear (up to 4s).
+    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+    while (DateTime.UtcNow < deadline && TryFindRow(win, "pi-hole") is not null)
+        Thread.Sleep(250);
+}
+Thread.Sleep(500);
+
 // 1. main-window.png — Home tab + sidebar (no demo yet).
 Snap.Window(win, Path.Combine(outDir, "main-window.png"));
 
 // 2. Activate demo. Click "Start demo" on the Home page.
 Console.WriteLine("Activating demo mode…");
-var demoBtn = win.FindFirstDescendant(cf => cf.ByName("Start demo")) as Button
-              ?? throw new InvalidOperationException("Couldn't find the 'Start demo' button.");
 demoBtn.Click();
 Thread.Sleep(800);
 
 // Skip the multi-step tour by clicking Skip-tour on each dialog. We
 // run the recorder unattended; the tour is for end users.
-SkipTourDialogs(win, maxSteps: 8);
-Thread.Sleep(1000);
+SkipTourDialogs(ua, win, maxSteps: 8);
 
-// Force the demo tree to expand fully (mirrors what ConnectionsPane
-// does on demo-active, but we can't always assume timing).
-Thread.Sleep(500);
+// Confirm the synthetic tree populated. Without this, downstream
+// row lookups race the demo activation and silently no-op.
+if (!WaitForRow(win, "pi-hole", TimeSpan.FromSeconds(8)))
+    Console.WriteLine("  (warning: demo rows still not visible after 8s)");
+
+// Force every TreeViewItem to the Expanded state. The data binding
+// sets IsExpanded=true but virtualization can render collapsed; we
+// invoke ExpandCollapse via UIA so screenshots show the full tree.
+ExpandAllTreeItems(win);
+Thread.Sleep(400);
+// Second pass — expanding parents reveals children that weren't in
+// the UIA tree on the first sweep.
+ExpandAllTreeItems(win);
+Thread.Sleep(400);
 
 // 3. context-menu.png — right-click on a managed VM to show the
 // power / detach actions. We pick a known demo row by its name.
@@ -94,25 +153,153 @@ else
 // whole window after demo expansion.
 Snap.Window(win, Path.Combine(outDir, "power-icons.png"));
 
-// 5. proxmox-sync.gif (optional). Records a short clip of the
-// Settings → Proxmox sources panel for the README.
-if (wantGifs)
+// 4. ssh-session.png — open a real SSH session on a demo row. The
+// app is in demo mode, so DemoSshHandler returns a DemoSshSession
+// that emits canned bash output. Type `ls`+Enter to populate the
+// terminal so the screenshot has visible content.
+Console.WriteLine("Capturing SSH session…");
+if (ConnectViaContextMenu(win, "pi-hole"))
 {
-    Console.WriteLine("Recording GIFs (requires ffmpeg)…");
-    if (!FfmpegRecorder.IsAvailable())
-        Console.WriteLine("  ffmpeg not on PATH — skipping all GIFs.");
-    else
+    Thread.Sleep(1500); // let banner + prompt land
+    // Send a couple of canned commands so the terminal isn't empty.
+    Keyboard.Type("ls");
+    Keyboard.Press(VirtualKeyShort.RETURN);
+    Thread.Sleep(400);
+    Keyboard.Type("uptime");
+    Keyboard.Press(VirtualKeyShort.RETURN);
+    Thread.Sleep(400);
+    Keyboard.Type("whoami");
+    Keyboard.Press(VirtualKeyShort.RETURN);
+    Thread.Sleep(500);
+    Snap.Window(win, Path.Combine(outDir, "ssh-session.png"));
+}
+else
+{
+    Console.WriteLine("  (skipped — couldn't connect via context menu)");
+}
+
+// 4a. edit-connection.png — right-click row → click "Edit…" → snap
+// the slide-over panel → close. The edit panel is an in-window
+// overlay (not a separate ContentDialog), so a normal Window snap
+// captures it correctly. Snap once with the row's natural protocol
+// (SSH for pi-hole), then switch to RDP and snap a second shot so
+// the README can show both protocol-specific sections.
+Console.WriteLine("Capturing edit-connection panel…");
+if (OpenEditPanel(win, "pi-hole") || OpenEditPanel(win, "web-prod-01"))
+{
+    Thread.Sleep(900);
+    Snap.Window(win, Path.Combine(outDir, "edit-connection.png"));
+
+    // Flip to RDP and snap a second shot of the RDP-specific section.
+    SetEditProtocol(win, "RDP");
+    Thread.Sleep(700);
+    Snap.Window(win, Path.Combine(outDir, "edit-connection-rdp.png"));
+
+    CloseEditPanel(win);
+    Thread.Sleep(500);
+    if (IsEditPanelOpen(win))
     {
-        // Demo flow GIF: tree expansion already happened. Record a
-        // 6-second clip of the user clicking around the demo tree.
-        await FfmpegRecorder.RecordWindow(
-            win, Path.Combine(outDir, "demo-tour.gif"), durationSeconds: 6);
+        // Last-ditch: ESC twice if the panel somehow survived.
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(300);
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(300);
     }
+}
+else
+{
+    Console.WriteLine("  (skipped — couldn't open Edit… for any demo row)");
+}
+
+// 5. demo-tour.gif. Pure-managed GIF recorder — captures frames via
+// GDI and assembles via GDI+'s built-in animated-GIF encoder. No
+// ffmpeg dependency.
+//
+// Driver intentionally avoids clicking row entries. Demo connections
+// are real protocol entries (SSH/RDP) — single-clicking one in the
+// user's normal click-mode triggers an auth dialog that pegs the
+// recorder. Instead we show motion via right-click context menus
+// (which we want in the README anyway) and the Edit panel.
+{
+    Console.WriteLine("Recording demo-tour.gif…");
+    await GifRecorder.RecordAsync(
+        win,
+        Path.Combine(outDir, "demo-tour.gif"),
+        durationSeconds: 16,
+        targetFps: 10,
+        driveUi: async () =>
+        {
+            await Task.Delay(400);
+
+            // Right-click a row → context menu, then dismiss.
+            var pi = TryFindRow(win, "pi-hole");
+            if (pi is not null)
+            {
+                var b = pi.BoundingRectangle;
+                Mouse.RightClick(new System.Drawing.Point(
+                    (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
+                await Task.Delay(1200);
+                Keyboard.Press(VirtualKeyShort.ESCAPE);
+                await Task.Delay(400);
+            }
+
+            // Open the edit panel on web-prod-01. While open: linger
+            // on the SSH section, switch to RDP, scroll the body to
+            // show advanced options, then exit cleanly.
+            if (OpenEditPanel(win, "web-prod-01"))
+            {
+                await Task.Delay(900);
+
+                SetEditProtocol(win, "SSH");
+                await Task.Delay(1400);
+
+                SetEditProtocol(win, "RDP");
+                await Task.Delay(1400);
+
+                ScrollEditPanel(win, pageDownTimes: 3);
+                await Task.Delay(500);
+
+                CloseEditPanel(win);
+                await Task.Delay(700);
+                if (IsEditPanelOpen(win))
+                {
+                    Keyboard.Press(VirtualKeyShort.ESCAPE);
+                    await Task.Delay(400);
+                }
+            }
+
+            // Final beat — hover db-prod-01 so the GIF closes on a
+            // composed frame instead of a stray cursor location.
+            var db = TryFindRow(win, "db-prod-01");
+            if (db is not null)
+            {
+                var b = db.BoundingRectangle;
+                Mouse.MoveTo(new System.Drawing.Point(
+                    (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
+                await Task.Delay(500);
+            }
+        });
+
+    // Belt-and-suspenders: the edit panel may still be up if the
+    // GIF driver bailed early. Force-close before the next step so
+    // the Settings nav isn't blocked by the modal scrim.
+    if (IsEditPanelOpen(win))
+    {
+        Console.WriteLine("  (edit panel still open after GIF — closing)");
+        CloseEditPanel(win);
+    }
+
+    // Belt-and-suspenders: if a connection auth dialog DID slip
+    // through (e.g. user has SingleClick mode + we hit a row by
+    // accident), close it before continuing.
+    DismissAuthDialogs(ua, win);
 }
 
 // 6. Settings → Proxmox sources screenshot. Navigate, snap, return.
 Console.WriteLine("Navigating to Settings → Proxmox sources…");
-var settingsBtn = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavSettings")) as Button;
+var settingsBtn = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavSettings")) as Button
+                ?? win.FindFirstDescendant(cf => cf.ByName("Settings")) as Button
+                ?? FindButtonByLabel(win, "Settings");
 if (settingsBtn is not null)
 {
     settingsBtn.Click();
@@ -154,16 +341,22 @@ return 0;
 
 // ── helpers ─────────────────────────────────────────────────────────
 
-static string? LocateNexusRdmExe()
+static string? LocateNexusRdmExe(string configuration)
 {
-    // Walk up from this exe to the repo root, then look for any
-    // built NexusRDM.exe under src/NexusRDM/bin. Newest wins.
+    // Walk up from this exe to the repo root, then look for a
+    // NexusRDM.exe under the requested Configuration's bin
+    // directory specifically. We deliberately scope to
+    // bin\x64\<Configuration>\ rather than picking "newest in any
+    // bin folder" — running the Debug recorder against a stale
+    // Release build (or vice versa) leads to confusing "AutomationId
+    // not found" errors when the built copy is missing recent
+    // source changes.
     var dir = AppContext.BaseDirectory;
     for (int i = 0; i < 10 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
     {
-        var src = Path.Combine(dir, "src", "NexusRDM", "bin");
-        if (!Directory.Exists(src)) continue;
-        return Directory.EnumerateFiles(src, "NexusRDM.exe", SearchOption.AllDirectories)
+        var configBin = Path.Combine(dir, "src", "NexusRDM", "bin", "x64", configuration);
+        if (!Directory.Exists(configBin)) continue;
+        return Directory.EnumerateFiles(configBin, "NexusRDM.exe", SearchOption.AllDirectories)
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
     }
@@ -186,18 +379,313 @@ static void TrySetSize(Window w, int width, int height)
     catch { /* best effort */ }
 }
 
-static void SkipTourDialogs(Window root, int maxSteps)
+static void SkipTourDialogs(UIA3Automation ua, Window root, int maxSteps)
 {
-    // Each tour step is a ContentDialog with a "Skip tour" close
-    // button. We click it up to maxSteps times to walk through any
-    // remaining dialogs the recorder may have triggered.
+    // ContentDialogs in WinUI 3 are hosted on a separate top-level
+    // popup window owned by the same process — they're NOT children
+    // of the main Window's UIA subtree. So we have to walk from the
+    // desktop root to find them. We also fall back to scanning all
+    // top-level descendants of our own process.
+    int pid;
+    try { pid = root.Properties.ProcessId.Value; } catch { pid = 0; }
+
     for (int i = 0; i < maxSteps; i++)
     {
-        Thread.Sleep(400);
-        var skip = root.FindFirstDescendant(cf => cf.ByName("Skip tour")) as Button;
+        Thread.Sleep(500);
+        AutomationElement? skip = null;
+        try
+        {
+            // Desktop walk: find any element whose Name == "Skip tour"
+            // belonging to our process. The desktop has many top-level
+            // windows; restrict to our PID to avoid false matches.
+            var desktop = ua.GetDesktop();
+            foreach (var top in desktop.FindAllChildren())
+            {
+                int topPid = 0;
+                try { topPid = top.Properties.ProcessId.Value; } catch { }
+                if (pid != 0 && topPid != pid) continue;
+                skip = top.FindFirstDescendant(cf => cf.ByName("Skip tour"));
+                if (skip is not null) break;
+            }
+        }
+        catch { /* best effort */ }
+
+        // Last resort: try the main-window subtree too, in case some
+        // dialog mode parents back into it.
+        skip ??= root.FindFirstDescendant(cf => cf.ByName("Skip tour"));
+
         if (skip is null) return;
-        skip.Click();
+        try { skip.AsButton().Click(); } catch { try { skip.Click(); } catch { } }
     }
+}
+
+static bool ConnectViaContextMenu(Window root, string rowName)
+{
+    // Right-click the row → click "Connect" in the context menu.
+    // Goes through the Connect command regardless of the user's
+    // single-click vs double-click setting.
+    var row = TryFindRow(root, rowName);
+    if (row is null) return false;
+
+    var b = row.BoundingRectangle;
+    Mouse.RightClick(new System.Drawing.Point(
+        (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
+    Thread.Sleep(700);
+
+    var connect = root.FindFirstDescendant(cf => cf.ByName("Connect"));
+    if (connect is null)
+    {
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(200);
+        return false;
+    }
+    try { connect.AsMenuItem().Click(); }
+    catch { try { connect.Click(); } catch { Keyboard.Press(VirtualKeyShort.ESCAPE); return false; } }
+    return true;
+}
+
+static bool OpenEditPanel(Window root, string rowName)
+{
+    var row = TryFindRow(root, rowName);
+    if (row is null) return false;
+
+    var b = row.BoundingRectangle;
+    Mouse.RightClick(new System.Drawing.Point(
+        (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
+    Thread.Sleep(700);
+
+    // Context menu items live on a separate popup, but unlike
+    // ContentDialogs, MenuFlyout typically attaches into the main
+    // window's UIA tree. Try the main subtree first, fall back to
+    // a desktop walk.
+    var edit = root.FindFirstDescendant(cf => cf.ByName("Edit…"))
+            ?? root.FindFirstDescendant(cf => cf.ByName("Edit…"))
+            ?? root.FindFirstDescendant(cf => cf.ByName("Edit"));
+    if (edit is null)
+    {
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(200);
+        return false;
+    }
+    try { edit.AsMenuItem().Click(); }
+    catch { try { edit.Click(); } catch { Keyboard.Press(VirtualKeyShort.ESCAPE); return false; } }
+    return true;
+}
+
+static void CloseEditPanel(Window root)
+{
+    // The edit panel is a 440-DIP right-anchored slide-over over a
+    // dim scrim. Closing-paths the user can hit:
+    //   1. Footer "Cancel" button (named, easiest)
+    //   2. Header X button (no Name; ToolTip says "Close")
+    //   3. Tap the scrim (the dim area to the left)
+    //   4. Escape
+    // Try them in order and verify the panel is actually gone after
+    // each — the first attempt sometimes misses if focus hasn't
+    // settled on the panel yet.
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        var cancel = root.FindFirstDescendant(cf => cf.ByName("Cancel")) as Button;
+        if (cancel is not null)
+        {
+            try { cancel.Click(); } catch { }
+            Thread.Sleep(450);
+            if (!IsEditPanelOpen(root)) return;
+        }
+
+        var closeBtn = root.FindFirstDescendant(cf => cf.ByName("Close"));
+        if (closeBtn is not null)
+        {
+            try { closeBtn.AsButton().Click(); } catch { try { closeBtn.Click(); } catch { } }
+            Thread.Sleep(450);
+            if (!IsEditPanelOpen(root)) return;
+        }
+
+        // Scrim tap — click well inside the dim area, away from any
+        // demo tree items (top-left of the window content).
+        var b = root.BoundingRectangle;
+        Mouse.Click(new System.Drawing.Point((int)(b.X + 80), (int)(b.Y + 200)));
+        Thread.Sleep(450);
+        if (!IsEditPanelOpen(root)) return;
+
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(450);
+        if (!IsEditPanelOpen(root)) return;
+    }
+    Console.WriteLine("  (warning: edit panel still appears open after close attempts)");
+}
+
+static bool IsEditPanelOpen(Window root)
+{
+    // The footer Save button is unique to the edit panel. If it's
+    // present in the UIA tree, the panel is still showing.
+    return root.FindFirstDescendant(cf => cf.ByName("Save")) is not null;
+}
+
+static void SetEditProtocol(Window root, string protocol)
+{
+    // Protocol ComboBox has Header="Protocol", which UIA exposes
+    // as the element's Name in WinUI 3.
+    var combo = root.FindFirstDescendant(cf =>
+        cf.ByControlType(ControlType.ComboBox).And(cf.ByName("Protocol"))) as ComboBox;
+    if (combo is null) return;
+    try
+    {
+        combo.Click();
+        Thread.Sleep(400);
+        // Pick the item by Name. ComboBox items are surfaced as
+        // ListItem in UIA — not ComboBoxItem.
+        var item = root.FindFirstDescendant(cf =>
+            cf.ByControlType(ControlType.ListItem).And(cf.ByName(protocol)))
+            ?? root.FindFirstDescendant(cf => cf.ByName(protocol));
+        if (item is not null)
+        {
+            try { item.AsListBoxItem().Select(); }
+            catch { try { item.Click(); } catch { } }
+        }
+        else
+        {
+            Keyboard.Press(VirtualKeyShort.ESCAPE);
+        }
+    }
+    catch { /* best effort */ }
+}
+
+static void ScrollEditPanel(Window root, int pageDownTimes)
+{
+    // Pump PageDown into whatever has focus inside the panel. The
+    // ScrollViewer scrolls when the focused element is inside it.
+    // Click the panel body first to make sure focus is there.
+    var b = root.BoundingRectangle;
+    Mouse.Click(new System.Drawing.Point(
+        (int)(b.X + b.Width - 220),
+        (int)(b.Y + b.Height / 2)));
+    Thread.Sleep(200);
+    for (int i = 0; i < pageDownTimes; i++)
+    {
+        Keyboard.Press(VirtualKeyShort.NEXT); // PageDown
+        Thread.Sleep(450);
+    }
+}
+
+static void DismissAuthDialogs(UIA3Automation ua, Window root)
+{
+    // Look across all our process's top-level windows for an auth
+    // dialog (Cancel / Close button) and click the cancel/close.
+    int pid;
+    try { pid = root.Properties.ProcessId.Value; } catch { return; }
+
+    string[] cancelLabels = ["Cancel", "Close", "Dismiss"];
+    for (int round = 0; round < 3; round++)
+    {
+        AutomationElement? cancel = null;
+        try
+        {
+            var desktop = ua.GetDesktop();
+            foreach (var top in desktop.FindAllChildren())
+            {
+                int topPid = 0;
+                try { topPid = top.Properties.ProcessId.Value; } catch { }
+                if (topPid != pid) continue;
+                foreach (var label in cancelLabels)
+                {
+                    cancel = top.FindFirstDescendant(cf => cf.ByName(label));
+                    if (cancel is not null) break;
+                }
+                if (cancel is not null) break;
+            }
+        }
+        catch { return; }
+        if (cancel is null) return;
+        try { cancel.AsButton().Click(); } catch { try { cancel.Click(); } catch { } }
+        Thread.Sleep(400);
+    }
+}
+
+static void ExpandAllTreeItems(Window root)
+{
+    // Connections pane uses a WinUI 3 TreeView. Synthetic demo nodes
+    // bind IsExpanded=true, but on cold activation the realized
+    // TreeViewItems often render collapsed because the binding is
+    // applied before the item is materialized. Fix it by walking the
+    // tree and invoking the ExpandCollapse pattern on every item.
+    foreach (var item in root.FindAllDescendants(cf => cf.ByControlType(ControlType.TreeItem)))
+    {
+        try
+        {
+            var ec = item.Patterns.ExpandCollapse.PatternOrDefault;
+            if (ec is null) continue;
+            if (ec.ExpandCollapseState.Value != ExpandCollapseState.Expanded)
+                ec.Expand();
+        }
+        catch { /* skip items that don't support the pattern */ }
+    }
+}
+
+/// <summary>Last-resort lookup: enumerate every Button in the
+/// window and return the first one whose Name OR descendant text
+/// matches <paramref name="label"/>. Catches the WinUI 3 case where
+/// a code-built Button's string Content doesn't get projected into
+/// the UIA Name property — neither ByName nor ByText finds it from
+/// the root, but the TextBlock that renders the content IS in the
+/// subtree under the Button.</summary>
+static Button? FindButtonByLabel(Window root, string label)
+{
+    var allButtons = root.FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
+    foreach (var b in allButtons)
+    {
+        if (string.Equals(SafeName(b), label, StringComparison.Ordinal))
+            return b.AsButton();
+
+        // Search the button's subtree for any element whose Name
+        // matches — TextBlocks render Content text and usually
+        // expose it as their Name in WinUI 3 even when the parent
+        // Button's Name is empty.
+        try
+        {
+            var match = b.FindFirstDescendant(cf => cf.ByName(label));
+            if (match is not null) return b.AsButton();
+        }
+        catch { /* some elements don't support Name lookup; skip */ }
+    }
+    return null;
+}
+
+// Safe property getter — WinUI 3 surfaces some Button-typed elements
+// (icon-only buttons, bare ToggleButtons) that don't implement the
+// Name pattern. Reading .Name on those throws PropertyNotSupportedException
+// from FlaUI; we want a missing name to mean "skip this candidate",
+// not "abort the whole search".
+static string SafeName(AutomationElement e)
+{
+    try { return e.Name ?? ""; } catch { return ""; }
+}
+
+static string SafeAutomationId(AutomationElement e)
+{
+    try { return e.AutomationId ?? ""; } catch { return ""; }
+}
+
+/// <summary>Dump every visible Button's Name + AutomationId to
+/// stderr — handy diagnostic if the search heuristics all fail.</summary>
+static void DumpButtons(Window root)
+{
+    Console.Error.WriteLine("Visible buttons under main window:");
+    foreach (var b in root.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)))
+    {
+        Console.Error.WriteLine($"  AutomationId='{SafeAutomationId(b)}'  Name='{SafeName(b)}'");
+    }
+}
+
+static bool WaitForRow(Window root, string displayName, TimeSpan timeout)
+{
+    var deadline = DateTime.UtcNow + timeout;
+    while (DateTime.UtcNow < deadline)
+    {
+        if (TryFindRow(root, displayName) is not null) return true;
+        Thread.Sleep(250);
+    }
+    return false;
 }
 
 static AutomationElement? TryFindRow(Window root, string displayName)

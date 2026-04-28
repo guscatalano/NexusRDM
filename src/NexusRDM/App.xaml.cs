@@ -221,7 +221,14 @@ public partial class App : Application
         services.AddSingleton<ICredentialVault, CredentialVault>();
         services.AddSingleton<NexusRDM.Core.Services.IAuditNotifier, NexusRDM.Core.Services.AuditNotifier>();
         services.AddScoped<IConnectionService,  ConnectionService>();
-        services.AddSingleton<ISshHandler,      SshHandler>();
+        // Real SSH handler stays a concrete singleton so the demo
+        // decorator can delegate to it. The interface registration
+        // resolves to DemoSshHandler, which routes to either the real
+        // handler or DemoSshSession based on DemoModeService.IsActive.
+        services.AddSingleton<SshHandler>();
+        services.AddSingleton<ISshHandler>(sp => new Services.DemoSshHandler(
+            sp.GetRequiredService<SshHandler>(),
+            sp.GetRequiredService<Services.DemoModeService>()));
         // RDP backend is a dispatcher that picks Mstsc / MstscAx / FreeRdp at
         // session-open time based on the user's setting. The MstscAx factory
         // lives in this project (Forms host); Core stays UI-agnostic.

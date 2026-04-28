@@ -51,6 +51,8 @@
                             Background="{StaticResource NxBg3}"
                             BorderThickness="0"
                             CornerRadius="6"
+                            AutomationProperties.AutomationId="BtnNavConn"
+                            AutomationProperties.Name="Connections"
                             ToolTipService.ToolTip="Connections">
                         <PathIcon Data="M1,3 L7,3 L7,7 L1,7 Z M9,9 L15,9 L15,13 L9,13 Z M4,7 L4,9 L12,9"
                                   Foreground="{StaticResource NxTx1}"
@@ -66,6 +68,8 @@
                             Background="Transparent"
                             BorderThickness="0"
                             CornerRadius="6"
+                            AutomationProperties.AutomationId="BtnNavAudit"
+                            AutomationProperties.Name="Audit log"
                             ToolTipService.ToolTip="Audit log">
                         <FontIcon Glyph="&#xE9F9;"
                                   FontSize="15"
@@ -83,6 +87,8 @@
                             Background="Transparent"
                             BorderThickness="0"
                             CornerRadius="6"
+                            AutomationProperties.AutomationId="BtnNavSettings"
+                            AutomationProperties.Name="Settings"
                             ToolTipService.ToolTip="Settings">
                         <FontIcon Glyph="&#xE713;"
                                   FontSize="15"
