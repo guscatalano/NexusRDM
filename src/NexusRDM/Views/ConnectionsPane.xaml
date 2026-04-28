@@ -239,7 +239,7 @@
             <TreeView.ItemTemplate>
                 <DataTemplate x:DataType="vm:ConnectionTreeNode">
                     <TreeViewItem ItemsSource="{x:Bind Children}"
-                                  IsExpanded="True"
+                                  IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
                                   Padding="0,2,8,2"
                                   MinHeight="28">
                         <StackPanel Orientation="Horizontal" Spacing="8">

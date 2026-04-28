@@ -114,6 +114,12 @@ public sealed class HyperVSyncService : IDisposable
     /// <see cref="HyperVSyncResult"/>'s Error field.</summary>
     public async Task<HyperVSyncResult> SyncAsync(CancellationToken ct = default)
     {
+        // No-op while demo mode is on — see ProxmoxSyncService for the
+        // matching rationale.
+        var demoCheck = _services.GetService(typeof(DemoModeService)) as DemoModeService;
+        if (demoCheck?.IsActive == true)
+            return new HyperVSyncResult(0, 0, 0, "demo mode");
+
         IReadOnlyList<HyperVVm> vms;
         try { vms = await new HyperVClient().ListVmsAsync(ct).ConfigureAwait(false); }
         catch (Exception ex)
@@ -122,7 +128,7 @@ public sealed class HyperVSyncService : IDisposable
             SyncCompleted?.Invoke(this, fail);
             return fail;
         }
-        return await ApplyVmsAsync(vms, ct).ConfigureAwait(false);
+        return await ApplyVmsAsync(vms, ct, isManual: true).ConfigureAwait(false);
     }
 
     /// <summary>Diff-merge a pre-fetched list of VMs into the DB.
@@ -130,7 +136,8 @@ public sealed class HyperVSyncService : IDisposable
     /// background loop (which already has the data from the agent's
     /// JSON file). Lifted out of SyncAsync so neither path
     /// re-implements it.</summary>
-    private async Task<HyperVSyncResult> ApplyVmsAsync(IReadOnlyList<HyperVVm> vms, CancellationToken ct = default)
+    private async Task<HyperVSyncResult> ApplyVmsAsync(
+        IReadOnlyList<HyperVVm> vms, CancellationToken ct = default, bool isManual = false)
     {
         try
         {
@@ -214,6 +221,25 @@ public sealed class HyperVSyncService : IDisposable
             await db.SaveChangesAsync(ct);
 
             var result = new HyperVSyncResult(inserted, updated, deleted, null);
+
+            // Audit only manual syncs — the background loop fires
+            // every interval and would balloon the log.
+            if (isManual)
+            {
+                try
+                {
+                    var audit = scope.ServiceProvider.GetRequiredService<IAuditRepository>();
+                    await audit.LogAsync(new AuditEntry
+                    {
+                        ConnectionId = Guid.Empty,
+                        DisplayName  = HyperVGroupName,
+                        Action       = AuditAction.Synced,
+                        Detail       = $"Hyper-V sync: +{inserted} ✎{updated} −{deleted}",
+                    }, ct);
+                }
+                catch { /* audit failure shouldn't undo a successful sync */ }
+            }
+
             SyncCompleted?.Invoke(this, result);
             return result;
         }

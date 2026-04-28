@@ -154,7 +154,7 @@
                 <Grid x:Name="ConnView">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition x:Name="SidebarColumn" Width="240" MinWidth="160" MaxWidth="900" />
-                        <ColumnDefinition Width="4" />
+                        <ColumnDefinition Width="6" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
@@ -162,11 +162,16 @@
                                            Grid.Column="0"
                                            Background="{StaticResource NxBg1}" />
 
-                    <!-- Hand-rolled splitter: a 4-px Border that captures
+                    <!-- Hand-rolled splitter: a 6-px Border that captures
                          pointer drags and adjusts SidebarColumn.Width.
-                         WinUI 3 doesn't ship a built-in GridSplitter, and
-                         dragging a column boundary is a 20-line problem
-                         that doesn't justify a new package. -->
+                         WinUI 3 doesn't ship a built-in GridSplitter,
+                         and dragging a column boundary is a 20-line
+                         problem that doesn't justify a new package.
+                         Width bumped from 4 → 6 + hover-highlight so
+                         users can find it; ProtectedCursor would be
+                         the proper resize-arrow signal but it's
+                         protected on UIElement (only accessible from
+                         a subclass), so we use the highlight instead. -->
                     <Border x:Name="SidebarSplitter"
                             Grid.Column="1"
                             Background="{StaticResource NxBrd}"
@@ -175,7 +180,8 @@
                             PointerMoved="SidebarSplitter_PointerMoved"
                             PointerReleased="SidebarSplitter_PointerReleased"
                             PointerEntered="SidebarSplitter_PointerEntered"
-                            PointerExited="SidebarSplitter_PointerExited" />
+                            PointerExited="SidebarSplitter_PointerExited"
+                            ToolTipService.ToolTip="Drag to resize the connections panel" />
 
                     <!-- When collapsed: a thin reveal strip with an
                          expand button. The pane itself sits at width 0,

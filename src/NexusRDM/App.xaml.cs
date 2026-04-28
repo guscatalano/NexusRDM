@@ -238,6 +238,7 @@ public partial class App : Application
         services.AddSingleton<Services.ProxmoxPowerService>();
         services.AddSingleton<Services.ProxmoxConsoleService>();
         services.AddSingleton<Services.NetworkDiscoveryService>();
+        services.AddSingleton<Services.DemoModeService>();
         services.AddSingleton<Services.HyperVClient>();
         services.AddSingleton<Services.HyperVSyncService>();
 

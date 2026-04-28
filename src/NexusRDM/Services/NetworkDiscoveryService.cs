@@ -219,6 +219,22 @@ public sealed class NetworkDiscoveryService : IDisposable
                 Found:    found,
                 Inserted: inserted,
                 Error:    null);
+
+            // Audit log: one entry per scan summarising the result.
+            try
+            {
+                using var scope = _services.CreateScope();
+                var audit = scope.ServiceProvider.GetRequiredService<NexusRDM.Core.Interfaces.IAuditRepository>();
+                await audit.LogAsync(new NexusRDM.Core.Models.AuditEntry
+                {
+                    ConnectionId = Guid.Empty,
+                    DisplayName  = "Network discovery",
+                    Action       = NexusRDM.Core.Models.AuditAction.Synced,
+                    Detail       = $"{cidr}: probed {result.Probed}, found {result.Found}, added {result.Inserted}",
+                }, ct).ConfigureAwait(false);
+            }
+            catch { /* non-fatal */ }
+
             ScanCompleted?.Invoke(this, result);
             return result;
         }

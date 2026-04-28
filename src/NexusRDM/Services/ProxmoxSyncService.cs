@@ -69,6 +69,13 @@ public sealed class ProxmoxSyncService
 
     public async Task<SyncResult> SyncAsync(Guid sourceId, CancellationToken ct = default)
     {
+        // While demo mode is on, every sync is a no-op — the demo
+        // tree is fake-fixed and we don't want background sync
+        // mutating real DB rows the user can't see.
+        var demoCheck = _services.GetService(typeof(NexusRDM.Services.DemoModeService))
+            as NexusRDM.Services.DemoModeService;
+        if (demoCheck?.IsActive == true) return SyncResult.SkippedReason("demo mode");
+
         using var scope = _services.CreateScope();
         var sp      = scope.ServiceProvider;
         var db      = sp.GetRequiredService<NexusDbContext>();
@@ -210,6 +217,22 @@ public sealed class ProxmoxSyncService
 
         await db.SaveChangesAsync(ct);
         (client as IDisposable)?.Dispose();
+
+        // Audit-log the sync. ConnectionId stays Guid.Empty since
+        // a sync isn't bound to a single connection — DisplayName +
+        // Detail carry the source label and the per-action counts.
+        try
+        {
+            var audit = sp.GetRequiredService<IAuditRepository>();
+            await audit.LogAsync(new AuditEntry
+            {
+                ConnectionId = Guid.Empty,
+                DisplayName  = source.Name,
+                Action       = AuditAction.Synced,
+                Detail       = $"Proxmox sync: +{inserted} ✎{updated} −{deleted} ⤼{skipped}",
+            }, ct);
+        }
+        catch { /* audit failure shouldn't undo a successful sync */ }
 
         SourceSynced?.Invoke(this, sourceId);
         return new SyncResult(inserted, updated, deleted, skipped);

@@ -19,6 +19,40 @@ public sealed partial class ConnectionsPane : UserControl
         ViewModel = App.Services.GetRequiredService<ConnectionsViewModel>();
         InitializeComponent();
         _ = ViewModel.LoadAsync();
+
+        // Force every group node to expand whenever demo mode flips
+        // on — TwoWay binding means user collapses persist within a
+        // session, but on entry to the demo we want the synthetic
+        // tree fully visible without a manual click.
+        try
+        {
+            var demo = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
+            demo.IsActiveChanged += (_, _) =>
+            {
+                if (!demo.IsActive) return;
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    foreach (var n in EnumerateAllNodes(ViewModel.RootItems))
+                    {
+                        // Toggle through false to force PropertyChanged
+                        // for nodes already at true.
+                        if (n.IsExpanded) n.IsExpanded = false;
+                        n.IsExpanded = true;
+                    }
+                });
+            };
+        }
+        catch { /* DI not ready */ }
+    }
+
+    private static IEnumerable<ConnectionTreeNode> EnumerateAllNodes(
+        IEnumerable<ConnectionTreeNode> roots)
+    {
+        foreach (var n in roots)
+        {
+            yield return n;
+            foreach (var c in EnumerateAllNodes(n.Children)) yield return c;
+        }
     }
 
     private void ConnectionTree_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
@@ -404,6 +438,7 @@ public sealed partial class ConnectionsPane : UserControl
         try
         {
             var upid = await power.InvokeAsync(profile, action);
+            await LogPowerActionAsync(profile, $"Proxmox {action}", $"UPID: {upid}");
             var dlg = new ContentDialog
             {
                 Title           = $"{action} triggered",
@@ -527,6 +562,7 @@ public sealed partial class ConnectionsPane : UserControl
             // longer exists — System.Management can't load inside
             // a WinUI 3 host.
             var rv = await client.RequestStateChangeAsync(vmId, action);
+            await LogPowerActionAsync(profile, $"Hyper-V {action}", $"WMI return code {rv}");
             // Per the spec: 0 = completed synchronously, 4096 = job
             // started (the guest will transition shortly). Anything
             // else is a Hyper-V error code; surfacing it lets advanced
@@ -693,6 +729,27 @@ public sealed partial class ConnectionsPane : UserControl
         }
     }
 
+    /// <summary>Write a "PowerAction" audit row for user-triggered
+    /// Start / Stop / Reboot / Save (etc.) operations. Best effort —
+    /// audit failure must never undo the underlying action.</summary>
+    private static async Task LogPowerActionAsync(
+        NexusRDM.Core.Models.ConnectionProfile profile, string action, string? detail)
+    {
+        try
+        {
+            using var scope = App.Services.CreateScope();
+            var audit = scope.ServiceProvider.GetRequiredService<NexusRDM.Core.Interfaces.IAuditRepository>();
+            await audit.LogAsync(new NexusRDM.Core.Models.AuditEntry
+            {
+                ConnectionId = profile.Id,
+                DisplayName  = profile.DisplayName,
+                Action       = NexusRDM.Core.Models.AuditAction.PowerAction,
+                Detail       = detail is null ? action : $"{action} — {detail}",
+            });
+        }
+        catch { }
+    }
+
     private async Task DetachManagedAsync(ConnectionTreeNode node)
     {
         if (node.Profile is not { } profile) return;
@@ -715,10 +772,31 @@ public sealed partial class ConnectionsPane : UserControl
         var row = await db.Connections.FirstOrDefaultAsync(c => c.Id == profile.Id);
         if (row is null) return;
 
+        var formerExternalId = row.ExternalId;
         row.IsManaged        = false;
         row.ExternalSourceId = null;
         row.ExternalId       = null;
         await db.SaveChangesAsync();
+
+        // Audit the detach so the user has a record of which row
+        // stopped being managed and from which source. Lookup goes
+        // through the same scope as the DB write so we don't
+        // double-pay on DI resolution.
+        try
+        {
+            var audit = scope.ServiceProvider.GetRequiredService<NexusRDM.Core.Interfaces.IAuditRepository>();
+            var source = formerExternalId is { } id && id.StartsWith("hyperv:")
+                ? "Hyper-V"
+                : "Proxmox";
+            await audit.LogAsync(new NexusRDM.Core.Models.AuditEntry
+            {
+                ConnectionId = profile.Id,
+                DisplayName  = profile.DisplayName,
+                Action       = NexusRDM.Core.Models.AuditAction.Detached,
+                Detail       = $"Detached from {source} (was {formerExternalId ?? "managed"})",
+            });
+        }
+        catch { /* non-fatal */ }
 
         await ViewModel.LoadAsync();
     }

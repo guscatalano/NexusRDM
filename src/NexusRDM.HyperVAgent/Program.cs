@@ -178,15 +178,29 @@ internal static class Program
     private static uint RequestStateChange(string vmId, string action)
     {
         if (string.IsNullOrWhiteSpace(vmId)) throw new ArgumentException("vmid required.");
-        var requested = action.ToLowerInvariant() switch
+        var act = action.ToLowerInvariant();
+
+        // Hyper-V v2 uses Msvm_ComputerSystem.RequestStateChange's
+        // (RequestedState, TimeoutPeriod) tuple to differentiate
+        // graceful vs hard power-off — there is NO separate
+        // "TurnOff" RequestedState. Both shutdown and stop pass 3
+        // (Disabled); the difference is whether we set
+        // TimeoutPeriod = 0 (force immediately, hard cut) or leave
+        // it unset (graceful via integration services).
+        // Save uses 32773 (Saved). Reboot uses 11 (Reset).
+        // Earlier values like 32768/32769 are NOT valid input states
+        // in v2 (they're transient outputs); calling RequestStateChange
+        // with them returns 32775 "Invalid state for this operation".
+        var requested = act switch
         {
-            "start"    => (ushort)2,      // Enabled
-            "shutdown" => (ushort)3,      // Disabled (graceful)
-            "stop"     => (ushort)32769,  // Off (hard)
-            "reboot"   => (ushort)11,     // Reset
-            "save"     => (ushort)32773,  // Saved
+            "start"    => (ushort)2,
+            "shutdown" => (ushort)3,
+            "stop"     => (ushort)3,
+            "reboot"   => (ushort)11,
+            "save"     => (ushort)32773,
             _ => throw new ArgumentException($"unknown action '{action}'"),
         };
+        var forceImmediate = act == "stop";
 
         using var searcher = new ManagementObjectSearcher(
             BuildScope(),
@@ -197,6 +211,12 @@ internal static class Program
         {
             var args = vm.GetMethodParameters("RequestStateChange");
             args["RequestedState"] = requested;
+            // CIM datetime "interval" format: DDDDDDDDHHMMSS.mmmmmm:000
+            // Zeroes throughout = "force immediately, no grace period."
+            // PowerShell's Stop-VM -TurnOff sends this exact value.
+            if (forceImmediate)
+                args["TimeoutPeriod"] = "00000000000000.000000:000";
+
             using var result = vm.InvokeMethod("RequestStateChange", args, null);
             return Convert.ToUInt32(result["ReturnValue"]);
         }

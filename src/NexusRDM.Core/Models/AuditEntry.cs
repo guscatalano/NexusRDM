@@ -1,6 +1,16 @@
 namespace NexusRDM.Core.Models;
 
-public enum AuditAction { Connected, Disconnected, Failed, Created, Updated, Deleted }
+public enum AuditAction
+{
+    // Original actions (per-connection lifecycle).
+    Connected, Disconnected, Failed, Created, Updated, Deleted,
+    // Newer actions (per-integration / per-action). Append-only:
+    // existing rows in the AuditLog table store the action as int,
+    // so reordering would silently rewrite history.
+    Synced,        // sync run completed (Proxmox / Hyper-V / Discovery)
+    PowerAction,   // user triggered Start / Stop / Reboot / etc.
+    Detached,      // user detached a row from its sync source
+}
 
 public class AuditEntry
 {
