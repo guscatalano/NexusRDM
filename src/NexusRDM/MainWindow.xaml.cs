@@ -182,6 +182,15 @@ public sealed partial class MainWindow : Window
             Margin = new Thickness(0, 4, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
+        // Pin BOTH a stable AutomationId and an explicit
+        // AutomationProperties.Name so the FlaUI demo recorder can
+        // find this button by either route. Code-built Buttons in
+        // WinUI 3 don't always project string Content into the UIA
+        // Name (the property is left blank, so ByName / ByText
+        // searches miss). Setting these two explicitly gives UIA
+        // tooling a deterministic hook.
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(demoButton, "BtnStartDemo");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(demoButton, "Start demo");
         demoButton.Click += async (_, _) => await OnDemoButtonAsync(demoButton);
         var demoTop = App.Services.GetRequiredService<NexusRDM.Services.DemoModeService>();
         demoButton.Content = demoTop.IsActive ? "Exit demo" : "Start demo";
@@ -804,6 +813,14 @@ public sealed partial class MainWindow : Window
 
     private async Task<(string? Username, string? Password)> ResolveCredentialsAsync(ConnectionProfile profile)
     {
+        // In demo mode every connection is a synthetic backing
+        // (DemoSshSession / future RDP equivalent). Skip the auth
+        // prompt entirely — it would block the user from exploring
+        // the terminal pane and pegs the recorder.
+        var demo = App.Services.GetService<NexusRDM.Services.DemoModeService>();
+        if (demo is not null && demo.IsActive)
+            return ("demo", "demo");
+
         if (profile.CredentialKey is not null)
         {
             var c = _vault.Load(profile.CredentialKey);

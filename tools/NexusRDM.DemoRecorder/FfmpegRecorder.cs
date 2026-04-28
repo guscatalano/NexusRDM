@@ -4,17 +4,12 @@ using FlaUI.Core.AutomationElements;
 namespace NexusRDM.DemoRecorder;
 
 /// <summary>
-/// Optional GIF capture via ffmpeg's <c>gdigrab</c> input. Skipped
-/// gracefully when ffmpeg isn't on PATH — it's a heavy dependency
-/// and most users will probably hand-record GIFs with ScreenToGif
-/// instead. The PNG-screenshot pipeline is the primary deliverable;
-/// GIFs are an optional polish layer.
-///
-/// The two-stage approach (mp4 → palette → gif) is the standard
-/// "good-quality animated GIF" recipe — ffmpeg's default GIF
-/// encoder uses an adaptive palette per frame which produces
-/// dithered noise. Passing a precomputed palette via <c>palettegen</c>
-/// + <c>paletteuse</c> looks dramatically better at the same size.
+/// Optional GIF capture via ffmpeg's <c>gdigrab</c> input. The
+/// pure-managed <see cref="GifRecorder"/> is the default path; this
+/// is kept as an alternative for users who already have ffmpeg on
+/// PATH and want its higher-quality palette pipeline. Two-stage
+/// palette generation (mp4 → palettegen → paletteuse) produces
+/// noticeably less dithering than ffmpeg's adaptive default.
 /// </summary>
 internal static class FfmpegRecorder
 {
