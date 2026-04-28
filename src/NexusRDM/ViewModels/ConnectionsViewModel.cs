@@ -62,21 +62,28 @@ public sealed partial class ConnectionsViewModel : ObservableObject
         // And for the Hyper-V integration — same shape, same refresh.
         hyperVSync.SyncCompleted += (_, _) => RefreshTreeFromBackground();
 
-        // Display-only Proxmox toggle (power-state icon). Not a sync;
-        // just push the new flag into every existing node so the icon
-        // hides/shows without waiting for the cluster.
-        SettingsStore.ProxmoxDisplaySettingsChanged += (_, _) => ApplyProxmoxDisplaySettings();
+        // Display-only toggles for the power-state icon (one toggle
+        // per source). Not a sync; just push the new flag into every
+        // existing node so the icon hides/shows without waiting for a
+        // cluster / WMI roundtrip.
+        SettingsStore.ProxmoxDisplaySettingsChanged += (_, _) => ApplyDisplaySettings();
+        SettingsStore.HyperVDisplaySettingsChanged  += (_, _) => ApplyDisplaySettings();
     }
 
-    private void ApplyProxmoxDisplaySettings()
+    private void ApplyDisplaySettings()
     {
-        var show = SettingsStore.ReadProxmoxShowPowerState();
+        var pveShow = SettingsStore.ReadProxmoxShowPowerState();
+        var hvShow  = SettingsStore.ReadHyperVShowPowerState();
         var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
                        ?? App.MainWin?.DispatcherQueue;
         void Apply()
         {
             foreach (var n in EnumerateProfileNodes(RootItems))
-                n.ShowPowerState = show;
+            {
+                var isHv = n.Profile?.ExternalId is { } id
+                           && id.StartsWith("hyperv:", System.StringComparison.Ordinal);
+                n.ShowPowerState = isHv ? hvShow : pveShow;
+            }
         }
         if (dispatcher is null) Apply();
         else dispatcher.TryEnqueue(Apply);
@@ -503,7 +510,32 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     [NotifyPropertyChangedFor(nameof(PowerStateGlyph))]
     [NotifyPropertyChangedFor(nameof(PowerStateColor))]
     [NotifyPropertyChangedFor(nameof(PowerStateVisibility))]
+    [NotifyPropertyChangedFor(nameof(PowerStateTooltip))]
     private NexusRDM.Services.ProxmoxPowerState _powerState = NexusRDM.Services.ProxmoxPowerState.Unknown;
+
+    /// <summary>UTC timestamp of the most recent sync that wrote this
+    /// row's power state. Null = never synced. Drives the
+    /// <see cref="IsPowerStateStale"/> flag so the icon dims and the
+    /// tooltip flips to "Stale — last seen … N min ago" when the
+    /// cache hasn't been refreshed in a while.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PowerStateGlyph))]
+    [NotifyPropertyChangedFor(nameof(PowerStateColor))]
+    [NotifyPropertyChangedFor(nameof(PowerStateTooltip))]
+    [NotifyPropertyChangedFor(nameof(IsPowerStateStale))]
+    private DateTime? _powerStateUpdatedAt;
+
+    /// <summary>True when the cached state is older than 10 minutes.
+    /// Picks a single conservative threshold rather than chasing each
+    /// source's sync interval — most setups poll every 1–15 min, so
+    /// 10 covers the common case while still flagging genuinely
+    /// out-of-date data on manual-sync (Hyper-V) integrations.
+    /// Visual cue is a desaturated color (the play/stop/pause glyph
+    /// shape stays put) so it doesn't collide with the latency "?"
+    /// that means "no measurement". Tooltip carries the age.</summary>
+    public bool IsPowerStateStale =>
+        PowerStateUpdatedAt is { } at
+        && DateTime.UtcNow - at > TimeSpan.FromMinutes(10);
 
     /// <summary>Mirrors <c>ProxmoxShowPowerState</c> — pushed in by
     /// ConnectionsViewModel when the user toggles the option so the
@@ -521,7 +553,9 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         _ => string.Empty,
     };
 
-    public Color PowerStateColor => PowerState switch
+    public Color PowerStateColor => IsPowerStateStale
+        ? Color.FromArgb(0xFF, 0x80, 0x80, 0x90)   // muted gray when stale
+        : PowerState switch
     {
         NexusRDM.Services.ProxmoxPowerState.Running => Color.FromArgb(0xFF, 0x3D, 0xD6, 0x8C),
         NexusRDM.Services.ProxmoxPowerState.Stopped => Color.FromArgb(0xFF, 0xA0, 0xA0, 0xB0),
@@ -535,6 +569,38 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         && ShowPowerState
         && PowerState != NexusRDM.Services.ProxmoxPowerState.Unknown
             ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Hover text for the power-state glyph. The icons alone
+    /// aren't always self-evident at 11px — the tooltip spells out
+    /// what each state means so a screen-reader / hover lands on real
+    /// words rather than a Segoe codepoint.</summary>
+    public string PowerStateTooltip
+    {
+        get
+        {
+            var label = PowerState switch
+            {
+                NexusRDM.Services.ProxmoxPowerState.Running => "Running",
+                NexusRDM.Services.ProxmoxPowerState.Stopped => "Stopped",
+                NexusRDM.Services.ProxmoxPowerState.Paused  => "Paused",
+                _ => string.Empty,
+            };
+            if (string.IsNullOrEmpty(label)) return string.Empty;
+            if (!IsPowerStateStale) return label;
+
+            // Stale: surface the last-known value AND how long ago we
+            // saw it, so the user knows whether to trust the dot.
+            if (PowerStateUpdatedAt is { } at)
+            {
+                var age = DateTime.UtcNow - at;
+                var ago = age.TotalMinutes < 60
+                    ? $"{(int)age.TotalMinutes} min ago"
+                    : $"{age.TotalHours:F1} hours ago";
+                return $"Stale — last seen {label} {ago}. Click Sync to refresh.";
+            }
+            return $"Stale — last seen {label}.";
+        }
+    }
 
     public Color PingIconColor => PingState switch
     {
@@ -575,19 +641,40 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         SeedPowerState(p.Id);
     }
 
-    /// <summary>Pull last-known Proxmox power state so the tree's
-    /// running/stopped/paused glyph survives reloads. Same mechanism
-    /// as <see cref="SeedPingState"/>.</summary>
+    /// <summary>Pull last-known power state so the tree's
+    /// running/stopped/paused glyph survives reloads. Source-aware:
+    /// Hyper-V rows (ExternalId starts with "hyperv:") read from
+    /// HyperVSyncService; everything else managed reads from
+    /// ProxmoxSyncService. The visibility flag also follows source
+    /// so each toggle controls only its own VMs.</summary>
     private void SeedPowerState(Guid connectionId)
     {
         try
         {
-            if (App.Services?.GetService(typeof(NexusRDM.Services.ProxmoxSyncService))
-                is NexusRDM.Services.ProxmoxSyncService sync)
+            var isHv = Profile?.ExternalId is { } id
+                       && id.StartsWith("hyperv:", StringComparison.Ordinal);
+            if (isHv)
             {
-                _powerState = sync.GetPowerState(connectionId);
+                if (App.Services?.GetService(typeof(NexusRDM.Services.HyperVSyncService))
+                    is NexusRDM.Services.HyperVSyncService hv)
+                {
+                    var info = hv.GetPowerStateInfo(connectionId);
+                    _powerState = info.State;
+                    _powerStateUpdatedAt = info.UpdatedAtUtc;
+                }
+                _showPowerState = SettingsStore.ReadHyperVShowPowerState();
             }
-            _showPowerState = SettingsStore.ReadProxmoxShowPowerState();
+            else
+            {
+                if (App.Services?.GetService(typeof(NexusRDM.Services.ProxmoxSyncService))
+                    is NexusRDM.Services.ProxmoxSyncService sync)
+                {
+                    var info = sync.GetPowerStateInfo(connectionId);
+                    _powerState = info.State;
+                    _powerStateUpdatedAt = info.UpdatedAtUtc;
+                }
+                _showPowerState = SettingsStore.ReadProxmoxShowPowerState();
+            }
         }
         catch { /* tests / pre-DI — defaults are fine */ }
     }
@@ -633,6 +720,43 @@ public sealed partial class ConnectionTreeNode : ObservableObject
         BadgeText       = p.Protocol == ConnectionProtocol.Ssh ? "SSH" : "RDP";
         BadgeVisibility = Visibility.Visible;
         IsManaged       = p.IsManaged;
+        // Sync just wrote fresh values into ProxmoxSyncService /
+        // HyperVSyncService's caches; pull the new state in so the
+        // power-state glyph reflects reality. Without this, a node
+        // created before the first sync stays Unknown forever (the
+        // ctor seeded from an empty cache, the diff-merge reused the
+        // node, and SeedPowerState was never re-run).
+        RefreshPowerState();
+    }
+
+    /// <summary>Pull the latest power state from whichever sync
+    /// service owns this row. Goes through the public
+    /// <see cref="PowerState"/> property so the
+    /// <c>NotifyPropertyChangedFor</c> chain fires and the bound
+    /// FontIcon re-evaluates its visibility.</summary>
+    public void RefreshPowerState()
+    {
+        if (Profile is null) return;
+        try
+        {
+            var isHv = Profile.ExternalId is { } id
+                       && id.StartsWith("hyperv:", StringComparison.Ordinal);
+            if (isHv && App.Services?.GetService(typeof(NexusRDM.Services.HyperVSyncService))
+                is NexusRDM.Services.HyperVSyncService hv)
+            {
+                var info = hv.GetPowerStateInfo(Profile.Id);
+                PowerState = info.State;
+                PowerStateUpdatedAt = info.UpdatedAtUtc;
+            }
+            else if (!isHv && App.Services?.GetService(typeof(NexusRDM.Services.ProxmoxSyncService))
+                is NexusRDM.Services.ProxmoxSyncService pve)
+            {
+                var info = pve.GetPowerStateInfo(Profile.Id);
+                PowerState = info.State;
+                PowerStateUpdatedAt = info.UpdatedAtUtc;
+            }
+        }
+        catch { /* DI unavailable in tests */ }
     }
 
     /// <summary>In-place update for group nodes. Reads display fields
@@ -651,15 +775,35 @@ public sealed partial class ConnectionTreeNode : ObservableObject
     /// without re-querying the DB.</summary>
     public Guid? GroupId { get; }
 
-    /// <summary>True when the underlying profile was imported from a
-    /// Proxmox sync. Surfaces a small "P" pill in the tree so the user
-    /// can tell synced rows from manual ones at a glance.</summary>
+    /// <summary>True when the underlying profile was imported from
+    /// any auto-sync (Proxmox cluster, Hyper-V host, …). Surfaces a
+    /// small per-source pill in the tree so the user can tell synced
+    /// rows from manual ones at a glance — and from each other.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ManagedBadgeVisibility))]
+    [NotifyPropertyChangedFor(nameof(ManagedBadgeText))]
     private bool _isManaged;
 
     public Visibility ManagedBadgeVisibility =>
         IsManaged ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Three-letter source label drawn inside the managed
+    /// pill. Differentiating Proxmox ("PVE") from Hyper-V ("HV")
+    /// avoids the "what does P mean here?" confusion the original
+    /// generic-P badge caused on Hyper-V rows. Falls back to an
+    /// ambiguous "SYNC" if a future source forgets to add itself.</summary>
+    public string ManagedBadgeText
+    {
+        get
+        {
+            if (Profile is not { ExternalId: { } extId }) return string.Empty;
+            if (extId.StartsWith("hyperv:", StringComparison.Ordinal)) return "HV";
+            // Proxmox is the original source — no prefix in ExternalId
+            // (it's "{node}/{type}/{vmid}"). Anything that's managed
+            // and isn't another known prefix is treated as Proxmox.
+            return "PVE";
+        }
+    }
 
     /// <summary>Set on group nodes that are the root group of a
     /// registered Proxmox source. Drives the "Sync now" entry in the

@@ -1,250 +1,178 @@
-using System.Management;
 using System.Security.Principal;
+using System.Text.Json;
 using System.Xml.Linq;
 
 namespace NexusRDM.Services;
 
 /// <summary>
-/// Thin wrapper over the local Hyper-V WMI surface
-/// (<c>\\.\root\virtualization\v2</c>). All calls run on a worker
-/// thread because <see cref="ManagementObjectSearcher"/> is
-/// synchronous; the public methods take a CT for cancellation
-/// at the dispatch level even though the underlying WMI work
-/// is uninterruptible mid-query.
+/// Hyper-V access from the WinUI host. All WMI work lives in the
+/// elevated <c>NexusRDM.HyperVAgent.exe</c> sidekick — the
+/// <c>System.Management</c> package can't load inside a WinUI 3
+/// process (its <see cref="System.Management.ManagementOptions"/>
+/// ctor throws <see cref="System.PlatformNotSupportedException"/>
+/// for anything that isn't a WPF / WinForms / console "desktop
+/// application"). Every public method here launches the agent with
+/// <c>Verb="runas"</c>, which triggers a UAC consent prompt; on
+/// approval the agent runs unrestricted (its manifest declares
+/// <c>requireAdministrator</c>) and writes JSON results to a temp
+/// file we read back.
 ///
-/// Requires the user to be in the local <c>Hyper-V Administrators</c>
-/// group (or running elevated). Without that, queries silently return
-/// empty — same UX trap as Proxmox's Privsep=1 tokens. The
-/// <see cref="DiagnoseAccessAsync"/> helper distinguishes "no VMs"
-/// from "no access" so the Test button can surface the right message.
+/// Practical implications:
+///   - One UAC prompt per public call. Test, Sync, Power actions
+///     each prompt once.
+///   - There's no scheduled / silent path — periodic timers would
+///     hammer the user with prompts, so the manual Sync button is
+///     the only invocation point.
+///   - <see cref="TryExtractIp"/> stays exported (and tested) because
+///     it's pure XML parsing with no WMI dependency.
 /// </summary>
 public sealed class HyperVClient
 {
-    private const string ScopePath = @"\\.\root\virtualization\v2";
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-    /// <summary>WMI scope with explicit impersonation + packet
-    /// privacy. Default <see cref="ManagementScope"/> options run with
-    /// <c>ImpersonationLevel.Default</c>, which under UAC's filtered-
-    /// token model authenticates without the user's "Hyper-V
-    /// Administrators" membership — the query connects but returns
-    /// zero rows. Mirroring the options that PowerShell's
-    /// <c>Get-VM</c> and Hyper-V Manager use makes the call work as a
-    /// regular (non-elevated) member of that group.</summary>
-    private static ManagementScope BuildScope()
-    {
-        var options = new ConnectionOptions
-        {
-            Impersonation  = ImpersonationLevel.Impersonate,
-            Authentication = AuthenticationLevel.PacketPrivacy,
-            EnablePrivileges = true,
-        };
-        var scope = new ManagementScope(ScopePath, options);
-        scope.Connect();
-        return scope;
-    }
-
-    public Task<IReadOnlyList<HyperVVm>> ListVmsAsync(CancellationToken ct = default) =>
-        Task.Run<IReadOnlyList<HyperVVm>>(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            var list = new List<HyperVVm>();
-            var scope = BuildScope();
-            using var searcher = new ManagementObjectSearcher(
-                scope,
-                new ObjectQuery("SELECT Name, ElementName, EnabledState FROM Msvm_ComputerSystem WHERE Caption='Virtual Machine'"));
-            foreach (ManagementObject vm in searcher.Get())
-            {
-                var id     = vm["Name"]        as string ?? "";
-                var name   = vm["ElementName"] as string ?? id;
-                var state  = Convert.ToUInt16(vm["EnabledState"]);
-                list.Add(new HyperVVm(id, name, MapState(state), TryReadIp(vm, scope)));
-            }
-            return list;
-        }, ct);
-
-    /// <summary>True when the WMI namespace exists and we can list at
-    /// least the root provider — distinguishes "Hyper-V isn't installed"
-    /// or "user lacks permission" from "no VMs configured".
-    ///
-    /// Also checks whether the current process is elevated and whether
-    /// the user is in the local <c>Hyper-V Administrators</c> group
-    /// (SID <c>S-1-5-32-578</c>). Without one of those, WMI's connect
-    /// usually succeeds but enumeration silently returns zero rows —
-    /// the most common "looks fine, finds nothing" trap. Surfacing
-    /// both up front saves a debugging round-trip.</summary>
-    public Task<HyperVDiagnosis> DiagnoseAccessAsync(CancellationToken ct = default) =>
-        Task.Run(() =>
-        {
-            var (isElevated, isHvAdmin) = IdentityChecks();
-
-            try
-            {
-                var scope = BuildScope();
-                if (!scope.IsConnected) return new HyperVDiagnosis(false, "WMI scope did not connect.");
-
-                using var searcher = new ManagementObjectSearcher(scope,
-                    new ObjectQuery("SELECT Name FROM Msvm_ComputerSystem WHERE Caption='Virtual Machine'"));
-                var count = searcher.Get().Count;
-
-                if (count > 0)
-                    return new HyperVDiagnosis(true, $"Connected. {count} VM(s) visible.");
-
-                // Zero VMs returned with Impersonate + PacketPrivacy.
-                // We CAN'T tell from here whether the user is in
-                // Hyper-V Administrators: WindowsPrincipal.IsInRole
-                // reports the FILTERED token (UAC strips admin-
-                // equivalent group memberships from non-elevated
-                // processes), so a non-elevated user in the group
-                // shows up as not-in-the-group. Don't make a
-                // confident claim either way — list the real
-                // possibilities so the user can self-diagnose with
-                // `whoami /groups`.
-                var msg =
-                    "Connected, but 0 VMs visible. Most common causes:\n" +
-                    "  1. The host genuinely has no VMs (try `Get-VM` in PowerShell).\n" +
-                    "  2. You're in 'Hyper-V Administrators' but haven't signed out since " +
-                    "being added — group memberships only land in the access token at logon.\n" +
-                    "  3. You're not in 'Hyper-V Administrators' at all. Run `whoami /groups | findstr Hyper-V` " +
-                    "to check; add yourself with `Add-LocalGroupMember -Group \"Hyper-V Administrators\" -Member $env:USERNAME` " +
-                    "and sign out + back in.";
-                if (!isElevated && !isHvAdmin)
-                    msg += "\n\n(Note: NexusRDM is running unelevated, so we can't reliably " +
-                           "verify Hyper-V Administrators membership from here — the value above " +
-                           "may be a UAC-filtered-token false negative. PowerShell's `whoami /groups` " +
-                           "is authoritative.)";
-                return new HyperVDiagnosis(false, msg);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return new HyperVDiagnosis(false,
-                    BuildAccessDeniedMessage(isElevated, isHvAdmin) +
-                    $" ({ex.Message})");
-            }
-            catch (ManagementException ex)
-            {
-                return new HyperVDiagnosis(false,
-                    "WMI error — Hyper-V may not be installed or the service isn't running. " +
-                    $"({ex.Message})");
-            }
-            catch (Exception ex)
-            {
-                return new HyperVDiagnosis(false, $"Failed: {ex.Message}");
-            }
-        }, ct);
-
-    /// <summary>Returns whether the current process is running
-    /// elevated and whether the user is in the local
-    /// <c>Hyper-V Administrators</c> group. Both flags can be true
-    /// independently — elevation gives admin rights without group
-    /// membership, group membership gives Hyper-V access without
-    /// elevation.</summary>
-    private static (bool IsElevated, bool IsInHyperVAdmins) IdentityChecks()
+    /// <summary>True when the current process is running with an
+    /// elevated (admin) token. ShellExecute with <c>Verb="runas"</c>
+    /// from an elevated parent skips the UAC consent prompt entirely
+    /// — the child inherits the parent's integrity level. That's the
+    /// only way scheduled / silent Hyper-V syncs are possible; an
+    /// unelevated NexusRDM would prompt UAC every timer tick, which
+    /// is the no-go path the timer gates against.</summary>
+    public static bool IsCurrentProcessElevated()
     {
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
-            var principal = new WindowsPrincipal(identity);
-            var elevated  = principal.IsInRole(WindowsBuiltInRole.Administrator);
-            // Well-known SID for "Hyper-V Administrators" (Vista+).
-            var hvAdmins  = principal.IsInRole(new SecurityIdentifier("S-1-5-32-578"));
-            return (elevated, hvAdmins);
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
-        catch
-        {
-            return (false, false);
-        }
+        catch { return false; }
     }
 
-    private static string BuildAccessDeniedMessage(bool isElevated, bool isHvAdmin)
-    {
-        if (isHvAdmin)
-            return "Access denied despite Hyper-V Administrators membership — Hyper-V service may be stopped.";
-        if (isElevated)
-            return "Access denied even though running elevated. Hyper-V service may not be installed or is stopped.";
-        return "Access denied. Add your user to the local 'Hyper-V Administrators' group " +
-               "(then sign out / sign in), or right-click NexusRDM → Run as administrator.";
-    }
-
-    /// <summary>Invokes <c>Msvm_ComputerSystem.RequestStateChange</c>.
-    /// Returns the WMI return value: 0 = completed, 4096 = job started,
-    /// anything else is an error.</summary>
-    public Task<uint> RequestStateChangeAsync(string vmId, HyperVPowerAction action, CancellationToken ct = default) =>
-        Task.Run(() =>
+    public Task<IReadOnlyList<HyperVVm>> ListVmsAsync(CancellationToken ct = default) =>
+        Task.Run<IReadOnlyList<HyperVVm>>(async () =>
         {
-            ct.ThrowIfCancellationRequested();
-            using var searcher = new ManagementObjectSearcher(
-                BuildScope(),
-                new ObjectQuery($"SELECT * FROM Msvm_ComputerSystem WHERE Name='{vmId.Replace("'", "''")}'"));
-            var vm = searcher.Get().Cast<ManagementObject>().FirstOrDefault()
-                     ?? throw new InvalidOperationException($"Hyper-V VM '{vmId}' not found.");
-
-            using (vm)
+            var outPath = Path.Combine(Path.GetTempPath(), $"nexusrdm-hv-list-{Guid.NewGuid():N}.json");
+            try
             {
-                var args = vm.GetMethodParameters("RequestStateChange");
-                args["RequestedState"] = (ushort)RequestedStateValue(action);
-                using var result = vm.InvokeMethod("RequestStateChange", args, null);
-                return Convert.ToUInt32(result["ReturnValue"]);
+                await RunAgentAsync(new[] { "list", outPath }, ct).ConfigureAwait(false);
+                if (!File.Exists(outPath)) return Array.Empty<HyperVVm>();
+
+                using var stream = File.OpenRead(outPath);
+                var dtos = await JsonSerializer.DeserializeAsync<List<AgentVmDto>>(stream, JsonOpts, ct)
+                    .ConfigureAwait(false);
+                if (dtos is null) return Array.Empty<HyperVVm>();
+
+                return dtos.Select(d => new HyperVVm(
+                    d.Id ?? "",
+                    d.Name ?? d.Id ?? "",
+                    Enum.TryParse<HyperVVmState>(d.State, ignoreCase: true, out var s) ? s : HyperVVmState.Unknown,
+                    d.Ip)).ToList();
+            }
+            finally
+            {
+                try { File.Delete(outPath); } catch { /* best effort */ }
             }
         }, ct);
 
-    private static int RequestedStateValue(HyperVPowerAction a) => a switch
-    {
-        // Per Msvm_ComputerSystem.RequestStateChange documentation.
-        HyperVPowerAction.Start    => 2,      // Enabled
-        HyperVPowerAction.Shutdown => 3,      // Disabled (graceful via integration services)
-        HyperVPowerAction.Stop     => 32769,  // Off (hard)
-        HyperVPowerAction.Reboot   => 11,     // Reset (hard cycle); Hyper-V has no graceful "reboot" state
-        HyperVPowerAction.Save     => 32773,  // Saved
-        _ => throw new ArgumentOutOfRangeException(nameof(a)),
-    };
+    public Task<uint> RequestStateChangeAsync(
+        string vmId, HyperVPowerAction action, CancellationToken ct = default) =>
+        Task.Run<uint>(async () =>
+        {
+            var outPath = Path.Combine(Path.GetTempPath(), $"nexusrdm-hv-power-{Guid.NewGuid():N}.json");
+            try
+            {
+                await RunAgentAsync(new[] { "power", vmId, action.ToString().ToLowerInvariant(), outPath }, ct)
+                    .ConfigureAwait(false);
+                if (!File.Exists(outPath)) throw new InvalidOperationException("Agent produced no output.");
 
-    private static HyperVVmState MapState(ushort enabledState) => enabledState switch
-    {
-        2     => HyperVVmState.Running,
-        3     => HyperVVmState.Off,
-        9     => HyperVVmState.Paused,
-        10    => HyperVVmState.Pausing,
-        32768 => HyperVVmState.Saved,
-        32769 => HyperVVmState.Starting,
-        32770 => HyperVVmState.Snapshotting,
-        32773 => HyperVVmState.Saving,
-        32774 => HyperVVmState.Stopping,
-        _     => HyperVVmState.Unknown,
-    };
+                using var stream = File.OpenRead(outPath);
+                var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                if (doc.RootElement.TryGetProperty("error", out var err))
+                    throw new InvalidOperationException(err.GetString());
+                return doc.RootElement.GetProperty("returnValue").GetUInt32();
+            }
+            finally
+            {
+                try { File.Delete(outPath); } catch { }
+            }
+        }, ct);
 
-    /// <summary>Reads the VM's KVP exchange items and returns the first
-    /// non-loopback IPv4 the integration services have published. Returns
-    /// null when KVP isn't available (guest agent missing / off / Linux
-    /// without hv_kvp_daemon). Errors bubble up as null too — IP is
-    /// best-effort here, like Proxmox's qemu-agent path.</summary>
-    private static string? TryReadIp(ManagementObject vm, ManagementScope scope)
+    /// <summary>"Test connection" — runs a list, reports success or
+    /// the cancelled-prompt / error case. Implemented on top of
+    /// <see cref="ListVmsAsync"/> so it triggers the same UAC dance
+    /// the real Sync would; success here means the real Sync will
+    /// also work.</summary>
+    public async Task<HyperVDiagnosis> DiagnoseAccessAsync(CancellationToken ct = default)
     {
         try
         {
-            var sysName = vm["Name"] as string ?? "";
-            using var kvp = new ManagementObjectSearcher(
-                scope,
-                new ObjectQuery(
-                    "SELECT GuestIntrinsicExchangeItems FROM Msvm_KvpExchangeComponent " +
-                    $"WHERE SystemName='{sysName.Replace("'", "''")}'"));
-            foreach (ManagementObject k in kvp.Get())
-            {
-                if (k["GuestIntrinsicExchangeItems"] is not string[] items) continue;
-                foreach (var raw in items)
-                {
-                    if (string.IsNullOrEmpty(raw)) continue;
-                    if (TryExtractIp(raw) is { } ip) return ip;
-                }
-            }
+            var vms = await ListVmsAsync(ct).ConfigureAwait(false);
+            return new HyperVDiagnosis(true, $"Connected. {vms.Count} VM(s) visible.");
         }
-        catch { /* best effort */ }
-        return null;
+        catch (OperationCanceledException)
+        {
+            return new HyperVDiagnosis(false, "UAC prompt was cancelled. Approve the prompt to test access.");
+        }
+        catch (FileNotFoundException ex) when (ex.FileName?.Contains("HyperVAgent") == true)
+        {
+            return new HyperVDiagnosis(false,
+                "Hyper-V agent (NexusRDM.HyperVAgent.exe) is missing from the install folder. " +
+                "Reinstall or rebuild the app.");
+        }
+        catch (Exception ex)
+        {
+            return new HyperVDiagnosis(false, $"Failed: {ex.Message}");
+        }
     }
 
-    /// <summary>Each KVP item is an XML <c>INSTANCE</c> with Name + Data
-    /// PROPERTY children. We parse looking for <c>NetworkAddressIPv4</c>
-    /// whose Data is a semicolon-separated address list and pick the
-    /// first non-loopback / non-link-local IPv4.</summary>
+    /// <summary>Spawn the elevated agent. <c>UseShellExecute=true</c>
+    /// is required for <c>Verb="runas"</c> to trigger the UAC prompt;
+    /// the trade-off is no redirected stdout / stderr, which is why
+    /// we hand the agent a temp-file path. UAC denial returns
+    /// <see cref="System.ComponentModel.Win32Exception"/> 1223 — we
+    /// translate that to a clean
+    /// <see cref="OperationCanceledException"/> so callers can show
+    /// "Cancelled at UAC prompt." instead of a stack trace.</summary>
+    private static async Task RunAgentAsync(string[] args, CancellationToken ct)
+    {
+        var exe = Path.Combine(AppContext.BaseDirectory, "NexusRDM.HyperVAgent.exe");
+        if (!File.Exists(exe))
+            throw new FileNotFoundException(
+                "Hyper-V agent missing — expected next to NexusRDM.exe. Did the build copy NexusRDM.HyperVAgent.exe?",
+                exe);
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName        = exe,
+            UseShellExecute = true,
+            Verb            = "runas",
+            CreateNoWindow  = true,
+            WindowStyle     = System.Diagnostics.ProcessWindowStyle.Hidden,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        try
+        {
+            using var proc = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("Failed to start Hyper-V agent.");
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            if (proc.ExitCode == 2)
+                throw new InvalidOperationException("Hyper-V agent: bad arguments.");
+            // Exit code 1 still produces a JSON file with {error: …};
+            // the caller surfaces it during deserialization.
+            if (proc.ExitCode != 0 && proc.ExitCode != 1)
+                throw new InvalidOperationException($"Hyper-V agent exited with code {proc.ExitCode}.");
+        }
+        catch (System.ComponentModel.Win32Exception wex) when (wex.NativeErrorCode == 1223)
+        {
+            throw new OperationCanceledException("UAC prompt was cancelled.", wex);
+        }
+    }
+
+    /// <summary>Pure XML helper for the KVP exchange items the agent
+    /// hands back. Stays in this assembly (and gets unit-tested)
+    /// because it's the only chunk of the original WMI-side code that
+    /// doesn't touch <c>System.Management</c>.</summary>
     internal static string? TryExtractIp(string xml)
     {
         try
@@ -270,6 +198,14 @@ public sealed class HyperVClient
         }
         catch { /* malformed item; skip */ }
         return null;
+    }
+
+    private sealed class AgentVmDto
+    {
+        public string?  Id    { get; set; }
+        public string?  Name  { get; set; }
+        public string?  State { get; set; }
+        public string?  Ip    { get; set; }
     }
 }
 

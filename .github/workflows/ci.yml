@@ -46,6 +46,7 @@ jobs:
           dotnet restore src\NexusRDM.Core\NexusRDM.Core.csproj
           dotnet restore src\NexusRDM.Data\NexusRDM.Data.csproj
           dotnet restore src\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj
+          dotnet restore src\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj
           dotnet restore src\NexusRDM\NexusRDM.csproj
           dotnet restore tests\NexusRDM.Core.Tests\NexusRDM.Core.Tests.csproj
           dotnet restore tests\NexusRDM.Data.Tests\NexusRDM.Data.Tests.csproj

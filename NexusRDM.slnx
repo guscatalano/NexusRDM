@@ -3,6 +3,7 @@
     <Project Path="src/NexusRDM.Core/NexusRDM.Core.csproj" />
     <Project Path="src/NexusRDM.Data/NexusRDM.Data.csproj" />
     <Project Path="src/NexusRDM.RdpAx/NexusRDM.RdpAx.csproj" />
+    <Project Path="src/NexusRDM.HyperVAgent/NexusRDM.HyperVAgent.csproj" />
     <Project Path="src/NexusRDM/NexusRDM.csproj">
       <Platform Solution="Debug|*" Project="x64" />
     </Project>

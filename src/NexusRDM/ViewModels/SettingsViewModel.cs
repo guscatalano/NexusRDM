@@ -234,6 +234,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _hyperVEnabled            = false;
     [ObservableProperty] private int  _hyperVSyncIntervalMinutes = 15;
     [ObservableProperty] private bool _hyperVProbeProtocol      = true;
+    [ObservableProperty] private bool _hyperVShowPowerState     = true;
+    partial void OnHyperVShowPowerStateChanged(bool value)
+    {
+        if (!_loading) PersistAll();
+        SettingsStore.RaiseHyperVDisplaySettingsChanged();
+    }
     partial void OnHyperVEnabledChanged(bool value)
     {
         if (!_loading) PersistAll();
@@ -375,6 +381,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("HyperVEnabled",             out var he))  HyperVEnabled            = Convert.ToBoolean(he);
         if (s.TryGetValue("HyperVSyncIntervalMinutes", out var hi))  HyperVSyncIntervalMinutes = Math.Clamp(Convert.ToInt32(hi), 1, 1440);
         if (s.TryGetValue("HyperVProbeProtocol",       out var hp))  HyperVProbeProtocol      = Convert.ToBoolean(hp);
+        if (s.TryGetValue("HyperVShowPowerState",      out var hsp)) HyperVShowPowerState     = Convert.ToBoolean(hsp);
     }
 
     [RelayCommand]
@@ -438,6 +445,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["HyperVEnabled"]             = HyperVEnabled,
             ["HyperVSyncIntervalMinutes"] = HyperVSyncIntervalMinutes,
             ["HyperVProbeProtocol"]       = HyperVProbeProtocol,
+            ["HyperVShowPowerState"]      = HyperVShowPowerState,
         });
     }
 
@@ -523,8 +531,11 @@ public static class SettingsStore
     public static void ApplyDebugMode(bool on)
     {
         if (App.MainWin?.Content is not Microsoft.UI.Xaml.FrameworkElement root) return;
+        var vis = on ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         if (root.FindName("BtnCopyVisualTree") is Microsoft.UI.Xaml.UIElement btn)
-            btn.Visibility = on ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+            btn.Visibility = vis;
+        if (root.FindName("BtnTakeScreenshot") is Microsoft.UI.Xaml.UIElement btn2)
+            btn2.Visibility = vis;
     }
 
     /// <summary>Persisted preference for prompting the user before
@@ -723,6 +734,24 @@ public static class SettingsStore
         if (!s.TryGetValue("HyperVProbeProtocol", out var v)) return true;
         try { return Convert.ToBoolean(v); } catch { return true; }
     }
+
+    /// <summary>Mirror of <see cref="ReadProxmoxShowPowerState"/> for
+    /// the Hyper-V integration. Default on — the icon's the at-a-
+    /// glance "is this VM up?" signal and most users want it.</summary>
+    public static bool ReadHyperVShowPowerState()
+    {
+        var s = Read();
+        if (!s.TryGetValue("HyperVShowPowerState", out var v)) return true;
+        try { return Convert.ToBoolean(v); } catch { return true; }
+    }
+
+    /// <summary>Same shape as <see cref="ProxmoxDisplaySettingsChanged"/>:
+    /// fired when a Hyper-V display-only toggle changes so the
+    /// connections VM can push the new value into existing tree
+    /// nodes without waiting for a sync.</summary>
+    public static event EventHandler? HyperVDisplaySettingsChanged;
+    public static void RaiseHyperVDisplaySettingsChanged() =>
+        HyperVDisplaySettingsChanged?.Invoke(null, EventArgs.Empty);
 
     /// <summary>Reads a custom-theme color from settings, or returns
     /// the supplied fallback when missing/garbage. Stored as

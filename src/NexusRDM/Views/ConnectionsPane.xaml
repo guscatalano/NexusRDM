@@ -55,8 +55,143 @@
                         CornerRadius="5"
                         Padding="8,4"
                         FontSize="11"
-                        Foreground="{StaticResource NxTx2}">
+                        Foreground="{StaticResource NxTx2}"
+                        ToolTipService.ToolTip="Refresh">
                     <FontIcon Glyph="&#xE72C;" FontSize="11" />
+                </Button>
+                <!-- Tree-symbol legend. Opens a flyout that maps every
+                     glyph / pill in the tree to plain-English meaning
+                     so users don't have to guess what PVE / HV / the
+                     coloured dots are. -->
+                <Button x:Name="LegendButton"
+                        Background="{StaticResource NxBg2}"
+                        BorderBrush="{StaticResource NxBrd}"
+                        BorderThickness="1"
+                        CornerRadius="5"
+                        Padding="8,4"
+                        FontSize="11"
+                        Foreground="{StaticResource NxTx2}"
+                        ToolTipService.ToolTip="What do the symbols mean?">
+                    <FontIcon Glyph="&#xE9CE;" FontSize="11" />
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedLeft">
+                            <StackPanel Spacing="6" MaxWidth="320">
+                                <TextBlock Text="Tree symbols"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{StaticResource NxTx1}"
+                                           Margin="0,0,0,2" />
+
+                                <!-- Power state -->
+                                <TextBlock Text="Power state (managed VMs)"
+                                           FontSize="10" CharacterSpacing="60"
+                                           Foreground="{StaticResource NxTx3}" />
+                                <Grid ColumnDefinitions="20,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="3">
+                                    <FontIcon Grid.Row="0" Grid.Column="0" Glyph="&#xE768;" FontSize="11"
+                                              Foreground="#FF3DD68C" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Running"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <FontIcon Grid.Row="1" Grid.Column="0" Glyph="&#xE71A;" FontSize="11"
+                                              Foreground="#FFA0A0B0" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Stopped / Off"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <FontIcon Grid.Row="2" Grid.Column="0" Glyph="&#xE769;" FontSize="11"
+                                              Foreground="#FFF0A732" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Paused"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Source pills -->
+                                <TextBlock Text="Source pills"
+                                           FontSize="10" CharacterSpacing="60"
+                                           Foreground="{StaticResource NxTx3}"
+                                           Margin="0,4,0,0" />
+                                <Grid ColumnDefinitions="40,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+                                    <Border Grid.Row="0" Grid.Column="0" Background="{StaticResource NxAccent}"
+                                            CornerRadius="3" Padding="4,1" HorizontalAlignment="Left">
+                                        <TextBlock Text="PVE" FontSize="10" FontWeight="Bold"
+                                                   Foreground="{StaticResource NxTx1}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Imported from a Proxmox cluster"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource NxAccent}"
+                                            CornerRadius="3" Padding="4,1" HorizontalAlignment="Left">
+                                        <TextBlock Text="HV" FontSize="10" FontWeight="Bold"
+                                                   Foreground="{StaticResource NxTx1}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Imported from local Hyper-V"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Row="2" Grid.Column="0" Background="{StaticResource NxAccent}"
+                                            CornerRadius="3" Padding="4,1" HorizontalAlignment="Left">
+                                        <TextBlock Text="AUTO" FontSize="9" FontWeight="Bold"
+                                                   Foreground="{StaticResource NxTx1}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="2" Grid.Column="1"
+                                               Text="Folder owned by a sync — can't be deleted from here"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                                </Grid>
+
+                                <!-- Protocol badges -->
+                                <TextBlock Text="Protocol badge"
+                                           FontSize="10" CharacterSpacing="60"
+                                           Foreground="{StaticResource NxTx3}"
+                                           Margin="0,4,0,0" />
+                                <Grid ColumnDefinitions="40,*" RowDefinitions="Auto,Auto" RowSpacing="4">
+                                    <Border Grid.Row="0" Grid.Column="0" Background="{StaticResource NxBg2}"
+                                            CornerRadius="3" Padding="4,1" HorizontalAlignment="Left">
+                                        <TextBlock Text="SSH" FontSize="10"
+                                                   Foreground="{StaticResource NxTx3}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="SSH terminal session"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource NxBg2}"
+                                            CornerRadius="3" Padding="4,1" HorizontalAlignment="Left">
+                                        <TextBlock Text="RDP" FontSize="10"
+                                                   Foreground="{StaticResource NxTx3}" />
+                                    </Border>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Remote Desktop session"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Ping -->
+                                <TextBlock Text="Reachability dot &amp; latency"
+                                           FontSize="10" CharacterSpacing="60"
+                                           Foreground="{StaticResource NxTx3}"
+                                           Margin="0,4,0,0" />
+                                <Grid ColumnDefinitions="20,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="3">
+                                    <Ellipse Grid.Row="0" Grid.Column="0" Width="6" Height="6"
+                                             Fill="#FF3DD68C" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Reachable (ping ok)"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <Ellipse Grid.Row="1" Grid.Column="0" Width="6" Height="6"
+                                             Fill="#FFFF6B6B" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Unreachable (ping failed)"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <Ellipse Grid.Row="2" Grid.Column="0" Width="6" Height="6"
+                                             Fill="#FFF0A732" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Pinging…"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="?"
+                                               FontSize="11" FontWeight="Bold"
+                                               Foreground="{StaticResource NxTx3}"
+                                               VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="No measurement yet"
+                                               FontSize="11" Foreground="{StaticResource NxTx2}"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
                 </Button>
                 <Button x:Name="CollapseButton"
                         Click="Collapse_Click"
@@ -95,6 +230,10 @@
                   DoubleTapped="ConnectionTree_DoubleTapped"
                   IsDoubleTapEnabled="True"
                   RightTapped="ConnectionTree_RightTapped"
+                  CanDragItems="True"
+                  CanReorderItems="True"
+                  AllowDrop="True"
+                  DragItemsCompleted="ConnectionTree_DragItemsCompleted"
                   Background="Transparent"
                   Padding="0,4,0,4">
             <TreeView.ItemTemplate>
@@ -110,6 +249,22 @@
                                       VerticalAlignment="Center">
                                 <FontIcon.Foreground>
                                     <SolidColorBrush Color="{x:Bind IconColor, Mode=OneWay}" />
+                                </FontIcon.Foreground>
+                            </FontIcon>
+                            <!-- Power-state glyph — placed left of the
+                                 name so it reads as a leading status
+                                 indicator instead of trailing
+                                 metadata. ToolTip surfaces the state
+                                 in plain words ("Running" / "Stopped"
+                                 / "Paused") so the icon's meaning is
+                                 obvious on hover. -->
+                            <FontIcon Glyph="{x:Bind PowerStateGlyph, Mode=OneWay}"
+                                      Visibility="{x:Bind PowerStateVisibility, Mode=OneWay}"
+                                      FontSize="11"
+                                      VerticalAlignment="Center"
+                                      ToolTipService.ToolTip="{x:Bind PowerStateTooltip, Mode=OneWay}">
+                                <FontIcon.Foreground>
+                                    <SolidColorBrush Color="{x:Bind PowerStateColor, Mode=OneWay}" />
                                 </FontIcon.Foreground>
                             </FontIcon>
                             <TextBlock Text="{x:Bind DisplayName}"
@@ -141,28 +296,20 @@
                                            FontSize="10"
                                            Foreground="{StaticResource NxTx3}" />
                             </Border>
-                            <!-- Power-state glyph (running / stopped /
-                                 paused) for Proxmox-managed rows.
-                                 Hidden for non-managed rows or when
-                                 the user disables the setting. -->
-                            <FontIcon Glyph="{x:Bind PowerStateGlyph, Mode=OneWay}"
-                                      Visibility="{x:Bind PowerStateVisibility, Mode=OneWay}"
-                                      FontSize="11"
-                                      VerticalAlignment="Center">
-                                <FontIcon.Foreground>
-                                    <SolidColorBrush Color="{x:Bind PowerStateColor, Mode=OneWay}" />
-                                </FontIcon.Foreground>
-                            </FontIcon>
-                            <!-- "P" pill for connections imported from a
-                                 Proxmox sync. Lets the user tell managed
-                                 rows from manual ones at a glance — paired
-                                 with field locks in the editor. -->
+                            <!-- Power-state glyph moved to the left of
+                                 the display name above — this slot
+                                 used to host it. -->
+
+                            <!-- Managed-by-source pill. Text is per-
+                                 source ("PVE" / "HV") so users can
+                                 tell at a glance which integration
+                                 owns a row. -->
                             <Border Background="{StaticResource NxAccent}"
                                     CornerRadius="3"
                                     Padding="4,1"
-                                    Visibility="{x:Bind ManagedBadgeVisibility}"
-                                    ToolTipService.ToolTip="Imported from Proxmox — managed by sync">
-                                <TextBlock Text="P"
+                                    Visibility="{x:Bind ManagedBadgeVisibility, Mode=OneWay}"
+                                    ToolTipService.ToolTip="Imported by a sync integration — managed automatically. PVE = Proxmox, HV = Hyper-V.">
+                                <TextBlock Text="{x:Bind ManagedBadgeText, Mode=OneWay}"
                                            FontSize="10"
                                            FontWeight="Bold"
                                            Foreground="{StaticResource NxTx1}" />

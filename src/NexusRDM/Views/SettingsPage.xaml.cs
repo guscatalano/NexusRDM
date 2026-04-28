@@ -31,6 +31,15 @@ public sealed partial class SettingsPage : Page
         catch (Exception ex) { DbCreatedText.Text = $"(Could not read timestamp: {ex.Message})"; }
 
         _ = ProxmoxVm.LoadAsync();
+
+        // Hyper-V scheduled-sync banner: reflects the parent process's
+        // elevation state. Set once at construction — re-elevation
+        // requires a relaunch anyway, so the value won't change while
+        // the page is alive.
+        var elevated = NexusRDM.Services.HyperVClient.IsCurrentProcessElevated();
+        HyperVScheduledStatus.Text = elevated
+            ? "NexusRDM is running elevated — scheduled syncs will run silently at the configured interval."
+            : "NexusRDM is NOT running elevated, so scheduled syncs are disabled (they'd pop a UAC prompt every interval). Manual 'Sync now' still works. To enable the timer, close NexusRDM and right-click → Run as administrator.";
     }
 
     // ── Proxmox sources ──────────────────────────────────────────────────
@@ -195,13 +204,17 @@ public sealed partial class SettingsPage : Page
 
     private async void HyperVSyncNow_Click(object sender, RoutedEventArgs e)
     {
-        HyperVStatus.Text = "Syncing…";
+        HyperVStatus.Text = "Requesting elevation…";
         var svc = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
         try
         {
+            // Always elevates via NexusRDM.HyperVAgent.exe — one UAC
+            // prompt per Sync. There's no silent path; manual is the
+            // only invocation point.
             var r = await svc.SyncAsync();
             HyperVStatus.Text = r.IsSuccess ? $"Done — {r}" : $"Failed — {r.Error}";
         }
+        catch (OperationCanceledException) { HyperVStatus.Text = "Cancelled at UAC prompt."; }
         catch (Exception ex) { HyperVStatus.Text = $"Failed — {ex.Message}"; }
     }
 

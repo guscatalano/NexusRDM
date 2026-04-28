@@ -33,27 +33,72 @@ public sealed class HyperVSyncService : IDisposable
     private readonly IServiceProvider _services;
     private Timer? _timer;
 
+    /// <summary>Last-known power state per managed connection, same
+    /// shape as <see cref="ProxmoxSyncService.GetPowerState"/>.
+    /// Reuses the <see cref="ProxmoxPowerState"/> enum since the
+    /// running/stopped/paused tri-state is identical across sources;
+    /// the name's a historical artefact, not a Proxmox-only thing.</summary>
+    private readonly Dictionary<Guid, (ProxmoxPowerState State, DateTime UpdatedAtUtc)> _powerStates = new();
+    private readonly object _powerLock = new();
+
+    public ProxmoxPowerState GetPowerState(Guid connectionId)
+        => GetPowerStateInfo(connectionId).State;
+
+    public (ProxmoxPowerState State, DateTime? UpdatedAtUtc) GetPowerStateInfo(Guid connectionId)
+    {
+        lock (_powerLock)
+        {
+            if (_powerStates.TryGetValue(connectionId, out var v))
+                return (v.State, v.UpdatedAtUtc);
+            return (ProxmoxPowerState.Unknown, null);
+        }
+    }
+
+    private void SetPowerState(Guid id, HyperVVmState state)
+    {
+        var mapped = state switch
+        {
+            HyperVVmState.Running => ProxmoxPowerState.Running,
+            HyperVVmState.Off     => ProxmoxPowerState.Stopped,
+            HyperVVmState.Paused  => ProxmoxPowerState.Paused,
+            HyperVVmState.Saved   => ProxmoxPowerState.Stopped, // saved-state reads as stopped
+            _                     => ProxmoxPowerState.Unknown, // transitional states
+        };
+        lock (_powerLock) _powerStates[id] = (mapped, DateTime.UtcNow);
+    }
+
     public event EventHandler<HyperVSyncResult>? SyncCompleted;
+
+    /// <summary>True when scheduled syncs can run silently in the
+    /// background. The agent's <c>requireAdministrator</c> manifest
+    /// triggers UAC on each launch UNLESS the parent NexusRDM is
+    /// already elevated, in which case ShellExecute skips the
+    /// prompt. Timer is therefore on iff this returns true AND the
+    /// integration toggle is on.</summary>
+    public bool IsScheduledSyncAvailable => HyperVClient.IsCurrentProcessElevated();
 
     public HyperVSyncService(IServiceProvider services)
     {
         _services = services;
-        SettingsStore.HyperVSettingsChanged += (_, _) => RestartTimer();
-        RestartTimer();
+        SettingsStore.HyperVSettingsChanged += (_, _) => OnSettingsChanged();
+        OnSettingsChanged();
     }
 
-    public void RestartTimer()
+    private void OnSettingsChanged()
     {
         _timer?.Dispose();
         _timer = null;
 
         if (!SettingsStore.ReadHyperVEnabled())
         {
-            // Disabled → wipe the auto-managed surface area, same
-            // contract as discovery's RemoveDiscoveredGroupAsync.
             _ = RemoveHyperVGroupAsync();
             return;
         }
+
+        // Toggle is on. Only arm the timer if we'd run silently.
+        // Unelevated parent → skip the timer; manual Sync still works
+        // and the Settings panel surfaces the state.
+        if (!IsScheduledSyncAvailable) return;
 
         var interval = TimeSpan.FromMinutes(SettingsStore.ReadHyperVSyncIntervalMinutes());
         _timer = new Timer(async _ =>
@@ -63,6 +108,10 @@ public sealed class HyperVSyncService : IDisposable
         }, null, TimeSpan.FromSeconds(15), interval);
     }
 
+    /// <summary>Run a sync. Always launches the elevated agent — one
+    /// UAC prompt per call. Cancelling the prompt surfaces as
+    /// <see cref="OperationCanceledException"/> wrapped in the
+    /// <see cref="HyperVSyncResult"/>'s Error field.</summary>
     public async Task<HyperVSyncResult> SyncAsync(CancellationToken ct = default)
     {
         try
@@ -109,6 +158,7 @@ public sealed class HyperVSyncService : IDisposable
                     row.Host        = host;
                     row.GroupId     = group.Id;
                     row.IsManaged   = true;
+                    SetPowerState(row.Id, vm.State);
                     updated++;
                 }
                 else
@@ -117,7 +167,7 @@ public sealed class HyperVSyncService : IDisposable
                         ? await ProbeProtocolAsync(vm.Ip!, ct).ConfigureAwait(false) ?? ConnectionProtocol.Rdp
                         : ConnectionProtocol.Rdp; // sensible default for Hyper-V (mostly Windows VMs)
 
-                    db.Connections.Add(new ConnectionProfile
+                    var newProfile = new ConnectionProfile
                     {
                         Id          = Guid.NewGuid(),
                         DisplayName = name,
@@ -128,7 +178,9 @@ public sealed class HyperVSyncService : IDisposable
                         ExternalId  = extId,
                         IsManaged   = true,
                         Tags        = "hyperv",
-                    });
+                    };
+                    db.Connections.Add(newProfile);
+                    SetPowerState(newProfile.Id, vm.State);
                     inserted++;
                 }
             }
