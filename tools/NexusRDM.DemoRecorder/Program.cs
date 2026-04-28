@@ -86,26 +86,46 @@ if (demoBtn is null)
 
 // Make sure demo mode is ON before any screenshot. The recorder
 // must NEVER capture the user's real environment — every PNG and
-// the GIF should show synthetic data only. We click the toggle
-// only when demo is currently off (detected by the absence of a
-// known synthetic row).
+// the GIF should show synthetic data only.
+//
+// Detection is fiddly because the demo button's UIA Name is fixed
+// ("Start demo") regardless of state, and the connections tree is
+// virtualised — even with demo active, UIA may not see "pi-hole"
+// until the tree is expanded. So we use a tolerant flow:
+//   1. Expand the tree (cheap, no-op if nothing's there yet).
+//   2. Probe for pi-hole. If we see it, demo is already on.
+//   3. Otherwise click the toggle, expand again, re-probe.
+//   4. If still missing, click ONCE more (we may have toggled OFF
+//      a state we couldn't detect) and re-probe.
+// Anything past that is a real failure and we refuse to snap.
+ExpandAllTreeItems(win);
+Thread.Sleep(300);
+
 if (TryFindRow(win, "pi-hole") is null)
 {
     Console.WriteLine("Activating demo mode…");
     demoBtn.Click();
-    Thread.Sleep(800);
+    Thread.Sleep(900);
     SkipTourDialogs(ua, win, maxSteps: 8);
+    Thread.Sleep(500);
+    ExpandAllTreeItems(win);
+
+    if (!WaitForRow(win, "pi-hole", TimeSpan.FromSeconds(6)))
+    {
+        Console.WriteLine("  (no rows yet — click may have toggled OFF; flipping again)");
+        demoBtn.Click();
+        Thread.Sleep(900);
+        SkipTourDialogs(ua, win, maxSteps: 8);
+        Thread.Sleep(500);
+        ExpandAllTreeItems(win);
+    }
 }
 else
 {
     Console.WriteLine("Demo mode already active — keeping it on.");
-    // Skip any tour dialog that may still be lingering from a
-    // prior interrupted run.
     SkipTourDialogs(ua, win, maxSteps: 4);
 }
 
-// Confirm the synthetic tree populated. Without this, downstream
-// row lookups race the demo activation and silently no-op.
 if (!WaitForRow(win, "pi-hole", TimeSpan.FromSeconds(8)))
     throw new InvalidOperationException(
         "Demo rows didn't appear after activating demo mode. " +
@@ -170,7 +190,7 @@ if (ConnectViaContextMenu(win, "pi-hole"))
     Keyboard.Press(VirtualKeyShort.RETURN);
     Thread.Sleep(500);
     Snap.Window(win, Path.Combine(outDir, "ssh-session.png"));
-    CloseActiveTab();
+    CloseActiveTab(ua, win);
     Thread.Sleep(500);
 }
 else
@@ -257,7 +277,7 @@ else
                 Keyboard.Type("whoami");
                 Keyboard.Press(VirtualKeyShort.RETURN);
                 await Task.Delay(900);
-                CloseActiveTab();
+                CloseActiveTab(ua, win);
                 await Task.Delay(500);
             }
 
@@ -446,7 +466,7 @@ static void SkipTourDialogs(UIA3Automation ua, Window root, int maxSteps)
     }
 }
 
-static void CloseActiveTab()
+static void CloseActiveTab(UIA3Automation? ua = null, Window? root = null)
 {
     // WinUI 3 TabView ships Ctrl+F4 as the built-in close-tab
     // accelerator. Cleaner than walking the visual tree to find
@@ -454,6 +474,82 @@ static void CloseActiveTab()
     Keyboard.Pressing(VirtualKeyShort.CONTROL);
     Keyboard.Press(VirtualKeyShort.F4);
     Keyboard.Release(VirtualKeyShort.CONTROL);
+
+    // The app pops a "Close active session?" ContentDialog when an
+    // active connection (SSH/RDP) is still up. Confirm it so the
+    // recorder doesn't hang waiting on a modal. Skip when the
+    // caller didn't supply automation/root (the static-screenshot
+    // step's signature predates this branch).
+    if (ua is not null && root is not null)
+    {
+        Thread.Sleep(600);
+        ConfirmCloseSessionDialog(ua, root);
+    }
+}
+
+static void ConfirmCloseSessionDialog(UIA3Automation ua, Window root)
+{
+    // ContentDialogs in our app use XamlRoot=Content.XamlRoot, which
+    // means they render INSIDE the main window's XAML/UIA tree as a
+    // popup — NOT on a separate top-level window. So we have to look
+    // in two places:
+    //   1. The main window's subtree (the common path).
+    //   2. The desktop's top-level children of our PID (in case a
+    //      future dialog gets re-parented to a separate popup window).
+    //
+    // The dialog opens async after we send Ctrl+F4, so poll for up to
+    // 3 seconds before giving up.
+    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+    int pid = 0;
+    try { pid = root.Properties.ProcessId.Value; } catch { }
+
+    while (DateTime.UtcNow < deadline)
+    {
+        // Anchor the search on the title TextBlock, then walk up to a
+        // parent that contains a "Close" button. This avoids clicking
+        // the edit panel's X button (also named "Close") that lives
+        // elsewhere in the tree.
+        var title = root.FindFirstDescendant(cf => cf.ByName("Close active session?"));
+        if (title is not null && ClickPrimaryCloseNear(title))
+            return;
+
+        // Fallback: top-level desktop walk for our PID.
+        try
+        {
+            var desktop = ua.GetDesktop();
+            foreach (var top in desktop.FindAllChildren())
+            {
+                int topPid = 0;
+                try { topPid = top.Properties.ProcessId.Value; } catch { }
+                if (pid != 0 && topPid != pid) continue;
+                var t = top.FindFirstDescendant(cf => cf.ByName("Close active session?"));
+                if (t is not null && ClickPrimaryCloseNear(t)) return;
+            }
+        }
+        catch { /* best effort */ }
+
+        Thread.Sleep(200);
+    }
+}
+
+static bool ClickPrimaryCloseNear(AutomationElement title)
+{
+    // Walk up from the title TextBlock to the dialog root, then look
+    // for the primary action button labeled "Close". ContentDialog's
+    // PrimaryButton is a Button with Name == PrimaryButtonText.
+    var node = title;
+    for (int i = 0; i < 8 && node is not null; i++, node = node.Parent)
+    {
+        var primary = node.FindFirstDescendant(cf =>
+            cf.ByControlType(ControlType.Button).And(cf.ByName("Close")));
+        if (primary is null) continue;
+        try { primary.AsButton().Click(); return true; }
+        catch
+        {
+            try { primary.Click(); return true; } catch { }
+        }
+    }
+    return false;
 }
 
 static bool ConnectViaContextMenu(Window root, string rowName)
@@ -511,45 +607,26 @@ static bool OpenEditPanel(Window root, string rowName)
 
 static void CloseEditPanel(Window root)
 {
-    // The edit panel is a 440-DIP right-anchored slide-over over a
-    // dim scrim. Closing-paths the user can hit:
-    //   1. Footer "Cancel" button (named, easiest)
-    //   2. Header X button (no Name; ToolTip says "Close")
-    //   3. Tap the scrim (the dim area to the left)
-    //   4. Escape
-    // Try them in order and verify the panel is actually gone after
-    // each — the first attempt sometimes misses if focus hasn't
-    // settled on the panel yet.
-    for (int attempt = 0; attempt < 3; attempt++)
+    // Edit panel has a footer "Cancel" button — that's the safe,
+    // unambiguous close path. We deliberately do NOT fall back to
+    // ByName("Close") here: the WinUI title-bar Close button (and
+    // potentially other unrelated UI) shares that name, and a
+    // mis-click there terminates the whole app. If Cancel can't be
+    // found, ESC is the only safe fallback.
+    var cancel = root.FindFirstDescendant(cf => cf.ByName("Cancel")) as Button;
+    if (cancel is not null)
     {
-        var cancel = root.FindFirstDescendant(cf => cf.ByName("Cancel")) as Button;
-        if (cancel is not null)
-        {
-            try { cancel.Click(); } catch { }
-            Thread.Sleep(450);
-            if (!IsEditPanelOpen(root)) return;
-        }
-
-        var closeBtn = root.FindFirstDescendant(cf => cf.ByName("Close"));
-        if (closeBtn is not null)
-        {
-            try { closeBtn.AsButton().Click(); } catch { try { closeBtn.Click(); } catch { } }
-            Thread.Sleep(450);
-            if (!IsEditPanelOpen(root)) return;
-        }
-
-        // Scrim tap — click well inside the dim area, away from any
-        // demo tree items (top-left of the window content).
-        var b = root.BoundingRectangle;
-        Mouse.Click(new System.Drawing.Point((int)(b.X + 80), (int)(b.Y + 200)));
-        Thread.Sleep(450);
-        if (!IsEditPanelOpen(root)) return;
-
-        Keyboard.Press(VirtualKeyShort.ESCAPE);
-        Thread.Sleep(450);
-        if (!IsEditPanelOpen(root)) return;
+        try { cancel.Click(); } catch { }
+        // Wait for the slide-out animation to retire the Save button
+        // from the UIA tree. 1s is generous; the animation is ~250ms
+        // but realised-element teardown lags it.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(1.5);
+        while (DateTime.UtcNow < deadline && IsEditPanelOpen(root))
+            Thread.Sleep(100);
+        return;
     }
-    Console.WriteLine("  (warning: edit panel still appears open after close attempts)");
+    Keyboard.Press(VirtualKeyShort.ESCAPE);
+    Thread.Sleep(500);
 }
 
 static bool IsEditPanelOpen(Window root)
