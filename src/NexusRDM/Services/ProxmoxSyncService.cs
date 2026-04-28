@@ -35,13 +35,24 @@ public sealed class ProxmoxSyncService
     /// tree's power glyph survives reloads. In-memory only — no DB
     /// migration needed since the cluster is the source of truth and
     /// the next sync (or app start) re-fetches.</summary>
-    private readonly Dictionary<Guid, ProxmoxPowerState> _powerStates = new();
+    private readonly Dictionary<Guid, (ProxmoxPowerState State, DateTime UpdatedAtUtc)> _powerStates = new();
     private readonly object _powerLock = new();
 
     public ProxmoxPowerState GetPowerState(Guid connectionId)
+        => GetPowerStateInfo(connectionId).State;
+
+    /// <summary>Like <see cref="GetPowerState"/> but also returns the
+    /// timestamp of the last sync that wrote the value. Callers
+    /// (ConnectionTreeNode) use this to mark the row's icon as
+    /// "stale" when the cache hasn't been refreshed in a while.</summary>
+    public (ProxmoxPowerState State, DateTime? UpdatedAtUtc) GetPowerStateInfo(Guid connectionId)
     {
         lock (_powerLock)
-            return _powerStates.TryGetValue(connectionId, out var v) ? v : ProxmoxPowerState.Unknown;
+        {
+            if (_powerStates.TryGetValue(connectionId, out var v))
+                return (v.State, v.UpdatedAtUtc);
+            return (ProxmoxPowerState.Unknown, null);
+        }
     }
 
     private void SetPowerState(Guid connectionId, string? rawStatus)
@@ -53,7 +64,7 @@ public sealed class ProxmoxSyncService
             "paused"  => ProxmoxPowerState.Paused,
             _         => ProxmoxPowerState.Unknown,
         };
-        lock (_powerLock) _powerStates[connectionId] = state;
+        lock (_powerLock) _powerStates[connectionId] = (state, DateTime.UtcNow);
     }
 
     public async Task<SyncResult> SyncAsync(Guid sourceId, CancellationToken ct = default)

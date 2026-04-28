@@ -720,21 +720,36 @@
 
                 <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Auto-import VMs from the local Hyper-V host. Sync runs on the configured interval; missing VMs are hard-deleted on the next pass. Requires the user to be in the local 'Hyper-V Administrators' group (or running elevated)."
+                        <TextBlock Text="Auto-import VMs from the local Hyper-V host. Sync and Power actions launch a small elevated helper (NexusRDM.HyperVAgent.exe) — Windows prompts for UAC unless NexusRDM was started elevated, in which case the helper inherits the elevation and runs silently."
                                    FontSize="11"
                                    Foreground="{StaticResource NxTx3}"
                                    TextWrapping="Wrap" />
 
-                        <ToggleSwitch Header="Enable Hyper-V sync"
+                        <ToggleSwitch Header="Enable Hyper-V integration"
                                       IsOn="{x:Bind ViewModel.HyperVEnabled, Mode=TwoWay}" />
 
-                        <NumberBox Header="Sync every (minutes)"
+                        <NumberBox Header="Sync every (minutes) — only runs when NexusRDM is elevated"
                                    Minimum="1" Maximum="1440"
                                    SpinButtonPlacementMode="Inline"
                                    Value="{x:Bind ViewModel.HyperVSyncIntervalMinutes, Mode=TwoWay}" />
 
+                        <Border x:Name="HyperVScheduledBanner"
+                                Background="#332B7BC0"
+                                BorderBrush="#802B7BC0"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="10,6">
+                            <TextBlock x:Name="HyperVScheduledStatus"
+                                       FontSize="11"
+                                       Foreground="{StaticResource NxTx1}"
+                                       TextWrapping="Wrap" />
+                        </Border>
+
                         <CheckBox Content="TCP-probe ports 22 / 3389 to pick protocol on import"
                                   IsChecked="{x:Bind ViewModel.HyperVProbeProtocol, Mode=TwoWay}" />
+                        <CheckBox Content="Show power state icon (running / stopped / paused) in tree"
+                                  IsChecked="{x:Bind ViewModel.HyperVShowPowerState, Mode=TwoWay}"
+                                  ToolTipService.ToolTip="Updates on every sync. Hide if the icon clutters narrow trees." />
 
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Button Click="HyperVTest_Click"

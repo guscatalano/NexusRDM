@@ -89,6 +89,125 @@ public sealed partial class ConnectionsPane : UserControl
             ShowContextMenu(node, e.GetPosition(ConnectionTree));
     }
 
+    /// <summary>Persist drag-reorder results. WinUI's TreeView mutates
+    /// the in-memory ObservableCollection<ConnectionTreeNode> when the
+    /// user drops, but the underlying ConnectionProfile.GroupId in
+    /// the DB stays stale until we write it. This handler walks the
+    /// dropped items, computes each one's new parent group from
+    /// <c>NewParentItem</c>, and pushes the change through
+    /// IConnectionService — the same path the editor's Save button
+    /// uses, so the round-trip behavior is identical.</summary>
+    private async void ConnectionTree_DragItemsCompleted(
+        TreeView sender, TreeViewDragItemsCompletedEventArgs args)
+    {
+        if (args.DropResult != Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move)
+            return;
+
+        // Resolve the target group id once. If the drop target is a
+        // connection, walk up to the connection's actual parent group
+        // — TreeView lets you drop on leaves, but our model can't
+        // nest connections inside connections.
+        var newParent = args.NewParentItem as ConnectionTreeNode;
+        Guid? newGroupId;
+        if (newParent is null)                 newGroupId = null;
+        else if (newParent.Profile is null)    newGroupId = newParent.GroupId; // group node
+        else                                   newGroupId = ParentGroupIdOf(newParent); // connection → its parent group
+
+        var svc = App.Services.GetRequiredService<NexusRDM.Core.Interfaces.IConnectionService>();
+        var changed = false;
+
+        foreach (var raw in args.Items)
+        {
+            if (raw is not ConnectionTreeNode item) continue;
+
+            try
+            {
+                if (item.Profile is { } profile)
+                {
+                    if (profile.GroupId == newGroupId) continue;
+                    profile.GroupId = newGroupId;
+                    await svc.UpdateAsync(profile);
+                    changed = true;
+                }
+                else if (item.GroupId is { } groupId)
+                {
+                    // Group move. Block cycles: dropping a group
+                    // under itself or any descendant would orphan the
+                    // tree. Also block dropping onto a connection
+                    // (we'd be attaching a group to a leaf).
+                    if (newParent?.Profile is not null) continue;
+                    if (newGroupId == groupId) continue;
+                    if (newGroupId is { } target && IsDescendantOf(target, groupId)) continue;
+
+                    var allGroups = await svc.GetGroupsAsync();
+                    var group = allGroups.FirstOrDefault(g => g.Id == groupId);
+                    if (group is null) continue;
+                    if (group.ParentId == newGroupId) continue;
+                    group.ParentId = newGroupId;
+                    await svc.UpdateGroupAsync(group);
+                    changed = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                NexusRDM.Services.CrashLogger.Log(ex, "tree drag-drop persist");
+            }
+        }
+
+        // Reload from DB so the visible tree matches the persisted
+        // state — especially after errors, where TreeView's in-memory
+        // move may have happened but the DB write didn't.
+        if (changed) await ViewModel.LoadAsync();
+    }
+
+    /// <summary>Walks RootItems looking for the group node whose
+    /// <c>Children</c> contains <paramref name="needle"/>; returns
+    /// that group's Id (or null if needle is at the root).</summary>
+    private Guid? ParentGroupIdOf(ConnectionTreeNode needle)
+    {
+        return Find(ViewModel.RootItems, needle)?.GroupId;
+
+        static ConnectionTreeNode? Find(IEnumerable<ConnectionTreeNode> within, ConnectionTreeNode target)
+        {
+            foreach (var n in within)
+            {
+                if (n.Children.Contains(target)) return n;
+                var deeper = Find(n.Children, target);
+                if (deeper is not null) return deeper;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>True if <paramref name="candidateChild"/> is the same
+    /// as, or a descendant of, <paramref name="ancestor"/>. Used to
+    /// reject cyclic group moves before they hit the DB.</summary>
+    private bool IsDescendantOf(Guid candidateChild, Guid ancestor)
+    {
+        var queue = new Queue<ConnectionTreeNode>();
+        foreach (var n in ViewModel.RootItems) queue.Enqueue(n);
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            if (node.GroupId == ancestor)
+            {
+                // Found the ancestor — check whether candidateChild
+                // is anywhere in its subtree.
+                return ContainsGroup(node, candidateChild);
+            }
+            foreach (var c in node.Children) queue.Enqueue(c);
+        }
+        return false;
+
+        static bool ContainsGroup(ConnectionTreeNode root, Guid id)
+        {
+            if (root.GroupId == id) return true;
+            foreach (var c in root.Children)
+                if (ContainsGroup(c, id)) return true;
+            return false;
+        }
+    }
+
     private void ShowContextMenu(ConnectionTreeNode node, Windows.Foundation.Point pos)
     {
         var menu = new MenuFlyout();
@@ -392,6 +511,10 @@ public sealed partial class ConnectionsPane : UserControl
         var client = App.Services.GetRequiredService<NexusRDM.Services.HyperVClient>();
         try
         {
+            // Power actions go through the elevated sidekick (one UAC
+            // prompt per action). The in-process direct path no
+            // longer exists — System.Management can't load inside
+            // a WinUI 3 host.
             var rv = await client.RequestStateChangeAsync(vmId, action);
             // Per the spec: 0 = completed synchronously, 4096 = job
             // started (the guest will transition shortly). Anything
@@ -457,6 +580,7 @@ public sealed partial class ConnectionsPane : UserControl
         var svc = App.Services.GetRequiredService<NexusRDM.Services.HyperVSyncService>();
         try
         {
+            // Tree-driven sync = manual = elevated agent.
             var r = await svc.SyncAsync();
             var dlg = new ContentDialog
             {

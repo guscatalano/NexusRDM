@@ -37,18 +37,40 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
-    <!-- WMI access for the Hyper-V integration (root\virtualization\v2).
-         Windows-only by design — System.Management isn't part of the
-         framework on non-Windows targets, and Hyper-V doesn't exist
-         there anyway. -->
-    <PackageReference Include="System.Management" Version="9.0.0" />
+    <!-- System.Management is intentionally NOT referenced from the
+         WinUI process: its ManagementOptions ctor throws
+         PlatformNotSupportedException on anything that isn't a
+         WPF / WinForms / console "desktop application". Hyper-V WMI
+         work lives entirely in NexusRDM.HyperVAgent.exe (a real
+         console app) and we talk to it via UAC-elevated launches. -->
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\NexusRDM.Core\NexusRDM.Core.csproj" />
     <ProjectReference Include="..\NexusRDM.Data\NexusRDM.Data.csproj" />
     <ProjectReference Include="..\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj" />
+    <!-- Elevated Hyper-V sidekick. ReferenceOutputAssembly=false so
+         the main app doesn't link the agent's assembly. The actual
+         file copy is done by the CopyHyperVAgentOutput target below
+         (whole-directory copy), since just the assembly isn't enough
+         — the agent ships an apphost .exe, .deps.json,
+         .runtimeconfig.json, and the System.Management dependency
+         tree. ProjectReference here only enforces build ordering. -->
+    <ProjectReference Include="..\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
+
+  <Target Name="CopyHyperVAgentOutput" AfterTargets="Build">
+    <ItemGroup>
+      <_HyperVAgentFiles Include="$(MSBuildThisFileDirectory)..\NexusRDM.HyperVAgent\bin\$(Configuration)\net9.0-windows\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_HyperVAgentFiles)"
+          DestinationFolder="$(OutDir)%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true" />
+  </Target>
 
   <ItemGroup>
     <!-- Lets the ViewModel test project reach the internal sync /

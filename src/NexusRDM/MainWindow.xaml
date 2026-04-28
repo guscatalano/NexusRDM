@@ -114,6 +114,36 @@
                             </Flyout>
                         </Button.Flyout>
                     </Button>
+
+                    <!-- Take screenshot (diagnostic). Same debug-mode
+                         visibility as the visual-tree button, dropped
+                         right under it so dev tools cluster together
+                         in the sidebar. Saves a PNG of the main
+                         window's content to the data folder and
+                         flashes the path in the flyout. -->
+                    <Button x:Name="BtnTakeScreenshot"
+                            Click="BtnTakeScreenshot_Click"
+                            Width="36" Height="36"
+                            Margin="4,2,4,4"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="Take screenshot (PNG to data folder)">
+                        <FontIcon Glyph="&#xE722;"
+                                  FontSize="15"
+                                  Foreground="{StaticResource NxTx3}" />
+                        <Button.Flyout>
+                            <Flyout x:Name="ScreenshotFlyout">
+                                <TextBlock x:Name="ScreenshotStatus"
+                                           Text=""
+                                           FontSize="12"
+                                           Foreground="{StaticResource NxTx1}"
+                                           TextWrapping="Wrap"
+                                           MaxWidth="320" />
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
                 </StackPanel>
             </Border>
 

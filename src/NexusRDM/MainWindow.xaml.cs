@@ -388,6 +388,61 @@ public sealed partial class MainWindow : Window
         CopyVisualTreeFlyout.ShowAt(BtnCopyVisualTree);
     }
 
+    private async void BtnTakeScreenshot_Click(object sender, RoutedEventArgs e)
+    {
+        // RenderTargetBitmap captures the window's content as BGRA8.
+        // We encode to PNG via an in-memory random-access stream,
+        // then File.WriteAllBytes to disk — simpler than going
+        // through StorageFile and works around the apartment quirks
+        // of the WinRT file APIs in WinUI 3.
+        try
+        {
+            if (Content is not Microsoft.UI.Xaml.UIElement root)
+            {
+                ScreenshotStatus.Text = "Window has no content to capture.";
+                ScreenshotFlyout.ShowAt(BtnTakeScreenshot);
+                return;
+            }
+
+            var rtb = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+            await rtb.RenderAsync(root);
+            var pixels = await rtb.GetPixelsAsync();
+
+            var dir = System.IO.Path.Combine(App.AppDataDir, "screenshots");
+            System.IO.Directory.CreateDirectory(dir);
+            var path = System.IO.Path.Combine(dir, $"nexusrdm-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+
+            using var ms = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+                Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, ms);
+            encoder.SetPixelData(
+                Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
+                Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied,
+                (uint)rtb.PixelWidth, (uint)rtb.PixelHeight,
+                96, 96,
+                System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(pixels));
+            await encoder.FlushAsync();
+
+            // Pull the encoded PNG bytes out of the in-memory stream
+            // and dump them to disk in one shot.
+            var bytes = new byte[ms.Size];
+            ms.Seek(0);
+            using (var reader = new Windows.Storage.Streams.DataReader(ms.GetInputStreamAt(0)))
+            {
+                await reader.LoadAsync((uint)ms.Size);
+                reader.ReadBytes(bytes);
+            }
+            await System.IO.File.WriteAllBytesAsync(path, bytes);
+
+            ScreenshotStatus.Text = $"Saved to:\n{path}";
+        }
+        catch (Exception ex)
+        {
+            ScreenshotStatus.Text = $"Failed: {ex.Message}";
+        }
+        ScreenshotFlyout.ShowAt(BtnTakeScreenshot);
+    }
+
     private void ShowNav(NavSection nav)
     {
         _currentNav = nav;

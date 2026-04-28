@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RootNamespace>NexusRDM.HyperVAgent</RootNamespace>
+    <AssemblyName>NexusRDM.HyperVAgent</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- requireAdministrator manifest. Launching this exe with
+         Process.Start + UseShellExecute=true + Verb="runas" triggers
+         the UAC prompt; on consent the process inherits the user's
+         unrestricted token (Hyper-V Administrators membership intact). -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Console output isn't needed — the agent writes results to the
+         output path it receives as an argument. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>
