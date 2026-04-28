@@ -169,6 +169,57 @@ The database can be safely deleted (or moved between machines) — the app rebui
 
 ---
 
+## MSIX package (sideload install)
+
+The default build is unpackaged — a self-contained zip you double-click. For Start-Menu integration, app updates via deployment tooling, or store-style installs, build a signed `.msix` instead:
+
+```powershell
+# Self-signed dev cert is auto-created on first run; output lands in
+# artifacts\msix\.
+tools\build-msix.ps1
+```
+
+To install the resulting package on the dev box, the cert needs to be trusted first:
+
+```powershell
+# One-time: export the dev cert and trust it locally.
+$cn = "CN=Gus Catalano"
+$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq $cn | Select-Object -First 1
+Export-Certificate -Cert $cert -FilePath nexusrdm-dev.cer
+Import-Certificate -FilePath nexusrdm-dev.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+
+# Install the package.
+Add-AppxPackage -Path artifacts\msix\<NexusRDM_*.msixbundle>
+```
+
+For real release builds, replace the dev cert with a code-signing cert from a trusted CA (or a properly-trusted internal CA), pass its thumbprint, and update `Package.appxmanifest`'s `<Identity Publisher="…">` to match the cert's subject:
+
+```powershell
+tools\build-msix.ps1 -Thumbprint <YOUR-CERT-THUMBPRINT>
+```
+
+The script also auto-generates the tile / splash PNGs from `Assets\AppIcon.ico` if they're missing, so first-time builds don't need separate asset work.
+
+### Microsoft Store submission
+
+The Store re-signs uploads with its own cert (`CN=119E0257-3B74-437C-A728-AC7C50256853`), so locally-signed packages are rejected at ingestion. Build an unsigned `.msixupload` instead:
+
+```powershell
+tools\build-msix.ps1 -ForStore -Version 1.0.0.42
+```
+
+CI does this automatically on every push to `main` and on every `v*` tag — see `.github/workflows/ci.yml`'s `msix-store` job. Versioning:
+
+- **Branch push / `workflow_dispatch`** → `1.0.0.<github-run-number>` so every build is unique (Store rejects re-uploads of an existing `Identity Version`).
+- **Tag push (`v1.2.3`)** → `1.2.3.0` (uses the tag's semver verbatim).
+
+Pull the `nexusrdm-msix-<version>` artifact from the workflow run, then upload the `.msixupload` to **Partner Center → your app → Packages**. The first submission also needs:
+
+- Listing copy + screenshots (1366×768 minimum + Store-tile sizes).
+- Privacy policy URL (required because the app uses `internetClient`).
+- Age rating questionnaire.
+- Justification for the `allowElevation` capability — the elevated `NexusRDM.HyperVAgent.exe` only runs on user-initiated Sync / Power actions, with a UAC prompt every time.
+
 ## Building from source
 
 ```bash

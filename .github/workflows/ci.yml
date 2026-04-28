@@ -3,6 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
+    # v* tags trigger the release flow (binary zip + GH Release).
+    # The MSIX job picks up its semver from these too.
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -133,5 +136,78 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: NexusRDM-*-win-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  msix-store:
+    # Builds a Store-ingestible .msixupload on every push to main and
+    # on every v* tag. Store rejects re-uploads of an already-accepted
+    # Identity Version, so we stamp a unique 4th segment using the
+    # GitHub run number (or use the tag's semver verbatim when the
+    # build was triggered by a tag push).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    needs: build-and-test
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        run: |
+          # Tag pushes (refs/tags/v1.2.3) → 1.2.3.0
+          # Branch pushes / workflow_dispatch → 1.0.0.<run-number>
+          $ref = "${{ github.ref }}"
+          if ($ref -like "refs/tags/v*") {
+            $semver = $ref -replace "refs/tags/v", ""
+            # Accept v1.2.3 or v1.2.3.4; default missing parts to 0.
+            $parts = $semver.Split('.')
+            while ($parts.Length -lt 4) { $parts += "0" }
+            $version = ($parts[0..3] -join ".")
+          } else {
+            $version = "1.0.0.${{ github.run_number }}"
+          }
+          Write-Host "Package version → $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build .msixupload
+        shell: pwsh
+        run: |
+          # -ForStore = unsigned, StoreUpload bundle mode (re-signed
+          # by Store ingestion). The script also synthesises tile /
+          # splash PNGs from AppIcon.ico if they're missing.
+          tools\build-msix.ps1 `
+              -ForStore `
+              -Version "${{ steps.version.outputs.version }}" `
+              -Configuration Release `
+              -Platform x64
+
+      - name: Upload .msixupload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexusrdm-msix-${{ steps.version.outputs.version }}
+          path: artifacts/msix/**/*.msixupload
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach to GitHub Release
+        # Tag-driven runs also drop the .msixupload on the release
+        # alongside the existing zip, so the Store-upload artifact
+        # ships next to the sideload artifact.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/msix/**/*.msixupload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
