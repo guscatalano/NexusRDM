@@ -354,6 +354,69 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  msi:
+    # Builds a Windows Installer (.msi) via WiX 5. Per-machine
+    # x64 install — same shape enterprise IT expects from SCCM /
+    # Intune / GPO. Runs in parallel with the zip + msix flows so
+    # all three formats land on the same Release.
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    needs: [version, build-and-test]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore
+        # Same reason as the other jobs: each CI job runs in a
+        # fresh checkout, so we need to restore before publish.
+        run: |
+          dotnet restore src\NexusRDM.Core\NexusRDM.Core.csproj
+          dotnet restore src\NexusRDM.Data\NexusRDM.Data.csproj
+          dotnet restore src\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj
+          dotnet restore src\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj
+          dotnet restore src\NexusRDM\NexusRDM.csproj
+
+      - name: Build .msi
+        shell: pwsh
+        run: |
+          # Script publishes the app self-contained, installs WiX 5
+          # as a dotnet global tool (cached on subsequent runs),
+          # then compiles tools\installer\NexusRDM.wxs.
+          tools\build-msi.ps1 `
+              -Version "${{ needs.version.outputs.numeric }}" `
+              -Configuration Release `
+              -Platform x64
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexusrdm-msi-${{ needs.version.outputs.numeric }}
+          path: artifacts/msi/*.msi
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:               ${{ needs.version.outputs.release_tag }}
+          name:                   ${{ needs.version.outputs.release_tag }}
+          prerelease:             ${{ needs.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          files:                  artifacts/msi/*.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   prune-prereleases:
     # Keep the 20 newest auto-generated pre-release tags + their
     # GitHub Releases; delete the rest. Only touches tags that
@@ -361,11 +424,11 @@ jobs:
     # user-cut tags like `v1.2.3-rc1` and stable `v1.2.3` are never
     # touched, no matter how old they are.
     #
-    # Runs after every push that the release/msix-store jobs
+    # Runs after every push that the release/msix-store/msi jobs
     # publish to. Skipped on PRs (no release, nothing to prune).
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: [release, msix-store]
+    needs: [release, msix-store, msi]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

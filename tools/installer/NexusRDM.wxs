@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  WiX 5 source for the NexusRDM Windows Installer (.msi).
+
+  How it's built:
+    tools\build-msi.ps1 -Version 1.2.3.4
+  ↳ publishes the WinUI app self-contained to publish-msi\
+  ↳ installs `wix` (5.x) as a dotnet global tool if missing
+  ↳ runs `wix build` against this file with PublishDir +
+    ProductVersion preprocessor variables.
+
+  Scope: per-machine x64. Per-machine matches enterprise IT
+  expectations (SCCM / Intune / GPO can deploy it) and surfaces
+  the app under Apps & features for all users. Tradeoff: install
+  needs UAC elevation. If you ever want a per-user MSI, flip
+  Scope="perUser" and swap StandardDirectory to LocalAppDataFolder.
+
+  UpgradeCode is the constant identity of "this product" across
+  versions — never change it. Major upgrade swaps the product GUID
+  but keeps the upgrade code, so installer detects + replaces the
+  old version.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="Nexus RDM"
+           Manufacturer="Gus Catalano"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="7C8F0B12-9A4D-4E5B-8F3A-1D2E4C6B8A90"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Nexus RDM — modern remote-desktop manager"
+                        Manufacturer="Gus Catalano" />
+
+    <!-- Refuse downgrades; uninstall the old version on major
+         upgrade (any version-number bump triggers it). -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <!-- Embed cab inside the .msi so the deliverable is a single
+         file. Cost: slightly bigger MSI. Benefit: zero-dependency
+         install file. -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- ── Install layout ───────────────────────────────────── -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Nexus RDM" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuFolder" Name="Nexus RDM" />
+    </StandardDirectory>
+
+    <!-- Harvest the entire publish output. WiX 5's <Files> element
+         globs the directory at build time and emits one Component
+         per file with stable, deterministic GUIDs. Subdirectories
+         are followed automatically. -->
+    <ComponentGroup Id="AppPayload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <!-- Start Menu shortcut. The HKCU registry KeyPath is the
+         standard MSI trick to make a non-file Component
+         uninstall-clean (Windows Installer requires every
+         Component to have a KeyPath; for shortcut-only Components
+         a registry value is the conventional pick). -->
+    <Component Id="StartMenuShortcut" Directory="StartMenuFolder" Guid="A4F1C7B0-2D8E-4F3A-9B5C-7E6D0F2C8A91">
+      <Shortcut Id="AppShortcut"
+                Name="Nexus RDM"
+                Description="Modern remote-desktop manager for SSH and RDP sessions"
+                Target="[INSTALLFOLDER]NexusRDM.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico" />
+      <RemoveFolder Id="StartMenuFolderRemove" On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\GusCatalano\NexusRDM"
+                     Name="installed"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.PublishDir)\Assets\AppIcon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/guscatalano/NexusRDM" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/guscatalano/NexusRDM" />
+
+    <Feature Id="Main"
+             Title="Nexus RDM"
+             Description="Application files + Start Menu shortcut"
+             Level="1"
+             AllowAbsent="no">
+      <ComponentGroupRef Id="AppPayload" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+  </Package>
+</Wix>
