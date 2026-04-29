@@ -316,20 +316,25 @@ jobs:
               -Configuration Release `
               -Platform x64
 
-      - name: Upload .msixupload artifact
+      - name: Upload MSIX artifact
+        # Glob is `*.msix*` to catch both bare .msix and the
+        # StoreUpload .msixupload bundle. WindowsAppSDK 1.7's
+        # single-project MSIX target ignores UapAppxPackageBuildMode
+        # in some configurations and emits only the .msix; the
+        # Store accepts either format on submission.
         uses: actions/upload-artifact@v4
         with:
           name: nexusrdm-msix-${{ needs.version.outputs.numeric }}
-          path: artifacts/msix/**/*.msixupload
+          path: artifacts/msix/**/*.msix*
           if-no-files-found: error
           retention-days: 90
 
       - name: Attach to GitHub Release
-        # Drop the .msixupload on the same release the `release` job
-        # made, regardless of whether the trigger was a tag or a
-        # branch push. Reuses the same tag_name + flags so this
-        # action's call merges into the existing release rather than
-        # creating a duplicate.
+        # Drop the MSIX (and msixupload, if produced) on the same
+        # release the `release` job made, regardless of whether the
+        # trigger was a tag or a branch push. Reuses the same
+        # tag_name + flags so this action's call merges into the
+        # existing release rather than creating a duplicate.
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
@@ -337,7 +342,7 @@ jobs:
           name:                   ${{ needs.version.outputs.release_tag }}
           prerelease:             ${{ needs.version.outputs.is_prerelease }}
           generate_release_notes: true
-          files:                  artifacts/msix/**/*.msixupload
+          files:                  artifacts/msix/**/*.msix*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
