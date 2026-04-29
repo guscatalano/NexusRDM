@@ -70,18 +70,22 @@ internal static class GifRecorder
                 return;
             }
 
-            // Fallback ladder. Each rung shrinks the long side and/or
-            // the frame rate; once any encode lands under the budget
-            // we keep that file. The first rung mirrors the caller's
-            // requested params so well-behaved demos pay no extra cost.
+            // Fallback ladder. We drop frame rate FIRST and only
+            // reduce resolution as a last resort — the goal is to
+            // preserve image quality (sharpness / readability) at
+            // the cost of choppier playback. The first rung mirrors
+            // the caller's requested params so well-behaved demos
+            // pay no extra cost.
             var rungs = new (int side, int fps)[]
             {
                 (maxLongSide,         outFps),
-                (maxLongSide * 3 / 4, outFps),
-                (maxLongSide * 3 / 4, Math.Max(6, outFps - 2)),
-                (maxLongSide / 2,     Math.Max(6, outFps - 2)),
-                (maxLongSide / 2,     Math.Max(5, outFps - 4)),
-                (maxLongSide * 2 / 5, 5),
+                (maxLongSide,         Math.Max(8, outFps - 3)),
+                (maxLongSide,         6),
+                (maxLongSide,         5),
+                (maxLongSide * 3 / 4, 6),
+                (maxLongSide * 3 / 4, 5),
+                (maxLongSide / 2,     6),
+                (maxLongSide / 2,     5),
             };
 
             for (int i = 0; i < rungs.Length; i++)
@@ -167,38 +171,47 @@ internal static class GifRecorder
         public async Task SaveMp4Async(string outPath, int outFps, long maxBytes = 10_000_000)
         {
             if (Frames.Count == 0) return;
-            if (!FfmpegAvailable())
+            var ffmpegPath = await FfmpegBootstrap.ResolveAsync();
+            if (ffmpegPath is null)
             {
-                Console.WriteLine($"  (ffmpeg not on PATH — skipping {Path.GetFileName(outPath)})");
+                Console.WriteLine($"  (ffmpeg unavailable and download failed — skipping {Path.GetFileName(outPath)})");
                 return;
             }
 
-            // CRF ladder: 23 is "visually transparent" for screen
-            // recordings; 28 is noticeably softer but still readable.
-            // For a ~24s 1280×800 capture, 23 already produces a few
-            // megabytes — but a static-content tour can compress
-            // much smaller, and an animated one larger. Walk the
-            // ladder until we land under maxBytes.
-            int[] crfs = [23, 26, 30, 34];
-            for (int i = 0; i < crfs.Length; i++)
+            // Fallback ladder. Drop frame rate FIRST to preserve
+            // image quality (CRF stays at 23 — "visually transparent"
+            // for screen content) — choppier playback is preferable
+            // to pixelated playback. Only bump CRF after we've
+            // halved the frame rate twice and still don't fit.
+            var rungs = new (int fps, int crf)[]
             {
-                await EncodeMp4At(outPath, outFps, crfs[i]);
+                (outFps,                  23),
+                (Math.Max(15, outFps * 2 / 3), 23),
+                (Math.Max(10, outFps / 2),     23),
+                (Math.Max(8,  outFps / 3),     23),
+                (Math.Max(8,  outFps / 3),     26),
+                (Math.Max(8,  outFps / 3),     30),
+            };
+            for (int i = 0; i < rungs.Length; i++)
+            {
+                var (fps, crf) = rungs[i];
+                await EncodeMp4At(ffmpegPath, outPath, fps, crf);
                 var size = new FileInfo(outPath).Length;
-                Console.WriteLine($"  → {Path.GetFileName(outPath)} (CRF {crfs[i]}, {size / 1024} KB)");
+                Console.WriteLine($"  → {Path.GetFileName(outPath)} ({fps}fps, CRF {crf}, {size / 1024} KB)");
                 if (size <= maxBytes) return;
-                if (i < crfs.Length - 1)
-                    Console.WriteLine($"    over {maxBytes / 1024 / 1024} MB — re-encoding at higher CRF…");
+                if (i < rungs.Length - 1)
+                    Console.WriteLine($"    over {maxBytes / 1024 / 1024} MB — re-encoding (drop fps first, then CRF)…");
                 else
-                    Console.WriteLine($"    (warning: still over {maxBytes / 1024 / 1024} MB at CRF {crfs[i]})");
+                    Console.WriteLine($"    (warning: still over {maxBytes / 1024 / 1024} MB at smallest preset)");
             }
         }
 
-        private async Task EncodeMp4At(string outPath, int outFps, int crf)
+        private async Task EncodeMp4At(string ffmpegPath, string outPath, int outFps, int crf)
         {
             int outFrameMs = Math.Max(20, 1000 / Math.Max(1, outFps));
             int captureFrameMs = 1000 / Math.Max(1, CaptureFps);
 
-            var psi = new ProcessStartInfo("ffmpeg",
+            var psi = new ProcessStartInfo(ffmpegPath,
                 $"-y -hide_banner -loglevel error " +
                 $"-f image2pipe -framerate {outFps} -i - " +
                 $"-c:v libx264 -pix_fmt yuv420p -preset medium -crf {crf} " +
@@ -238,23 +251,6 @@ internal static class GifRecorder
             }
         }
 
-        private static bool FfmpegAvailable()
-        {
-            try
-            {
-                using var p = Process.Start(new ProcessStartInfo("ffmpeg", "-version")
-                {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                });
-                if (p is null) return false;
-                p.WaitForExit(3000);
-                return p.ExitCode == 0;
-            }
-            catch { return false; }
-        }
     }
 
     /// <summary>
