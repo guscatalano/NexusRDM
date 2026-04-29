@@ -204,31 +204,48 @@ else
 // captures it correctly. Snap once with the row's natural protocol
 // (SSH for pi-hole), then switch to RDP and snap a second shot so
 // the README can show both protocol-specific sections.
-Console.WriteLine("Capturing edit-connection panel…");
+Console.WriteLine("Capturing edit-connection panel (SSH)…");
 if (OpenEditPanel(win, "pi-hole") || OpenEditPanel(win, "web-prod-01"))
 {
     Thread.Sleep(900);
     Snap.Window(win, Path.Combine(outDir, "edit-connection.png"));
-
-    // Flip to RDP and snap a second shot of the RDP-specific section.
-    SetEditProtocol(win, "RDP");
-    Thread.Sleep(700);
-    Snap.Window(win, Path.Combine(outDir, "edit-connection-rdp.png"));
-
     CloseEditPanel(win);
     Thread.Sleep(500);
     if (IsEditPanelOpen(win))
     {
-        // Last-ditch: ESC twice if the panel somehow survived.
-        Keyboard.Press(VirtualKeyShort.ESCAPE);
-        Thread.Sleep(300);
         Keyboard.Press(VirtualKeyShort.ESCAPE);
         Thread.Sleep(300);
     }
 }
 else
 {
-    Console.WriteLine("  (skipped — couldn't open Edit… for any demo row)");
+    Console.WriteLine("  (skipped — couldn't open Edit… for any SSH demo row)");
+}
+
+// Open Edit on an actual RDP demo row so the panel header and
+// fields read as RDP from the start (we used to open SSH and then
+// swap the Protocol dropdown — the header still said the SSH host
+// name, which was confusing). Scroll to bring the RDP-specific
+// options (resolution, colour depth, audio, gateway, etc.) into
+// view rather than hidden below the General fields.
+Console.WriteLine("Capturing edit-connection panel (RDP)…");
+if (OpenEditPanel(win, "rdp-jumpbox") || OpenEditPanel(win, "dev-windows-11"))
+{
+    Thread.Sleep(900);
+    ScrollEditPanel(win, pageDownTimes: 2);
+    Thread.Sleep(400);
+    Snap.Window(win, Path.Combine(outDir, "edit-connection-rdp.png"));
+    CloseEditPanel(win);
+    Thread.Sleep(500);
+    if (IsEditPanelOpen(win))
+    {
+        Keyboard.Press(VirtualKeyShort.ESCAPE);
+        Thread.Sleep(300);
+    }
+}
+else
+{
+    Console.WriteLine("  (skipped — couldn't open Edit… for any RDP demo row)");
 }
 
 // 5. demo-tour.gif. Pure-managed GIF recorder — captures frames via
@@ -240,9 +257,14 @@ else
 // user's normal click-mode triggers an auth dialog that pegs the
 // recorder. Instead we show motion via right-click context menus
 // (which we want in the README anyway) and the Edit panel.
+// Defer disposal of the capture handle until after the Settings
+// shots so we can encode the GIF/MP4 LAST — encoding the hi-res GIF
+// can take 30+ seconds on the fallback ladder and there's no point
+// holding the WinUI app open while it runs.
+GifRecorder.Capture? capture = null;
 {
     Console.WriteLine("Recording demo tour…");
-    using var capture = await GifRecorder.RecordAsync(
+    capture = await GifRecorder.RecordAsync(
         win,
         durationSeconds: 24,
         captureFps: 15,
@@ -318,17 +340,6 @@ else
             }
         });
 
-    // Encode the captured frames into multiple output formats.
-    // Two GIF qualities (small for README embeds, hi-res for
-    // sharper playback) plus an MP4 when ffmpeg is on PATH. The
-    // hi-res GIF can hit ~130 MB and exceeds GitHub's 100 MB push
-    // limit on plain git, so the repo tracks it via Git LFS — see
-    // .gitattributes for the matching pattern.
-    Console.WriteLine("Encoding outputs…");
-    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),    maxLongSide: 800,  outFps: 10);
-    capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"), maxLongSide: 1280, outFps: 15);
-    await capture.SaveMp4Async(Path.Combine(outDir, "demo-tour.mp4"), outFps: 30);
-
     // Belt-and-suspenders: the edit panel may still be up if the
     // GIF driver bailed early. Force-close before the next step so
     // the Settings nav isn't blocked by the modal scrim.
@@ -379,13 +390,34 @@ if (settingsBtn is not null)
 else
 {
     Console.WriteLine("  (no Settings nav button found — skipping settings shots)");
+    Console.WriteLine("  Diagnostic: every visible button below — the WinUI app is");
+    Console.WriteLine("  probably a stale build that doesn't have AutomationProperties");
+    Console.WriteLine("  on the sidebar nav buttons. Rebuild the app and try again.");
+    DumpButtons(win);
 }
 
-// Exit demo + close.
-Console.WriteLine("Done. Closing app…");
+// Close the app first — encoding doesn't need a live UI, and the
+// hi-res GIF re-encode ladder can take ~30s. No reason to keep the
+// WinUI app holding RAM and HWND resources during that window.
+Console.WriteLine("Closing app before encoding outputs…");
 try { app.Close(); } catch { }
 try { app.Kill();  } catch { }
 
+// Encode the captured frames into multiple output formats LAST.
+// Two GIF qualities (small for README embeds, hi-res for sharper
+// playback) plus an MP4 when ffmpeg is on PATH. Each encode walks
+// a fallback ladder if the file blows the 10 MB budget, dropping
+// fps before resolution / CRF.
+if (capture is not null)
+{
+    Console.WriteLine("Encoding outputs…");
+    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),    maxLongSide: 800,  outFps: 10);
+    capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"), maxLongSide: 1280, outFps: 15);
+    await capture.SaveMp4Async(Path.Combine(outDir, "demo-tour.mp4"), outFps: 30);
+    capture.Dispose();
+}
+
+Console.WriteLine("Done.");
 return 0;
 
 // ── helpers ─────────────────────────────────────────────────────────
@@ -609,26 +641,62 @@ static bool OpenEditPanel(Window root, string rowName)
 
 static void CloseEditPanel(Window root)
 {
-    // Edit panel has a footer "Cancel" button — that's the safe,
-    // unambiguous close path. We deliberately do NOT fall back to
-    // ByName("Close") here: the WinUI title-bar Close button (and
-    // potentially other unrelated UI) shares that name, and a
-    // mis-click there terminates the whole app. If Cancel can't be
-    // found, ESC is the only safe fallback.
-    var cancel = root.FindFirstDescendant(cf => cf.ByName("Cancel")) as Button;
-    if (cancel is not null)
+    // Multi-strategy close. Each strategy is scoped to the edit
+    // panel — we deliberately don't grep ByName("Close") globally
+    // because the title-bar Close shares that name and clicking it
+    // terminates the app.
+    //
+    // Strategy 1: anchor on the panel-only "Save" button, walk up
+    // to a parent that has both Save and Cancel, then Invoke the
+    // Cancel button via UIA's InvokePattern. Invoke doesn't rely on
+    // synthetic mouse positioning, which is brittle when previous
+    // steps (protocol-switch, scroll) have shifted focus or moved
+    // the button's bounding rect off-screen.
+    var anchor = root.FindFirstDescendant(cf => cf.ByName("Save"));
+    if (anchor is not null)
     {
-        try { cancel.Click(); } catch { }
-        // Wait for the slide-out animation to retire the Save button
-        // from the UIA tree. 1s is generous; the animation is ~250ms
-        // but realised-element teardown lags it.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(1.5);
-        while (DateTime.UtcNow < deadline && IsEditPanelOpen(root))
-            Thread.Sleep(100);
-        return;
+        var node = anchor;
+        for (int i = 0; i < 8 && node is not null; i++, node = node.Parent)
+        {
+            var cancel = node.FindFirstDescendant(cf =>
+                cf.ByControlType(ControlType.Button).And(cf.ByName("Cancel")));
+            if (cancel is null) continue;
+            try
+            {
+                var inv = cancel.Patterns.Invoke.PatternOrDefault;
+                if (inv is not null) inv.Invoke();
+                else                 cancel.AsButton().Click();
+            }
+            catch { try { cancel.Click(); } catch { } }
+            if (WaitForEditPanelClosed(root, TimeSpan.FromSeconds(2))) return;
+            break; // Invoke didn't take it down — fall through to scrim tap.
+        }
     }
-    Keyboard.Press(VirtualKeyShort.ESCAPE);
-    Thread.Sleep(500);
+
+    // Strategy 2: tap the scrim. Edit panel is 440 DIPs wide,
+    // anchored right; the rest of the window is the dim scrim
+    // wired to OnScrimTapped → close. We aim for the lower part of
+    // the scrim band to avoid hitting the toolbar / sidebar nav
+    // and any tab content that sits above the scroll viewport.
+    var b = root.BoundingRectangle;
+    int scrimBandWidth = Math.Max(0, (int)b.Width - 440);
+    int scrimX = (int)(b.X + scrimBandWidth / 2 + 60);
+    int scrimY = (int)(b.Y + b.Height * 3 / 4);
+    Mouse.Click(new System.Drawing.Point(scrimX, scrimY));
+    if (WaitForEditPanelClosed(root, TimeSpan.FromSeconds(1.5))) return;
+
+    Console.WriteLine("  (warning: edit panel still appears open after close attempts)");
+}
+
+static bool WaitForEditPanelClosed(Window root, TimeSpan timeout)
+{
+    var deadline = DateTime.UtcNow + timeout;
+    while (DateTime.UtcNow < deadline)
+    {
+        if (!IsEditPanelOpen(root)) return true;
+        Thread.Sleep(100);
+    }
+    return !IsEditPanelOpen(root);
 }
 
 static bool IsEditPanelOpen(Window root)
@@ -686,10 +754,24 @@ static void ScrollEditPanel(Window root, int pageDownTimes)
 
 static void DismissAuthDialogs(UIA3Automation ua, Window root)
 {
-    // Look across all our process's top-level windows for an auth
-    // dialog (Cancel / Close button) and click the cancel/close.
+    // Walk top-level windows owned by our process and click a
+    // "Cancel" / "Close" / "Dismiss" button if we find one. Two
+    // hard requirements:
+    //   1. NEVER touch the main window itself — its title-bar
+    //      Close button is also named "Close" and clicking it
+    //      terminates the app. Skip by comparing native handles.
+    //   2. Only act on windows that look like dialogs (small,
+    //      modal-ish). We approximate this by skipping any window
+    //      whose bounds match the main window — same window from a
+    //      different angle.
     int pid;
-    try { pid = root.Properties.ProcessId.Value; } catch { return; }
+    nint mainHandle;
+    try
+    {
+        pid = root.Properties.ProcessId.Value;
+        mainHandle = root.Properties.NativeWindowHandle.ValueOrDefault;
+    }
+    catch { return; }
 
     string[] cancelLabels = ["Cancel", "Close", "Dismiss"];
     for (int round = 0; round < 3; round++)
@@ -703,6 +785,13 @@ static void DismissAuthDialogs(UIA3Automation ua, Window root)
                 int topPid = 0;
                 try { topPid = top.Properties.ProcessId.Value; } catch { }
                 if (topPid != pid) continue;
+
+                // Skip the main app window — clicking "Close" on it
+                // means the title-bar X, which kills the process.
+                nint hwnd = 0;
+                try { hwnd = top.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+                if (hwnd == mainHandle && hwnd != 0) continue;
+
                 foreach (var label in cancelLabels)
                 {
                     cancel = top.FindFirstDescendant(cf => cf.ByName(label));

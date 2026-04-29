@@ -18,6 +18,13 @@
     <!-- System.Drawing.Common for screenshot capture + image composition.
          windows-only is fine — this is a Windows-only tool by design. -->
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <!-- Xabe.FFmpeg.Downloader fetches ffmpeg + ffprobe binaries on demand.
+         Used by GifRecorder.SaveMp4Async to avoid requiring contributors
+         to install ffmpeg system-wide. First run downloads ~80 MB into
+         the recorder's bin\ folder; subsequent runs reuse the cached
+         binaries. Wrapping FFmpeg execution we still do directly via
+         Process.Start — Xabe is just the binary fetcher. -->
+    <PackageReference Include="Xabe.FFmpeg.Downloader" Version="5.2.6" />
   </ItemGroup>
 
 </Project>
