@@ -64,11 +64,18 @@
   <Capabilities>
     <!-- internetClient: SSH / RDP outbound + Proxmox HTTPS API.
          privateNetworkClientServer: LAN scans (network discovery).
+         runFullTrust: WinUI 3 packaged desktop apps run as full-
+                       trust Win32, not in the AppContainer sandbox
+                       (we need P/Invoke, file system, RDP OCX
+                       hosting, etc.). MakeAppx fails validation
+                       without this — error 80080204 "runFullTrust
+                       required".
          allowElevation: paired with NexusRDM.HyperVAgent.exe's
                          requireAdministrator manifest so the agent
                          can prompt UAC from inside the package. -->
     <Capability Name="internetClient" />
     <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
     <rescap:Capability Name="allowElevation" />
   </Capabilities>
 
