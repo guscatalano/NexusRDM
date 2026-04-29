@@ -198,6 +198,24 @@ else
     Console.WriteLine("  (skipped — couldn't connect via context menu)");
 }
 
+// rdp-session.png — open a "real" RDP session on a demo row. The
+// app is in demo mode, so DemoRdpHandler returns a DemoRdpSession;
+// the view renders the fake-desktop placeholder (DEMO watermark +
+// fake taskbar) into the host panel because no Win32 mstscax window
+// is hosted. Snap, close.
+Console.WriteLine("Capturing RDP session…");
+if (ConnectViaContextMenu(win, "rdp-jumpbox") || ConnectViaContextMenu(win, "dev-windows-11"))
+{
+    Thread.Sleep(1500); // let the placeholder render + Connected fire
+    Snap.Window(win, Path.Combine(outDir, "rdp-session.png"));
+    CloseActiveTab(ua, win);
+    Thread.Sleep(500);
+}
+else
+{
+    Console.WriteLine("  (skipped — couldn't connect to an RDP demo row)");
+}
+
 // 4a. edit-connection.png — right-click row → click "Edit…" → snap
 // the slide-over panel → close. The edit panel is an in-window
 // overlay (not a separate ContentDialog), so a normal Window snap
@@ -264,22 +282,29 @@ else
 GifRecorder.Capture? capture = null;
 {
     Console.WriteLine("Recording demo tour…");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    void Step(string label) =>
+        Console.WriteLine($"  [+{sw.Elapsed.TotalSeconds,5:0.0}s] {label}");
+
     capture = await GifRecorder.RecordAsync(
         win,
-        durationSeconds: 24,
+        durationSeconds: 32,
         captureFps: 15,
         driveUi: async () =>
         {
+            Step("starting tour");
             await Task.Delay(400);
 
             // Right-click a row → context menu, then dismiss.
             var pi = TryFindRow(win, "pi-hole");
             if (pi is not null)
             {
+                Step("right-click pi-hole → context menu");
                 var b = pi.BoundingRectangle;
                 Mouse.RightClick(new System.Drawing.Point(
                     (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
                 await Task.Delay(1100);
+                Step("dismiss context menu");
                 Keyboard.Press(VirtualKeyShort.ESCAPE);
                 await Task.Delay(400);
             }
@@ -287,45 +312,92 @@ GifRecorder.Capture? capture = null;
             // SSH demo: connect to pi-hole (DemoSshHandler returns a
             // DemoSshSession), type a couple of commands so the
             // terminal animates, then close the tab.
+            Step("connect SSH (pi-hole)");
             if (ConnectViaContextMenu(win, "pi-hole"))
             {
                 await Task.Delay(1700); // banner + prompt land
+                Step("type 'ls'");
                 Keyboard.Type("ls");
                 Keyboard.Press(VirtualKeyShort.RETURN);
                 await Task.Delay(700);
+                Step("type 'uptime'");
                 Keyboard.Type("uptime");
                 Keyboard.Press(VirtualKeyShort.RETURN);
                 await Task.Delay(700);
+                Step("type 'whoami'");
                 Keyboard.Type("whoami");
                 Keyboard.Press(VirtualKeyShort.RETURN);
                 await Task.Delay(900);
+                Step("close SSH tab");
                 CloseActiveTab(ua, win);
                 await Task.Delay(500);
             }
 
-            // Open the edit panel on web-prod-01. While open: linger
-            // on the SSH section, switch to RDP, scroll the body to
-            // show advanced options, then exit cleanly.
+            // RDP demo: connect to an RDP row (DemoRdpHandler returns
+            // a DemoRdpSession), linger on the fake-desktop overlay
+            // so the viewer sees the placeholder, then close the tab.
+            Step("connect RDP (rdp-jumpbox)");
+            if (ConnectViaContextMenu(win, "rdp-jumpbox") || ConnectViaContextMenu(win, "dev-windows-11"))
+            {
+                await Task.Delay(2200); // placeholder render + read time
+                Step("close RDP tab");
+                CloseActiveTab(ua, win);
+                await Task.Delay(500);
+            }
+
+            // Briefly show the Edit panel — just hold it open so the
+            // viewer sees the slide-over surface, then close. We
+            // deliberately don't toggle the Protocol dropdown here:
+            // PageDown after a SetEditProtocol drives the focused
+            // ComboBox open instead of scrolling the body, which
+            // looks broken on tape.
+            Step("open Edit panel (web-prod-01)");
             if (OpenEditPanel(win, "web-prod-01"))
             {
-                await Task.Delay(900);
-
-                SetEditProtocol(win, "SSH");
-                await Task.Delay(1400);
-
-                SetEditProtocol(win, "RDP");
-                await Task.Delay(1400);
-
-                ScrollEditPanel(win, pageDownTimes: 3);
-                await Task.Delay(500);
-
+                await Task.Delay(1800);
+                Step("Edit: close panel");
                 CloseEditPanel(win);
-                await Task.Delay(700);
+                await Task.Delay(600);
                 if (IsEditPanelOpen(win))
                 {
+                    Step("Edit: still open, sending ESC");
                     Keyboard.Press(VirtualKeyShort.ESCAPE);
                     await Task.Delay(400);
                 }
+            }
+
+            // Settings tour. Click Settings nav, walk through a few
+            // sections (Proxmox sources, Hyper-V, Appearance), so the
+            // viewer sees the whole app, not just the connections
+            // tree. Each section has visible content so the GIF
+            // doesn't fall flat into static frames.
+            Step("nav: Settings");
+            var settingsBtn = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavSettings")) as Button
+                            ?? win.FindFirstDescendant(cf => cf.ByName("Settings")) as Button;
+            if (settingsBtn is not null)
+            {
+                settingsBtn.Click();
+                await Task.Delay(700);
+
+                Step("Settings: Proxmox sources");
+                (win.FindFirstDescendant(cf => cf.ByName("Proxmox sources")))?.Click();
+                await Task.Delay(900);
+
+                Step("Settings: Hyper-V");
+                (win.FindFirstDescendant(cf => cf.ByName("Hyper-V")))?.Click();
+                await Task.Delay(900);
+
+                Step("Settings: Appearance");
+                (win.FindFirstDescendant(cf => cf.ByName("Appearance")))?.Click();
+                await Task.Delay(1100);
+
+                // Back to Connections so the closing frame shows the
+                // tree (matches the opening shot — bookends the GIF).
+                Step("nav: Connections");
+                var connBtn = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavConn")) as Button
+                            ?? win.FindFirstDescendant(cf => cf.ByName("Connections")) as Button;
+                connBtn?.Click();
+                await Task.Delay(700);
             }
 
             // Final beat — hover db-prod-01 so the GIF closes on a
@@ -333,11 +405,13 @@ GifRecorder.Capture? capture = null;
             var db = TryFindRow(win, "db-prod-01");
             if (db is not null)
             {
+                Step("hover db-prod-01 (closing frame)");
                 var b = db.BoundingRectangle;
                 Mouse.MoveTo(new System.Drawing.Point(
                     (int)(b.X + b.Width / 2), (int)(b.Y + b.Height / 2)));
                 await Task.Delay(500);
             }
+            Step("driver done — capture continues to fill duration");
         });
 
     // Belt-and-suspenders: the edit panel may still be up if the
@@ -410,8 +484,13 @@ try { app.Kill();  } catch { }
 // fps before resolution / CRF.
 if (capture is not null)
 {
+    // Both GIFs render at the captured resolution — downscaling
+    // makes the terminal text and field labels illegible. The
+    // small one ships fewer frames (lower fps); the hi-res keeps
+    // the full frame rate. Either may overshoot the 10 MB budget
+    // at full resolution; that's fine — LFS handles them.
     Console.WriteLine("Encoding outputs…");
-    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),    maxLongSide: 800,  outFps: 10);
+    capture.SaveGif(Path.Combine(outDir, "demo-tour.gif"),    maxLongSide: 1280, outFps: 10);
     capture.SaveGif(Path.Combine(outDir, "demo-tour-hq.gif"), maxLongSide: 1280, outFps: 15);
     await capture.SaveMp4Async(Path.Combine(outDir, "demo-tour.mp4"), outFps: 30);
     capture.Dispose();
@@ -531,9 +610,10 @@ static void ConfirmCloseSessionDialog(UIA3Automation ua, Window root)
     //   2. The desktop's top-level children of our PID (in case a
     //      future dialog gets re-parented to a separate popup window).
     //
-    // The dialog opens async after we send Ctrl+F4, so poll for up to
-    // 3 seconds before giving up.
-    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+    // We don't just click once and return — the click may register
+    // before the dialog has fully animated open, so we keep polling
+    // until the "Close active session?" title is gone or we time out.
+    var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
     int pid = 0;
     try { pid = root.Properties.ProcessId.Value; } catch { }
 
@@ -544,7 +624,12 @@ static void ConfirmCloseSessionDialog(UIA3Automation ua, Window root)
         // the edit panel's X button (also named "Close") that lives
         // elsewhere in the tree.
         var title = root.FindFirstDescendant(cf => cf.ByName("Close active session?"));
-        if (title is not null && ClickPrimaryCloseNear(title))
+        if (title is not null) ClickPrimaryCloseNear(title);
+        // Verify the dialog is actually gone before returning — a
+        // first click sometimes lands while the dialog is still
+        // animating in and doesn't register.
+        Thread.Sleep(250);
+        if (root.FindFirstDescendant(cf => cf.ByName("Close active session?")) is null)
             return;
 
         // Fallback: top-level desktop walk for our PID.
@@ -704,35 +789,6 @@ static bool IsEditPanelOpen(Window root)
     // The footer Save button is unique to the edit panel. If it's
     // present in the UIA tree, the panel is still showing.
     return root.FindFirstDescendant(cf => cf.ByName("Save")) is not null;
-}
-
-static void SetEditProtocol(Window root, string protocol)
-{
-    // Protocol ComboBox has Header="Protocol", which UIA exposes
-    // as the element's Name in WinUI 3.
-    var combo = root.FindFirstDescendant(cf =>
-        cf.ByControlType(ControlType.ComboBox).And(cf.ByName("Protocol"))) as ComboBox;
-    if (combo is null) return;
-    try
-    {
-        combo.Click();
-        Thread.Sleep(400);
-        // Pick the item by Name. ComboBox items are surfaced as
-        // ListItem in UIA — not ComboBoxItem.
-        var item = root.FindFirstDescendant(cf =>
-            cf.ByControlType(ControlType.ListItem).And(cf.ByName(protocol)))
-            ?? root.FindFirstDescendant(cf => cf.ByName(protocol));
-        if (item is not null)
-        {
-            try { item.AsListBoxItem().Select(); }
-            catch { try { item.Click(); } catch { } }
-        }
-        else
-        {
-            Keyboard.Press(VirtualKeyShort.ESCAPE);
-        }
-    }
-    catch { /* best effort */ }
 }
 
 static void ScrollEditPanel(Window root, int pageDownTimes)

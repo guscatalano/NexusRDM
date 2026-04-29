@@ -70,22 +70,22 @@ internal static class GifRecorder
                 return;
             }
 
-            // Fallback ladder. We drop frame rate FIRST and only
-            // reduce resolution as a last resort — the goal is to
-            // preserve image quality (sharpness / readability) at
-            // the cost of choppier playback. The first rung mirrors
-            // the caller's requested params so well-behaved demos
-            // pay no extra cost.
+            // Fallback ladder. We drop frame rate ONLY — never
+            // resolution. A pixelated screen recording is illegible
+            // (you can't read the terminal output, the protocol
+            // labels, the panel field labels), so we'd rather ship
+            // a choppy GIF at full size than a smooth blurry one.
+            // If the smallest fps still busts the budget we keep
+            // the file anyway and warn — the caller can decide
+            // whether to ship it via LFS or live with the chop.
             var rungs = new (int side, int fps)[]
             {
-                (maxLongSide,         outFps),
-                (maxLongSide,         Math.Max(8, outFps - 3)),
-                (maxLongSide,         6),
-                (maxLongSide,         5),
-                (maxLongSide * 3 / 4, 6),
-                (maxLongSide * 3 / 4, 5),
-                (maxLongSide / 2,     6),
-                (maxLongSide / 2,     5),
+                (maxLongSide, outFps),
+                (maxLongSide, Math.Max(8, outFps - 3)),
+                (maxLongSide, 6),
+                (maxLongSide, 5),
+                (maxLongSide, 4),
+                (maxLongSide, 3),
             };
 
             for (int i = 0; i < rungs.Length; i++)

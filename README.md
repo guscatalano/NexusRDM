@@ -8,7 +8,9 @@ A short tour through the demo mode (synthetic data only — no real hosts):
 
 ![Demo tour](docs/screenshots/demo-tour.gif)
 
-> Screenshots and GIFs in this README are auto-generated. See [`tools/NexusRDM.DemoRecorder`](tools/NexusRDM.DemoRecorder) — it drives the app via FlaUI in demo mode and writes everything under `docs/screenshots/`.
+The GIF above runs at a reduced frame rate to keep the file size reasonable. For sharper playback there's also [`demo-tour-hq.gif`](docs/screenshots/demo-tour-hq.gif) (tracked via Git LFS) and [`demo-tour.mp4`](docs/screenshots/demo-tour.mp4) — same recording, MP4 is ~30× smaller than GIF for the same visual quality. Click through to view the MP4; GitHub's repo README renderer doesn't embed it inline.
+
+> Screenshots, GIFs, and the MP4 in this README are auto-generated. See [`tools/NexusRDM.DemoRecorder`](tools/NexusRDM.DemoRecorder) — it drives the app via FlaUI in demo mode and writes everything under `docs/screenshots/`. Resolution is preserved at full capture size (1280×800); the recorder only drops fps when shrinking, so terminal text and field labels stay legible.
 
 ---
 
@@ -51,6 +53,10 @@ Switch to **RDP** and the panel reveals resolution, color depth, audio mode, and
 Open an SSH session and you get a real terminal pane. Demo mode shows a canned bash session so you can poke around without a real host.
 
 ![SSH session](docs/screenshots/ssh-session.png)
+
+RDP sessions render the embedded mstscax control inside the same tab. In demo mode you get a placeholder image instead of opening a real connection — same shape, same toolbar, no host required.
+
+![RDP session (demo placeholder)](docs/screenshots/rdp-session.png)
 
 ### Right-click for everything else
 
