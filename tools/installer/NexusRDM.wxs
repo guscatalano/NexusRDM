@@ -49,7 +49,7 @@
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="StartMenuFolder" Name="Nexus RDM" />
+      <Directory Id="NexusRdmStartMenuFolder" Name="Nexus RDM" />
     </StandardDirectory>
 
     <!-- Harvest the entire publish output. WiX 5's <Files> element
@@ -65,14 +65,14 @@
          uninstall-clean (Windows Installer requires every
          Component to have a KeyPath; for shortcut-only Components
          a registry value is the conventional pick). -->
-    <Component Id="StartMenuShortcut" Directory="StartMenuFolder" Guid="A4F1C7B0-2D8E-4F3A-9B5C-7E6D0F2C8A91">
+    <Component Id="StartMenuShortcut" Directory="NexusRdmStartMenuFolder" Guid="A4F1C7B0-2D8E-4F3A-9B5C-7E6D0F2C8A91">
       <Shortcut Id="AppShortcut"
                 Name="Nexus RDM"
                 Description="Modern remote-desktop manager for SSH and RDP sessions"
                 Target="[INSTALLFOLDER]NexusRDM.exe"
                 WorkingDirectory="INSTALLFOLDER"
                 Icon="AppIcon.ico" />
-      <RemoveFolder Id="StartMenuFolderRemove" On="uninstall" />
+      <RemoveFolder Id="NexusRdmStartMenuFolderRemove" On="uninstall" />
       <RegistryValue Root="HKCU"
                      Key="Software\GusCatalano\NexusRDM"
                      Name="installed"
