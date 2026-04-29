@@ -79,7 +79,11 @@ if (-not $wixCheck) {
 }
 
 $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
-if (Test-Path $dotnetTools -and ($env:PATH -notlike "*$dotnetTools*")) {
+# Parens are load-bearing: bare `Test-Path $x -and ...` makes
+# PowerShell parse `-and` as a Test-Path parameter (which fails);
+# wrapping forces it to evaluate the call as a sub-expression and
+# THEN apply the logical -and.
+if ((Test-Path $dotnetTools) -and ($env:PATH -notlike "*$dotnetTools*")) {
     $env:PATH = "$dotnetTools;$env:PATH"
 }
 
