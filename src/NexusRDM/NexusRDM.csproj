@@ -105,10 +105,18 @@
          (whole-directory copy), since just the assembly isn't enough
          — the agent ships an apphost .exe, .deps.json,
          .runtimeconfig.json, and the System.Management dependency
-         tree. ProjectReference here only enforces build ordering. -->
+         tree. ProjectReference here only enforces build ordering.
+
+         SkipGetTargetFrameworkProperties=true bypasses the SDK's
+         self-contained-graph check (NETSDK1150). Without it, MSIX
+         builds fail because NexusRDM is self-contained but the
+         agent isn't — and we don't want it to be. The agent runs
+         elevated as its own child process; bundling the runtime
+         into it would double the package size with no benefit. -->
     <ProjectReference Include="..\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <Private>false</Private>
+      <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
     </ProjectReference>
   </ItemGroup>
 
