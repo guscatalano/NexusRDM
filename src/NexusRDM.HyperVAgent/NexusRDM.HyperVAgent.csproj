@@ -7,6 +7,15 @@
     <AssemblyName>NexusRDM.HyperVAgent</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Declare the RIDs the parent app is published against. Without
+         this, restore only generates a framework-only target in
+         project.assets.json, and a parent build with
+         /p:RuntimeIdentifier=win-x64 fails NETSDK1047 when it walks
+         the project graph (even with SkipGetTargetFrameworkProperties
+         set on the reference). The agent itself is still built
+         framework-dependent — RuntimeIdentifiers just teaches
+         restore which RID-scoped assets to produce. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <!-- requireAdministrator manifest. Launching this exe with
          Process.Start + UseShellExecute=true + Verb="runas" triggers
          the UAC prompt; on consent the process inherits the user's
