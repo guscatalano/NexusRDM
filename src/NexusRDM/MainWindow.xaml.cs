@@ -885,7 +885,13 @@ public sealed partial class MainWindow : Window
             // Skip per-tab confirmation when the user already confirmed
             // an app-wide close — we don't want to prompt N times during
             // teardown.
+            // Skip the prompt in demo mode — synthetic SSH/RDP sessions
+            // aren't real, and the recorder hits this on every tab close.
+            var demo = App.Services.GetService<NexusRDM.Services.DemoModeService>();
+            var skipDemoPrompt = demo is not null && demo.IsActive;
+
             if (!_suppressTabConfirm
+                && !skipDemoPrompt
                 && SettingsStore.ReadConfirmCloseActive()
                 && IsSessionActive(os))
             {
