@@ -3,6 +3,9 @@
     "NexusRDM (Unpackaged)": {
       "commandName": "Project",
       "nativeDebugging": false
+    },
+    "NexusRDM (Packaged)": {
+      "commandName": "MsixPackage"
     }
   }
 }
