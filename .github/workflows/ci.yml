@@ -22,11 +22,102 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
+  # Centralised version compute so every downstream job stamps the
+  # same identifiers. Three flavours of trigger, three version shapes:
+  #
+  #   1. Stable tag push, e.g. `v1.2.3`
+  #        semver  = 1.2.3
+  #        numeric = 1.2.3.0
+  #        prerelease = false
+  #
+  #   2. Pre-release tag push, e.g. `v1.2.3-rc1`
+  #        semver  = 1.2.3-rc1
+  #        numeric = 1.2.3.<run-number>   (Store needs unique numeric)
+  #        prerelease = true
+  #
+  #   3. Branch push / workflow_dispatch (every commit on main)
+  #        semver  = <latest-tag-base>-pre.<run>+<short-sha>
+  #        numeric = <latest-tag-base>.<run-number>
+  #        prerelease = true
+  #        release_tag is auto-created (action-gh-release does it)
+  #
+  # `numeric` is the 4-segment Major.Minor.Build.Revision shape MSIX
+  # Identity Version + Win32 File/Assembly versions all require.
+  # `semver` is the human-readable string used in zip filenames,
+  # GitHub Release names, and AssemblyInformationalVersion.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      semver:        ${{ steps.compute.outputs.semver }}
+      numeric:       ${{ steps.compute.outputs.numeric }}
+      is_prerelease: ${{ steps.compute.outputs.is_prerelease }}
+      release_tag:   ${{ steps.compute.outputs.release_tag }}
+    steps:
+      - name: Checkout (full history for git describe)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute versions
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Latest stable-shape tag, e.g. v1.2.3 (ignores anything
+          # with a pre-release suffix). Falls back to v0.1.0 if the
+          # repo has no tags yet.
+          base_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+                     | grep -v '-' | head -n1 || true)"
+          if [[ -z "$base_tag" ]]; then base_tag="v0.1.0"; fi
+          base_numeric="${base_tag#v}"
+          # Pad to exactly 3 segments so we can append .<run> safely.
+          while [[ "$(awk -F. '{print NF}' <<<"$base_numeric")" -lt 3 ]]; do
+            base_numeric="${base_numeric}.0"
+          done
+
+          ref="$GITHUB_REF"
+          run="${{ github.run_number }}"
+          short_sha="${GITHUB_SHA:0:7}"
+
+          if [[ "$ref" == refs/tags/v* ]]; then
+            tag_semver="${ref#refs/tags/v}"
+            if [[ "$tag_semver" == *-* ]]; then
+              is_pre=true
+              # Pre-release tag: numeric uses the latest STABLE base
+              # plus run-number for uniqueness — Store rejects re-uploads.
+              numeric="${base_numeric}.${run}"
+            else
+              is_pre=false
+              # Stable tag: numeric matches the tag, 4th segment 0.
+              numeric="${tag_semver}.0"
+            fi
+            semver="$tag_semver"
+            release_tag="${ref#refs/tags/}"
+          else
+            # Branch push / workflow_dispatch.
+            is_pre=true
+            semver="${base_numeric}-pre.${run}+${short_sha}"
+            numeric="${base_numeric}.${run}"
+            release_tag="v${base_numeric}-pre.${run}"
+          fi
+
+          echo "semver=$semver"               >> "$GITHUB_OUTPUT"
+          echo "numeric=$numeric"             >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_pre"        >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag"     >> "$GITHUB_OUTPUT"
+
+          echo "  semver        = $semver"
+          echo "  numeric       = $numeric"
+          echo "  is_prerelease = $is_pre"
+          echo "  release_tag   = $release_tag"
+
   build-and-test:
     # WinUI 3 / WindowsAppSDK is Windows-only; no other host platform
     # can build the NexusRDM.csproj surface.
     runs-on: windows-latest
     timeout-minutes: 25
+    needs: version
 
     steps:
       - name: Checkout
@@ -104,11 +195,12 @@ jobs:
           if-no-files-found: warn
 
   release:
-    # Tag-driven release: publishes a Release-mode self-contained build
-    # as a zip archive attached to the GitHub Release.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Runs on every main push (rolling pre-release) and every v* tag
+    # push (stable or tagged pre-release). Skipped on PRs to avoid
+    # creating noise in fork preview runs.
+    if: github.event_name == 'push'
     runs-on: windows-latest
-    needs: build-and-test
+    needs: [version, build-and-test]
     timeout-minutes: 25
 
     steps:
@@ -123,31 +215,67 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Publish (Release x64)
-        run: msbuild src\NexusRDM\NexusRDM.csproj /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:PublishDir=publish\ /v:minimal /nologo
+      - name: Restore
+        # Each job runs in a fresh checkout, so the build-and-test
+        # job's restore output isn't visible here. Without this the
+        # /t:Publish call fails with NETSDK1004 (missing
+        # project.assets.json).
+        run: |
+          dotnet restore src\NexusRDM.Core\NexusRDM.Core.csproj
+          dotnet restore src\NexusRDM.Data\NexusRDM.Data.csproj
+          dotnet restore src\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj
+          dotnet restore src\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj
+          dotnet restore src\NexusRDM\NexusRDM.csproj
+
+      - name: Publish (Release x64) with stamped version
+        # /p:Version stamps AssemblyInformationalVersion + the SDK's
+        # synthesised AssemblyVersion. We override AssemblyVersion +
+        # FileVersion explicitly with the 4-segment numeric form
+        # because Win32 + assembly identity reject pre-release strings.
+        run: >-
+          msbuild src\NexusRDM\NexusRDM.csproj
+          /t:Publish
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:RuntimeIdentifier=win-x64
+          /p:PublishDir=publish\
+          /p:Version=${{ needs.version.outputs.semver }}
+          /p:AssemblyVersion=${{ needs.version.outputs.numeric }}
+          /p:FileVersion=${{ needs.version.outputs.numeric }}
+          /p:InformationalVersion=${{ needs.version.outputs.semver }}
+          /v:minimal /nologo
 
       - name: Zip publish output
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          Compress-Archive -Path src\NexusRDM\publish\* -DestinationPath "NexusRDM-$tag-win-x64.zip"
+          $semver = "${{ needs.version.outputs.semver }}"
+          Compress-Archive -Path src\NexusRDM\publish\* -DestinationPath "NexusRDM-v$semver-win-x64.zip"
 
-      - name: Attach to release
+      - name: Create / update GitHub Release
+        # On v* tag pushes: action attaches to the existing tag.
+        # On branch pushes: action creates the tag from HEAD using
+        # `tag_name`, then makes the release.
+        # `prerelease` is true for branch pushes and -suffix tags.
+        # `generate_release_notes` fills the body with PR titles
+        # since the previous release.
         uses: softprops/action-gh-release@v2
         with:
-          files: NexusRDM-*-win-x64.zip
+          tag_name:               ${{ needs.version.outputs.release_tag }}
+          name:                   ${{ needs.version.outputs.release_tag }}
+          prerelease:             ${{ needs.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          files:                  NexusRDM-*-win-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   msix-store:
-    # Builds a Store-ingestible .msixupload on every push to main and
-    # on every v* tag. Store rejects re-uploads of an already-accepted
-    # Identity Version, so we stamp a unique 4th segment using the
-    # GitHub run number (or use the tag's semver verbatim when the
-    # build was triggered by a tag push).
+    # Builds a Store-ingestible .msixupload on every push (main or v*)
+    # and on every workflow_dispatch. Identity Version comes from the
+    # shared `version` job — the build-msix.ps1 script regex-patches
+    # Package.appxmanifest with that value.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
-    needs: build-and-test
+    needs: [version, build-and-test]
     timeout-minutes: 25
 
     steps:
@@ -162,24 +290,19 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Compute version
-        id: version
-        shell: pwsh
+      - name: Restore
+        # build-msix.ps1 jumps straight to msbuild — it doesn't run a
+        # restore. Each CI job has its own clean checkout, so without
+        # this step project.assets.json is missing and the msbuild
+        # call fails with NETSDK1004. Restore every project the
+        # NexusRDM.csproj graph touches (Core / Data / RdpAx / Agent
+        # are project references; their own NuGet refs need to land).
         run: |
-          # Tag pushes (refs/tags/v1.2.3) → 1.2.3.0
-          # Branch pushes / workflow_dispatch → 1.0.0.<run-number>
-          $ref = "${{ github.ref }}"
-          if ($ref -like "refs/tags/v*") {
-            $semver = $ref -replace "refs/tags/v", ""
-            # Accept v1.2.3 or v1.2.3.4; default missing parts to 0.
-            $parts = $semver.Split('.')
-            while ($parts.Length -lt 4) { $parts += "0" }
-            $version = ($parts[0..3] -join ".")
-          } else {
-            $version = "1.0.0.${{ github.run_number }}"
-          }
-          Write-Host "Package version → $version"
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          dotnet restore src\NexusRDM.Core\NexusRDM.Core.csproj
+          dotnet restore src\NexusRDM.Data\NexusRDM.Data.csproj
+          dotnet restore src\NexusRDM.RdpAx\NexusRDM.RdpAx.csproj
+          dotnet restore src\NexusRDM.HyperVAgent\NexusRDM.HyperVAgent.csproj
+          dotnet restore src\NexusRDM\NexusRDM.csproj
 
       - name: Build .msixupload
         shell: pwsh
@@ -189,25 +312,93 @@ jobs:
           # splash PNGs from AppIcon.ico if they're missing.
           tools\build-msix.ps1 `
               -ForStore `
-              -Version "${{ steps.version.outputs.version }}" `
+              -Version "${{ needs.version.outputs.numeric }}" `
               -Configuration Release `
               -Platform x64
 
       - name: Upload .msixupload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nexusrdm-msix-${{ steps.version.outputs.version }}
+          name: nexusrdm-msix-${{ needs.version.outputs.numeric }}
           path: artifacts/msix/**/*.msixupload
           if-no-files-found: error
           retention-days: 90
 
       - name: Attach to GitHub Release
-        # Tag-driven runs also drop the .msixupload on the release
-        # alongside the existing zip, so the Store-upload artifact
-        # ships next to the sideload artifact.
-        if: startsWith(github.ref, 'refs/tags/v')
+        # Drop the .msixupload on the same release the `release` job
+        # made, regardless of whether the trigger was a tag or a
+        # branch push. Reuses the same tag_name + flags so this
+        # action's call merges into the existing release rather than
+        # creating a duplicate.
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/msix/**/*.msixupload
+          tag_name:               ${{ needs.version.outputs.release_tag }}
+          name:                   ${{ needs.version.outputs.release_tag }}
+          prerelease:             ${{ needs.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          files:                  artifacts/msix/**/*.msixupload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  prune-prereleases:
+    # Keep the 20 newest auto-generated pre-release tags + their
+    # GitHub Releases; delete the rest. Only touches tags that
+    # match the recorder's auto-tag pattern (`v*-pre.<run>`) so
+    # user-cut tags like `v1.2.3-rc1` and stable `v1.2.3` are never
+    # touched, no matter how old they are.
+    #
+    # Runs after every push that the release/msix-store jobs
+    # publish to. Skipped on PRs (no release, nothing to prune).
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: [release, msix-store]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete old auto pre-releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEEP=20
+
+          # List release tags whose name matches the auto pattern
+          # `*-pre.<digits>` (escaped dot). Order: newest createdAt
+          # first; jq picks the field, sorts, and emits one tag per
+          # line. We then drop the first KEEP and delete the rest.
+          mapfile -t auto_tags < <(
+            gh release list --limit 200 --json tagName,createdAt,isPrerelease \
+              | jq -r '
+                  map(select(.isPrerelease == true
+                             and (.tagName | test("-pre\\.[0-9]+$"))))
+                  | sort_by(.createdAt) | reverse
+                  | .[].tagName'
+          )
+
+          total=${#auto_tags[@]}
+          echo "Found $total auto pre-release tags."
+          if (( total <= KEEP )); then
+            echo "Nothing to prune (keeping $KEEP)."
+            exit 0
+          fi
+
+          # Slice off the ones we keep; everything past index KEEP
+          # gets deleted (release + git tag in one call).
+          to_delete=("${auto_tags[@]:KEEP}")
+          echo "Deleting ${#to_delete[@]} old pre-release tag(s):"
+          printf '  %s\n' "${to_delete[@]}"
+
+          for tag in "${to_delete[@]}"; do
+            # --cleanup-tag also removes the underlying git tag from
+            # the remote, not just the Release. --yes skips the
+            # interactive confirm.
+            gh release delete "$tag" --cleanup-tag --yes || \
+              echo "  (warn: failed to delete $tag — moving on)"
+          done
