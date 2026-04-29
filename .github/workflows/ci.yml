@@ -21,6 +21,14 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
+# Workflow-level token permissions. Default for the implicit
+# GITHUB_TOKEN is read-only on `contents`, which fails the release-
+# creation step with 403 "Resource not accessible by integration".
+# `contents: write` lets the release/msix-store/prune jobs create
+# tags + releases and delete old pre-release tags via the gh CLI.
+permissions:
+  contents: write
+
 jobs:
   # Centralised version compute so every downstream job stamps the
   # same identifiers. Three flavours of trigger, three version shapes:
@@ -358,8 +366,6 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: [release, msix-store]
-    permissions:
-      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
