@@ -110,9 +110,24 @@ The folder is auto-managed: turn the toggle off and the folder + its rows + thei
 
 ## Themes
 
-Eight built-in palettes including the original Dracula default. Pick **Custom** to edit every color individually with a color-picker per slot — changes apply live so you can dial in the exact look you want.
+Eight built-in palettes plus a fully editable **Custom** slot. Changes apply live — picking a theme repaints every surface (sidebar, tree, edit panel, RDP toolbar) immediately, no restart required.
 
-![Themes](docs/screenshots/themes.png)
+The theme picker lives at Settings → Appearance:
+
+![Themes — Appearance page](docs/screenshots/themes.png)
+
+Same Connections view, six different palettes:
+
+| | |
+|:-:|:-:|
+| **Dark (default)** | **Light** |
+| ![Dark](docs/screenshots/theme-dark.png) | ![Light](docs/screenshots/theme-light.png) |
+| **Solarized Dark** | **Solarized Light** |
+| ![Solarized Dark](docs/screenshots/theme-solarized-dark.png) | ![Solarized Light](docs/screenshots/theme-solarized-light.png) |
+| **Nord** | **Monokai** |
+| ![Nord](docs/screenshots/theme-nord.png) | ![Monokai](docs/screenshots/theme-monokai.png) |
+
+The remaining built-ins (Dracula, plus the Custom slot) aren't shown here but are available in the picker. Pick **Custom** to edit every colour individually with a per-slot picker — changes preview live as you drag the sliders.
 
 ---
 

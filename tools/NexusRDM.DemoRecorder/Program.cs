@@ -141,6 +141,39 @@ Thread.Sleep(400);
 ExpandAllTreeItems(win);
 Thread.Sleep(400);
 
+// Switch to the Light theme as the recorder's baseline. Light has
+// the highest text/background contrast of the bundled themes and
+// embeds well in any README context (light-mode GitHub, slide
+// decks, printouts). Dark themes look great in dark mode but
+// render as a heavy black block when the host page is light.
+//
+// Theme switch happens BEFORE the first screenshot so every
+// capture (PNGs + GIF + MP4) shares the same palette. We restore
+// the original theme at the end of the run so re-launching the
+// app interactively keeps whatever the user had picked.
+Console.WriteLine("Switching to Light theme for the recording…");
+{
+    var settingsBtnInit = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavSettings")) as Button
+                       ?? win.FindFirstDescendant(cf => cf.ByName("Settings")) as Button;
+    if (settingsBtnInit is not null)
+    {
+        settingsBtnInit.Click();
+        Thread.Sleep(500);
+        (win.FindFirstDescendant(cf => cf.ByName("Appearance")))?.Click();
+        Thread.Sleep(500);
+        if (!SelectTheme(win, "Light"))
+            Console.WriteLine("  (couldn't pick Light — recording will use whatever theme is active)");
+        Thread.Sleep(500);
+        // Back to Connections so the first screenshot frames the tree.
+        var connBtnInit = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavConn")) as Button
+                       ?? win.FindFirstDescendant(cf => cf.ByName("Connections")) as Button;
+        connBtnInit?.Click();
+        Thread.Sleep(600);
+        ExpandAllTreeItems(win);
+        Thread.Sleep(300);
+    }
+}
+
 // 1. main-window.png — Home tab + sidebar with the demo tree.
 Snap.Window(win, Path.Combine(outDir, "main-window.png"));
 
@@ -460,6 +493,49 @@ if (settingsBtn is not null)
     apprNav?.Click();
     Thread.Sleep(600);
     Snap.Window(win, Path.Combine(outDir, "themes.png"));
+
+    // 9a. Theme tour. Cycle through a representative subset of
+    // themes, navigate back to Connections after each pick (so
+    // the snapshot captures the tree + sidebar painted in that
+    // theme's palette — way more visually informative than the
+    // Appearance page itself), then snap. We end the tour by
+    // restoring the default ("Dracula") so the next recorder
+    // run starts from a known palette.
+    Console.WriteLine("Capturing per-theme connection-tree shots…");
+    string[] themes = ["Dark (default)", "Light", "Solarized Dark", "Solarized Light", "Nord", "Monokai"];
+    string[] themeFileSlugs = ["theme-dark", "theme-light", "theme-solarized-dark", "theme-solarized-light", "theme-nord", "theme-monokai"];
+    for (int i = 0; i < themes.Length; i++)
+    {
+        if (!SelectTheme(win, themes[i]))
+        {
+            Console.WriteLine($"  (skipped {themes[i]} — picker missed it)");
+            continue;
+        }
+        Thread.Sleep(500); // let the brushes repaint everywhere
+        // Switch to Connections so the screenshot shows the tree
+        // re-painted in the new palette. Settings nav stays
+        // selected on each iteration; clicking Connections then
+        // back to Settings would lose our spot in the page list.
+        var connBtnTheme = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavConn")) as Button
+                         ?? win.FindFirstDescendant(cf => cf.ByName("Connections")) as Button;
+        connBtnTheme?.Click();
+        Thread.Sleep(600);
+        Snap.Window(win, Path.Combine(outDir, $"{themeFileSlugs[i]}.png"));
+
+        // Re-enter Settings → Appearance for the next theme pick.
+        if (i < themes.Length - 1)
+        {
+            settingsBtn?.Click();
+            Thread.Sleep(500);
+            (win.FindFirstDescendant(cf => cf.ByName("Appearance")))?.Click();
+            Thread.Sleep(500);
+        }
+    }
+    // Restore the recorder's baseline (Light) so the next
+    // recorder run starts from the same persisted theme. The
+    // user can manually switch back to Dracula or anything else.
+    SelectTheme(win, "Light");
+    Thread.Sleep(400);
 }
 else
 {
@@ -789,6 +865,85 @@ static bool IsEditPanelOpen(Window root)
     // The footer Save button is unique to the edit panel. If it's
     // present in the UIA tree, the panel is still showing.
     return root.FindFirstDescendant(cf => cf.ByName("Save")) is not null;
+}
+
+static bool SelectTheme(Window root, string displayName)
+{
+    // Locate the theme picker. Three fallbacks because UIA's
+    // ComboBox projection is inconsistent across WinUI builds:
+    //   1. AutomationId="ThemePicker" (set explicitly in XAML).
+    //   2. Name="Theme" (AutomationProperties.Name on the same combo).
+    //   3. Any ComboBox on the page whose items list contains a
+    //      known theme — this rescues stale builds that don't yet
+    //      have the AutomationId/Name properties baked in.
+    AutomationElement? combo =
+        root.FindFirstDescendant(cf => cf.ByAutomationId("ThemePicker"))
+        ?? root.FindFirstDescendant(cf =>
+               cf.ByControlType(ControlType.ComboBox).And(cf.ByName("Theme")));
+
+    if (combo is null)
+    {
+        // Last resort: scan every visible ComboBox, open it briefly,
+        // and check whether its items include a known theme name.
+        // We do this on the candidate that's most likely (visible,
+        // non-zero size) before falling back further.
+        foreach (var c in root.FindAllDescendants(cf => cf.ByControlType(ControlType.ComboBox)))
+        {
+            try
+            {
+                c.AsComboBox().Expand();
+                Thread.Sleep(200);
+                var probe = root.FindFirstDescendant(cf => cf.ByName("Dracula"));
+                c.AsComboBox().Collapse();
+                if (probe is not null) { combo = c; break; }
+            }
+            catch { /* not a ComboBox we can drive */ }
+        }
+    }
+    if (combo is null) return false;
+
+    try
+    {
+        // Prefer the ExpandCollapse pattern over a Click — it works
+        // even if the bounding rect is partially scrolled out.
+        try { combo.AsComboBox().Expand(); }
+        catch { combo.Click(); }
+        Thread.Sleep(450);
+
+        // Items appear as ListItem (data-bound ComboBox) — not
+        // ComboBoxItem. Match by exact Name; fall back to a
+        // case-insensitive substring scan if the displayName has
+        // ornamental text (e.g. "Dark (default)").
+        AutomationElement? item =
+            root.FindFirstDescendant(cf =>
+                cf.ByControlType(ControlType.ListItem).And(cf.ByName(displayName)))
+            ?? root.FindFirstDescendant(cf => cf.ByName(displayName));
+
+        if (item is null)
+        {
+            foreach (var li in root.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)))
+            {
+                string name; try { name = li.Name ?? ""; } catch { continue; }
+                if (name.Contains(displayName, StringComparison.OrdinalIgnoreCase))
+                { item = li; break; }
+            }
+        }
+
+        if (item is null)
+        {
+            try { combo.AsComboBox().Collapse(); } catch { Keyboard.Press(VirtualKeyShort.ESCAPE); }
+            return false;
+        }
+
+        try { item.AsListBoxItem().Select(); }
+        catch
+        {
+            try { item.Click(); }
+            catch { Keyboard.Press(VirtualKeyShort.ESCAPE); return false; }
+        }
+        return true;
+    }
+    catch { return false; }
 }
 
 static void ScrollEditPanel(Window root, int pageDownTimes)

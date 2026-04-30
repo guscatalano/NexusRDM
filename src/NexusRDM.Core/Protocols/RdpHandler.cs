@@ -182,7 +182,9 @@ public sealed class RdpHandler : IRdpHandler
             RdpLaunchMode.FreeRdp when _freeRdpFactory is not null
                 => _freeRdpFactory(profile, username, password),
             RdpLaunchMode.FreeRdp
-                => throw new NotImplementedException("FreeRDP backend is not yet implemented; pick Mstsc or MstscAx in Settings."),
+                => throw new InvalidOperationException(
+                    "FreeRDP backend factory not registered. " +
+                    "Make sure App.xaml.cs's RdpHandler registration passes freeRdpFactory."),
             RdpLaunchMode.MstscAx
                 => throw new InvalidOperationException(
                     "MstscAx backend factory not registered. Pick Mstsc in Settings or wire up the factory."),

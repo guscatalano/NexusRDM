@@ -239,7 +239,14 @@ public partial class App : Application
             mstscExePathProvider: SettingsStore.ReadMstscExePath,
             mstscAxFactory:  (profile, user, pass) => new MstscAxRdpSession(
                 profile, user, pass,
-                resolutionResolver: ResolveDesktopSize)));
+                resolutionResolver: ResolveDesktopSize),
+            // FreeRDP backend: wfreerdp.exe lifecycle managed by
+            // FreeRdpBootstrap (cached download to %LocalAppData%
+            // on first use). The session implements both Phase A
+            // (separate window when hwndParent is 0) and Phase B
+            // (owner-window pin when hwndParent is non-zero).
+            freeRdpFactory:  (profile, user, pass) =>
+                new NexusRDM.Protocols.FreeRdpSession(profile, user, pass)));
         services.AddSingleton<IRdpHandler>(sp => new Services.DemoRdpHandler(
             sp.GetRequiredService<RdpHandler>(),
             sp.GetRequiredService<Services.DemoModeService>()));
