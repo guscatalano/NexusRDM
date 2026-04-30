@@ -116,8 +116,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool   _saveWindowSize  = true;
 
     /// <summary>0 = Mstsc (separate process), 1 = MstscAx (in-proc ActiveX),
-    /// 2 = FreeRDP (not yet implemented). The order matches the ComboBox in
-    /// SettingsPage.xaml — index also matches the underlying enum value.</summary>
+    /// 2 = FreeRDP (downloads on first use, see FreeRdpBootstrap).
+    /// The order matches the ComboBox in SettingsPage.xaml — index also
+    /// matches the underlying enum value.</summary>
     [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.MstscAx;
 
     /// <summary>Default desktop resolution applied at connect time. Index
@@ -886,6 +887,12 @@ public static class SettingsStore
 
     public static string ReadMstscAxPath() =>
         Read().TryGetValue("MstscAxPath", out var v) ? Convert.ToString(v) ?? string.Empty : string.Empty;
+
+    /// <summary>Optional override for FreeRDP's wfreerdp.exe. Empty
+    /// string falls through to the FreeRdpBootstrap probe order
+    /// (cached download → system PATH → fresh download).</summary>
+    public static string ReadFreeRdpExePath() =>
+        Read().TryGetValue("FreeRdpExePath", out var v) ? Convert.ToString(v) ?? string.Empty : string.Empty;
 
     /// <summary>Lightweight sanity check on a candidate <c>mstsc.exe</c>:
     /// existence + .exe extension + non-trivial size. Doesn't actually

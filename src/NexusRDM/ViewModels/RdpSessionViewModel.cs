@@ -189,6 +189,16 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         {
             Events.Add(entry);
             while (Events.Count > MaxEvents) Events.RemoveAt(0);
+
+            // Surface FreeRdpBootstrap progress (download/extract
+            // status) into the connecting overlay so the user sees
+            // "Downloading FreeRDP MSI…" instead of a static
+            // "Connecting…" while the bootstrap runs. We only
+            // override StatusMessage while the session hasn't
+            // connected yet, so this doesn't clobber post-connect
+            // event chatter.
+            if (IsConnecting && entry.Kind is "FreeRdpBootstrap" or "Launching" or "FreeRdpEmbed")
+                StatusMessage = entry.Detail;
         });
 
     private void OnSessionConnected(object? sender, EventArgs e) =>

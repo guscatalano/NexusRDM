@@ -96,6 +96,9 @@
                             <TextBlock Text="Color palette — applied immediately for live preview." FontSize="11" Foreground="{StaticResource NxTx3}" Margin="0,2,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                         <ComboBox Grid.Column="1"
+                                  x:Name="ThemePicker"
+                                  AutomationProperties.AutomationId="ThemePicker"
+                                  AutomationProperties.Name="Theme"
                                   ItemsSource="{x:Bind ViewModel.Themes}"
                                   SelectedItem="{x:Bind ViewModel.SelectedTheme, Mode=TwoWay}"
                                   DisplayMemberPath="DisplayName"
@@ -220,7 +223,7 @@
                                   VerticalAlignment="Top">
                             <ComboBoxItem Content="Mstsc (separate process)" />
                             <ComboBoxItem Content="MstscAx (in-process ActiveX)" />
-                            <ComboBoxItem Content="FreeRDP (not yet implemented)" />
+                            <ComboBoxItem Content="FreeRDP (downloads on first use)" />
                         </ComboBox>
                     </Grid>
                 </Border>
