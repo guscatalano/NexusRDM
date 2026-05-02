@@ -148,27 +148,52 @@ Thread.Sleep(400);
 // render as a heavy black block when the host page is light.
 //
 // Theme switch happens BEFORE the first screenshot so every
-// capture (PNGs + GIF + MP4) shares the same palette. We restore
-// the original theme at the end of the run so re-launching the
-// app interactively keeps whatever the user had picked.
+// capture (PNGs + GIF + MP4) shares the same palette. We log
+// every sub-step so failures are visible — silent skips here
+// would mean every screenshot ships in whatever theme was
+// active at launch.
 Console.WriteLine("Switching to Light theme for the recording…");
 {
     var settingsBtnInit = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavSettings")) as Button
-                       ?? win.FindFirstDescendant(cf => cf.ByName("Settings")) as Button;
-    if (settingsBtnInit is not null)
+                       ?? win.FindFirstDescendant(cf => cf.ByName("Settings")) as Button
+                       ?? FindButtonByLabel(win, "Settings");
+    if (settingsBtnInit is null)
     {
+        Console.WriteLine("  (skipped — Settings nav button not found; rebuild the WinUI app)");
+    }
+    else
+    {
+        Console.WriteLine("  → Settings");
         settingsBtnInit.Click();
-        Thread.Sleep(500);
-        (win.FindFirstDescendant(cf => cf.ByName("Appearance")))?.Click();
-        Thread.Sleep(500);
-        if (!SelectTheme(win, "Light"))
-            Console.WriteLine("  (couldn't pick Light — recording will use whatever theme is active)");
-        Thread.Sleep(500);
+        Thread.Sleep(700);
+
+        var apprNavInit = win.FindFirstDescendant(cf => cf.ByName("Appearance"));
+        if (apprNavInit is null)
+        {
+            Console.WriteLine("  (skipped — Appearance nav item not found)");
+        }
+        else
+        {
+            Console.WriteLine("  → Appearance");
+            apprNavInit.Click();
+            Thread.Sleep(700);
+
+            if (SelectTheme(win, "Light"))
+                Console.WriteLine("  → Light theme selected");
+            else
+                Console.WriteLine("  (couldn't pick Light — capture will use whatever theme is active)");
+            Thread.Sleep(600);
+        }
+
         // Back to Connections so the first screenshot frames the tree.
         var connBtnInit = win.FindFirstDescendant(cf => cf.ByAutomationId("BtnNavConn")) as Button
-                       ?? win.FindFirstDescendant(cf => cf.ByName("Connections")) as Button;
-        connBtnInit?.Click();
-        Thread.Sleep(600);
+                       ?? win.FindFirstDescendant(cf => cf.ByName("Connections")) as Button
+                       ?? FindButtonByLabel(win, "Connections");
+        if (connBtnInit is null)
+            Console.WriteLine("  (warning: Connections nav button not found — sidebar may be on Settings for the first shot)");
+        else
+            connBtnInit.Click();
+        Thread.Sleep(700);
         ExpandAllTreeItems(win);
         Thread.Sleep(300);
     }
@@ -876,18 +901,21 @@ static bool SelectTheme(Window root, string displayName)
     //   3. Any ComboBox on the page whose items list contains a
     //      known theme — this rescues stale builds that don't yet
     //      have the AutomationId/Name properties baked in.
-    AutomationElement? combo =
-        root.FindFirstDescendant(cf => cf.ByAutomationId("ThemePicker"))
-        ?? root.FindFirstDescendant(cf =>
-               cf.ByControlType(ControlType.ComboBox).And(cf.ByName("Theme")));
-
+    AutomationElement? combo = root.FindFirstDescendant(cf => cf.ByAutomationId("ThemePicker"));
+    string foundVia = "AutomationId";
+    if (combo is null)
+    {
+        combo = root.FindFirstDescendant(cf =>
+            cf.ByControlType(ControlType.ComboBox).And(cf.ByName("Theme")));
+        if (combo is not null) foundVia = "Name=Theme";
+    }
     if (combo is null)
     {
         // Last resort: scan every visible ComboBox, open it briefly,
         // and check whether its items include a known theme name.
-        // We do this on the candidate that's most likely (visible,
-        // non-zero size) before falling back further.
-        foreach (var c in root.FindAllDescendants(cf => cf.ByControlType(ControlType.ComboBox)))
+        var combos = root.FindAllDescendants(cf => cf.ByControlType(ControlType.ComboBox));
+        Console.WriteLine($"    SelectTheme: probing {combos.Length} ComboBoxes for theme items…");
+        foreach (var c in combos)
         {
             try
             {
@@ -895,12 +923,17 @@ static bool SelectTheme(Window root, string displayName)
                 Thread.Sleep(200);
                 var probe = root.FindFirstDescendant(cf => cf.ByName("Dracula"));
                 c.AsComboBox().Collapse();
-                if (probe is not null) { combo = c; break; }
+                if (probe is not null) { combo = c; foundVia = "scan-probe"; break; }
             }
             catch { /* not a ComboBox we can drive */ }
         }
     }
-    if (combo is null) return false;
+    if (combo is null)
+    {
+        Console.WriteLine($"    SelectTheme: no theme picker found anywhere.");
+        return false;
+    }
+    Console.WriteLine($"    SelectTheme: found combo via {foundVia}, picking '{displayName}'…");
 
     try
     {
