@@ -197,6 +197,36 @@
                     </Grid>
                 </Border>
 
+                <!-- SSH section -->
+                <TextBlock Text="SSH"
+                           FontSize="10" CharacterSpacing="60"
+                           Foreground="{StaticResource NxTx3}"
+                           Margin="0,16,0,10" />
+
+                <Border BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Terminal backend" FontSize="12" Foreground="{StaticResource NxTx1}" />
+                            <TextBlock FontSize="11"
+                                       Foreground="{StaticResource NxTx3}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Embedded uses the in-app terminal (fast, integrated, but stumbles on top/htop/vim). PuTTYNG embeds the PuTTY fork that mRemoteNG ships — battle-tested terminal at the cost of a separate process. PuTTYNG.exe is downloaded on first use." />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{x:Bind ViewModel.SshModeIndex, Mode=TwoWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  Foreground="{StaticResource NxTx1}"
+                                  FontSize="12"
+                                  MinWidth="160"
+                                  VerticalAlignment="Top">
+                            <ComboBoxItem Content="Embedded (in-app)" />
+                            <ComboBoxItem Content="PuTTYNG (downloads on first use)" />
+                        </ComboBox>
+                    </Grid>
+                </Border>
+
                 <!-- RDP Defaults section -->
                 <TextBlock Text="RDP DEFAULTS"
                            FontSize="10" CharacterSpacing="60"

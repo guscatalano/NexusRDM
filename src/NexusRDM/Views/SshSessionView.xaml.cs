@@ -1,10 +1,13 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using NexusRDM.Protocols;
 using NexusRDM.Services;
 using NexusRDM.ViewModels;
 using Windows.Foundation;
+using WinRT.Interop;
 
 namespace NexusRDM.Views;
 
@@ -100,10 +103,35 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         if (_connectStarted) return;
         _connectStarted = true;
 
+        // PuTTYNG backend: hide the in-app terminal, show the host
+        // panel, hand the WinUI window's HWND to the session BEFORE
+        // ConnectAsync (PuTTYNG accepts -hwndparent only at launch).
+        if (ViewModel.Session is PuttySshSession puttySession)
+        {
+            Terminal.Visibility       = Visibility.Collapsed;
+            PuttyHostPanel.Visibility = Visibility.Visible;
+            try
+            {
+                var mainHwnd = WindowNative.GetWindowHandle(App.MainWin);
+                puttySession.SetOwnerHwnd(mainHwnd);
+            }
+            catch (Exception ex)
+            {
+                WriteTrace($"[ Couldn't bind host HWND to PuTTYNG: {ex.Message} ]");
+            }
+        }
+
         WriteTrace($"[ Connecting to {ViewModel.Host} ... ]");
         try
         {
             await ViewModel.ConnectAsync();
+
+            // Push the initial host-panel rect into the session now
+            // that PuTTYNG is up. PuttyHostPanel_SizeChanged will
+            // keep it in sync from here.
+            if (ViewModel.Session is PuttySshSession putty2)
+                ApplyPuttyHostBounds(putty2);
+
             WriteTrace(ViewModel.IsConnected
                 ? "[ Connected. Awaiting shell prompt... ]"
                 : $"[ Connect returned but not connected: {ViewModel.StatusMessage} ]");
@@ -113,6 +141,39 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             WriteTrace($"[ ConnectAsync threw: {ex.GetType().Name}: {ex.Message} ]");
         }
     }
+
+    private void PuttyHostPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (ViewModel?.Session is PuttySshSession putty)
+            ApplyPuttyHostBounds(putty);
+    }
+
+    /// <summary>Translate the host panel's XAML coords into client-
+    /// relative pixels (DPI-aware) and feed them to the session. PuTTY
+    /// is a true Win32 child of the WinUI window after AttachToOwner,
+    /// so SetWindowPos uses parent-client coords — no screen translation.</summary>
+    private void ApplyPuttyHostBounds(PuttySshSession session)
+    {
+        try
+        {
+            var rootContent = App.MainWin.Content as UIElement ?? PuttyHostPanel;
+            var transform   = PuttyHostPanel.TransformToVisual(rootContent);
+            var topLeft     = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
+
+            var mainHwnd = WindowNative.GetWindowHandle(App.MainWin);
+            var dpi      = GetDpiForWindow(mainHwnd);
+            var scale    = dpi <= 0 ? 1.0 : dpi / 96.0;
+
+            session.SetEmbeddedRect(
+                clientX: (int)(topLeft.X * scale),
+                clientY: (int)(topLeft.Y * scale),
+                width:   (int)(PuttyHostPanel.ActualWidth  * scale),
+                height:  (int)(PuttyHostPanel.ActualHeight * scale));
+        }
+        catch { /* layout in flux; the next SizeChanged will retry */ }
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint hWnd);
 
     private async void OnAnyKeyDown(object sender, KeyRoutedEventArgs e)
     {

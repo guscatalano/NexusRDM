@@ -64,12 +64,40 @@ public sealed class SshSession : ISshSession
 
     public Task ResizeAsync(int columns, int rows, CancellationToken ct = default)
     {
-        // TODO M2: SSH.NET 2024.2.x doesn't expose resize via ShellStream directly.
-        // When we build the terminal view we'll tear down and recreate the ShellStream
-        // with the new dimensions, or use a raw channel PTY-req packet.
         _cols = (uint)columns;
         _rows = (uint)rows;
-        return Task.CompletedTask;
+        if (_disposed || _shell is null) return Task.CompletedTask;
+
+        // SSH.NET 2024.2 doesn't expose a public resize on ShellStream,
+        // but the underlying IChannelSession has SendWindowChangeRequest
+        // (cols, rows, widthPx, heightPx). Reach in via reflection so
+        // top / htop / vim / less render at the actual viewport size.
+        // If a future SSH.NET release renames the field or method this
+        // silently no-ops — the connection stays usable, the server just
+        // believes the original PTY size.
+        return Task.Run(() =>
+        {
+            try
+            {
+                var shell = _shell;
+                if (shell is null) return;
+                var channelField = typeof(ShellStream).GetField("_channel",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var channel = channelField?.GetValue(shell);
+                if (channel is null) return;
+
+                var method = channel.GetType().GetMethod(
+                    "SendWindowChangeRequest",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic,
+                    binder: null,
+                    types: new[] { typeof(uint), typeof(uint), typeof(uint), typeof(uint) },
+                    modifiers: null);
+                method?.Invoke(channel, new object[] { _cols, _rows, 0u, 0u });
+            }
+            catch { /* SSH.NET internals shifted — PTY stays stale */ }
+        }, ct);
     }
 
     public Task DisconnectAsync()

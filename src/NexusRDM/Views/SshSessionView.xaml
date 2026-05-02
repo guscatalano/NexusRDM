@@ -90,13 +90,27 @@
             </Grid>
         </Border>
 
-        <!-- Terminal — dark #0d0d0e background, monospace -->
-        <controls:TerminalControl x:Name="Terminal" Grid.Row="1"
-                                  FontFamily="Cascadia Code, Consolas, Courier New"
-                                  FontSize="13"
-                                  Background="#0d0d0e"
-                                  HorizontalAlignment="Stretch"
-                                  VerticalAlignment="Stretch" />
+        <!-- Terminal area — host the in-app TerminalControl OR a
+             panel for an embedded external terminal (PuTTYNG). The
+             code-behind toggles visibility based on the session
+             type; only one is shown at a time. -->
+        <Grid Grid.Row="1">
+            <controls:TerminalControl x:Name="Terminal"
+                                      FontFamily="Cascadia Code, Consolas, Courier New"
+                                      FontSize="13"
+                                      Background="#0d0d0e"
+                                      HorizontalAlignment="Stretch"
+                                      VerticalAlignment="Stretch" />
+            <!-- PuTTYNG host. Empty Border whose screen rect we feed
+                 to PuttySshSession.SetEmbeddedRect; the embedded
+                 PuTTYNG window pins itself over this rect. Initially
+                 collapsed; flipped visible when the active session
+                 is a PuttySshSession. -->
+            <Border x:Name="PuttyHostPanel"
+                    Background="#0d0d0e"
+                    Visibility="Collapsed"
+                    SizeChanged="PuttyHostPanel_SizeChanged" />
+        </Grid>
 
         <!-- Status bar -->
         <Border Grid.Row="2"

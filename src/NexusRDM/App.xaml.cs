@@ -221,11 +221,17 @@ public partial class App : Application
         services.AddSingleton<ICredentialVault, CredentialVault>();
         services.AddSingleton<NexusRDM.Core.Services.IAuditNotifier, NexusRDM.Core.Services.AuditNotifier>();
         services.AddScoped<IConnectionService,  ConnectionService>();
-        // Real SSH handler stays a concrete singleton so the demo
-        // decorator can delegate to it. The interface registration
-        // resolves to DemoSshHandler, which routes to either the real
-        // handler or DemoSshSession based on DemoModeService.IsActive.
-        services.AddSingleton<SshHandler>();
+        // Real SSH handler is a dispatcher — picks the embedded
+        // VtNetCore-backed session by default, switches to PuTTYNG
+        // when SettingsStore.ReadSshMode() == PuttyNg. The PuTTYNG
+        // factory lives here (UI project) because the session needs
+        // an HWND; Core stays UI-agnostic. The handler is then wrapped
+        // by DemoSshHandler so demo mode short-circuits to a
+        // DemoSshSession regardless of backend.
+        services.AddSingleton<SshHandler>(_ => new SshHandler(
+            modeProvider:   SettingsStore.ReadSshMode,
+            puttyNgFactory: (profile, user, pass) =>
+                new NexusRDM.Protocols.PuttySshSession(profile, user, pass)));
         services.AddSingleton<ISshHandler>(sp => new Services.DemoSshHandler(
             sp.GetRequiredService<SshHandler>(),
             sp.GetRequiredService<Services.DemoModeService>()));

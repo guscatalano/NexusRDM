@@ -4,8 +4,10 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using System.Text;
 using VtNetCore.VirtualTerminal;
 using VtNetCore.XTermParser;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI;
 
@@ -19,6 +21,11 @@ namespace NexusRDM.Controls;
 /// Rendering note: TextBlock-per-glyph is intentionally simple for M2.
 /// Replace the Render() body with a Win2D SwapChainPanel for GPU-accelerated
 /// colour/bold/underline in a future iteration.
+///
+/// Selection / copy: pointer-drag selects a rectangular range in cell
+/// coordinates. Ctrl+C copies + clears selection (sends SIGINT only when
+/// nothing is selected, matching Windows Terminal). Ctrl+Shift+C always
+/// copies. Right-click and Ctrl+Shift+V paste from the clipboard.
 /// </summary>
 public sealed partial class TerminalControl : UserControl
 {
@@ -33,6 +40,15 @@ public sealed partial class TerminalControl : UserControl
 
     public (int Cols, int Rows) TerminalSize => (_cols, _rows);
 
+    // ── Selection state ───────────────────────────────────────────────
+    // Stored in cell coordinates. _isSelecting indicates an in-progress
+    // drag; the selection becomes "live" (highlighted, copyable) only
+    // after the drag covers at least one cell.
+    private (int Row, int Col) _selAnchor;
+    private (int Row, int Col) _selFocus;
+    private bool _isSelecting;
+    private bool _hasSelection;
+
     public TerminalControl()
     {
         _parser = new DataConsumer(_vtc);
@@ -44,7 +60,11 @@ public sealed partial class TerminalControl : UserControl
         KeyDown            += OnKeyDown;
         CharacterReceived  += OnCharacterReceived;
         SizeChanged        += OnSizeChanged;
-        PointerPressed     += (_, e) => { Focus(FocusState.Pointer); e.Handled = true; };
+        PointerPressed     += OnPointerPressed;
+        PointerMoved       += OnPointerMoved;
+        PointerReleased    += OnPointerReleased;
+        PointerCaptureLost += OnPointerCaptureLost;
+        RightTapped        += OnRightTapped;
         Loaded             += (_, _) => Focus(FocusState.Programmatic);
 
         // VtNetCore can ask us to send data (e.g. device attribute responses)
@@ -61,7 +81,8 @@ public sealed partial class TerminalControl : UserControl
 
     // ── Render ────────────────────────────────────────────────────────────────
 
-    private static readonly Color DefaultFg = Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
+    private static readonly Color DefaultFg     = Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
+    private static readonly Color SelectionFill = Color.FromArgb(0x80, 0x4D, 0xA6, 0xFF);
 
     private void Render()
     {
@@ -71,6 +92,27 @@ public sealed partial class TerminalControl : UserControl
         double ch = CharHeight;
         var vp    = _vtc.ViewPort;
 
+        // Selection highlight goes UNDER the glyphs so text stays readable.
+        if (_hasSelection || _isSelecting)
+        {
+            var (s, e) = NormalisedSelection();
+            for (int row = s.Row; row <= e.Row; row++)
+            {
+                int startCol = (row == s.Row) ? s.Col : 0;
+                int endCol   = (row == e.Row) ? e.Col : _cols;
+                if (endCol <= startCol) continue;
+                var hl = new Rectangle
+                {
+                    Width  = (endCol - startCol) * cw,
+                    Height = ch,
+                    Fill   = new SolidColorBrush(SelectionFill),
+                };
+                Canvas.SetLeft(hl, startCol * cw);
+                Canvas.SetTop(hl,  row * ch);
+                TermCanvas.Children.Add(hl);
+            }
+        }
+
         for (int row = 0; row < _rows; row++)
         {
             var line = vp.GetVisibleLine(row);
@@ -79,20 +121,11 @@ public sealed partial class TerminalControl : UserControl
             for (int col = 0; col < line.Count; col++)
             {
                 var cell = line[col];
-                if (cell.Char is '\0' or ' ') continue;
-
-                // VtNetCore reports ARGB=0 (fully transparent) for the default
-                // foreground; fall back to a visible light gray in that case.
-                var fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
-                var fgColor = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
-
-                var tb = new TextBlock
-                {
-                    Text       = cell.Char.ToString(),
-                    FontFamily = FontFamily,
-                    FontSize   = FontSize,
-                    Foreground = new SolidColorBrush(fgColor)
-                };
+                // Skip uninitialised cells. We DO render real spaces now —
+                // `top`/`htop`/`vim` clear regions by writing spaces with
+                // attributes, and skipping them used to leave stale glyphs
+                // bleeding through redraws.
+                if (cell.Char is '\0') continue;
 
                 var bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
                 if ((bgArgb >> 24) != 0)
@@ -108,36 +141,223 @@ public sealed partial class TerminalControl : UserControl
                     TermCanvas.Children.Add(bgRect);
                 }
 
+                if (cell.Char == ' ') continue; // bg is drawn; no glyph needed
+
+                // VtNetCore reports ARGB=0 (fully transparent) for the default
+                // foreground; fall back to a visible light gray in that case.
+                var fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
+                var fgColor = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
+
+                var tb = new TextBlock
+                {
+                    Text       = cell.Char.ToString(),
+                    FontFamily = FontFamily,
+                    FontSize   = FontSize,
+                    Foreground = new SolidColorBrush(fgColor)
+                };
                 Canvas.SetLeft(tb, col * cw);
                 Canvas.SetTop(tb,  row * ch);
                 TermCanvas.Children.Add(tb);
             }
         }
 
-        // Cursor block
-        var cur = vp.CursorPosition;
-        var cursor = new Rectangle
+        // Cursor block — suppressed during a selection drag so the user
+        // can see what they're highlighting without it strobing.
+        if (!_isSelecting)
         {
-            Width   = cw,
-            Height  = ch,
-            Fill    = new SolidColorBrush(Colors.White),
-            Opacity = 0.65
-        };
-        Canvas.SetLeft(cursor, cur.Column * cw);
-        Canvas.SetTop(cursor,  cur.Row    * ch);
-        TermCanvas.Children.Add(cursor);
+            var cur = vp.CursorPosition;
+            var cursor = new Rectangle
+            {
+                Width   = cw,
+                Height  = ch,
+                Fill    = new SolidColorBrush(Colors.White),
+                Opacity = 0.65
+            };
+            Canvas.SetLeft(cursor, cur.Column * cw);
+            Canvas.SetTop(cursor,  cur.Row    * ch);
+            TermCanvas.Children.Add(cursor);
+        }
+    }
+
+    // ── Selection ─────────────────────────────────────────────────────────────
+
+    private (int Row, int Col) PointToCell(Windows.Foundation.Point p)
+    {
+        int col = Math.Clamp((int)(p.X / CharWidth), 0, _cols);
+        int row = Math.Clamp((int)(p.Y / CharHeight), 0, _rows - 1);
+        return (row, col);
+    }
+
+    /// <summary>Selection in line-major order (start ≤ end).</summary>
+    private ((int Row, int Col) Start, (int Row, int Col) End) NormalisedSelection()
+    {
+        var a = _selAnchor;
+        var b = _selFocus;
+        bool aFirst = a.Row < b.Row || (a.Row == b.Row && a.Col <= b.Col);
+        return aFirst ? (a, b) : (b, a);
+    }
+
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        Focus(FocusState.Pointer);
+        var p = e.GetCurrentPoint(this);
+
+        // Right-click is handled by RightTapped (paste); ignore here.
+        if (p.Properties.IsRightButtonPressed) return;
+
+        // Clear any old selection on a fresh left-click.
+        var cell = PointToCell(p.Position);
+        _selAnchor    = cell;
+        _selFocus     = cell;
+        _isSelecting  = true;
+        _hasSelection = false;
+        CapturePointer(e.Pointer);
+        Render();
+        e.Handled = true;
+    }
+
+    private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isSelecting) return;
+        var p = e.GetCurrentPoint(this);
+        var cell = PointToCell(p.Position);
+        if (cell == _selFocus) return;
+        _selFocus = cell;
+        _hasSelection = (cell != _selAnchor);
+        Render();
+    }
+
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isSelecting) return;
+        _isSelecting = false;
+        var p = e.GetCurrentPoint(this);
+        _selFocus = PointToCell(p.Position);
+        _hasSelection = (_selFocus != _selAnchor);
+        ReleasePointerCapture(e.Pointer);
+        Render();
+        e.Handled = true;
+    }
+
+    private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        // Drag interrupted (e.g. window lost focus). Treat as a normal release.
+        _isSelecting = false;
+        Render();
+    }
+
+    private async void OnRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        // Right-click pastes. PuTTY-style middle-click is overkill;
+        // right-click matches Windows Terminal's default behaviour.
+        e.Handled = true;
+        await PasteFromClipboardAsync();
+    }
+
+    private void ClearSelection()
+    {
+        if (!_hasSelection && !_isSelecting) return;
+        _hasSelection = false;
+        _isSelecting  = false;
+        Render();
+    }
+
+    private string GetSelectedText()
+    {
+        if (!_hasSelection) return string.Empty;
+        var (s, e) = NormalisedSelection();
+        var vp     = _vtc.ViewPort;
+        var sb     = new StringBuilder();
+
+        for (int row = s.Row; row <= e.Row; row++)
+        {
+            var line = vp.GetVisibleLine(row);
+            if (line is null) { if (row < e.Row) sb.Append('\n'); continue; }
+
+            int startCol = (row == s.Row) ? s.Col : 0;
+            int endCol   = (row == e.Row) ? e.Col : line.Count;
+            endCol = Math.Min(endCol, line.Count);
+
+            // Build the row's slice. \0 cells become spaces; trailing
+            // whitespace is trimmed per row so a wide selection over a
+            // mostly-empty line doesn't paste a wall of spaces.
+            var rowSb = new StringBuilder(endCol - startCol);
+            for (int col = startCol; col < endCol; col++)
+            {
+                var c = line[col].Char;
+                rowSb.Append(c == '\0' ? ' ' : c);
+            }
+            sb.Append(rowSb.ToString().TrimEnd());
+            if (row < e.Row) sb.Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private void CopySelectionToClipboard()
+    {
+        var text = GetSelectedText();
+        if (string.IsNullOrEmpty(text)) return;
+        var dp = new DataPackage();
+        dp.SetText(text);
+        Clipboard.SetContent(dp);
+    }
+
+    private async Task PasteFromClipboardAsync()
+    {
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (content is null || !content.Contains(StandardDataFormats.Text)) return;
+            var text = await content.GetTextAsync();
+            if (string.IsNullOrEmpty(text)) return;
+            // Normalise Windows CRLF to bare CR — that's what Enter
+            // sends in the terminal protocol; LF alone gets ignored
+            // by most shells.
+            text = text.Replace("\r\n", "\r").Replace('\n', '\r');
+            UserInput?.Invoke(this, Encoding.UTF8.GetBytes(text));
+        }
+        catch { /* clipboard format unavailable / access denied */ }
     }
 
     // ── Keyboard ──────────────────────────────────────────────────────────────
 
-    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    private async void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
         bool ctrl  = IsModifierDown(VirtualKey.Control);
         bool shift = IsModifierDown(VirtualKey.Shift);
 
+        // Ctrl+Shift+C / Ctrl+Shift+V — explicit copy/paste, never sent
+        // as control bytes. Matches Windows Terminal default bindings.
+        if (ctrl && shift && e.Key == VirtualKey.C)
+        {
+            CopySelectionToClipboard();
+            ClearSelection();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && shift && e.Key == VirtualKey.V)
+        {
+            await PasteFromClipboardAsync();
+            e.Handled = true;
+            return;
+        }
+
+        // Ctrl+C: copy if a selection exists, otherwise let it fall
+        // through as SIGINT (^C, byte 0x03) via TranslateSpecialKey.
+        if (ctrl && !shift && e.Key == VirtualKey.C && _hasSelection)
+        {
+            CopySelectionToClipboard();
+            ClearSelection();
+            e.Handled = true;
+            return;
+        }
+
         var bytes = TranslateSpecialKey(e.Key, ctrl, shift);
         if (bytes is { Length: > 0 })
         {
+            // Any keystroke that produces output dismisses a selection —
+            // matches PuTTY / xterm muscle memory.
+            ClearSelection();
             UserInput?.Invoke(this, bytes);
             e.Handled = true;
         }
@@ -152,6 +372,7 @@ public sealed partial class TerminalControl : UserControl
         // (Enter=0x0D, Backspace=0x08, Tab=0x09, Escape=0x1B, etc.).
         if (e.Character < 0x20 || e.Character == 0x7F) return;
 
+        ClearSelection();
         UserInput?.Invoke(this, System.Text.Encoding.UTF8.GetBytes(new[] { e.Character }));
         e.Handled = true;
     }

@@ -11,6 +11,11 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
     private readonly ISshSession    _session;
     private readonly SessionManager _mgr;
 
+    /// <summary>The underlying session, exposed so the view can
+    /// type-check (<c>is PuttySshSession</c>) and wire backend-
+    /// specific embed plumbing. Read-only.</summary>
+    public ISshSession Session => _session;
+
     public Guid   ConnectionId { get; }
     public string DisplayName  { get; }
     public string Host         { get; }

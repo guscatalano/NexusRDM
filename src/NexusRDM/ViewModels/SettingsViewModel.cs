@@ -121,6 +121,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// matches the underlying enum value.</summary>
     [ObservableProperty] private int _rdpModeIndex = (int)RdpLaunchMode.MstscAx;
 
+    /// <summary>0 = Embedded (VtNetCore in-app terminal), 1 = PuTTYNG
+    /// (downloaded + embedded via owner-window pin). Order matches the
+    /// ComboBox in SettingsPage.xaml. Backend changes apply to new tabs
+    /// at session-open time, not retroactively to live sessions.</summary>
+    [ObservableProperty] private int _sshModeIndex = (int)SshLaunchMode.Embedded;
+
     /// <summary>Default desktop resolution applied at connect time. Index
     /// matches the SettingsPage ComboBox and the <see cref="RdpDefaultResolution"/>
     /// enum. Defaults to "match current monitor".</summary>
@@ -360,6 +366,15 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (s.TryGetValue("RdpPort",     out var rp)) DefaultRdpPort = Convert.ToInt32(rp);
         if (s.TryGetValue("SaveWinSize", out var sw)) SaveWindowSize = Convert.ToBoolean(sw);
         if (s.TryGetValue("RdpMode",     out var rm)) RdpModeIndex   = Convert.ToInt32(rm);
+        if (s.TryGetValue("SshMode",     out var sm))
+        {
+            // Stored as enum name (e.g. "PuttyNg") for
+            // forward-compat; the index is derived for the dropdown.
+            if (Enum.TryParse<SshLaunchMode>(Convert.ToString(sm), out var parsed))
+                SshModeIndex = (int)parsed;
+            else if (int.TryParse(Convert.ToString(sm), out var i))
+                SshModeIndex = i;
+        }
         if (s.TryGetValue("RdpRes",      out var rr)) RdpResolutionIndex = Convert.ToInt32(rr);
         if (s.TryGetValue("ConfirmCloseActive", out var cc)) ConfirmCloseActive = Convert.ToBoolean(cc);
         if (s.TryGetValue("DebugMode",          out var dm)) DebugMode          = Convert.ToBoolean(dm);
@@ -425,6 +440,9 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["RdpPort"]     = DefaultRdpPort,
             ["SaveWinSize"] = SaveWindowSize,
             ["RdpMode"]     = RdpModeIndex,
+            // Persist as enum name so a future reorder of the dropdown
+            // doesn't silently re-map users to a different backend.
+            ["SshMode"]     = ((SshLaunchMode)SshModeIndex).ToString(),
             ["RdpRes"]      = RdpResolutionIndex,
             ["ConfirmCloseActive"] = ConfirmCloseActive,
             ["DebugMode"]          = DebugMode,
@@ -893,6 +911,20 @@ public static class SettingsStore
     /// (cached download → system PATH → fresh download).</summary>
     public static string ReadFreeRdpExePath() =>
         Read().TryGetValue("FreeRdpExePath", out var v) ? Convert.ToString(v) ?? string.Empty : string.Empty;
+
+    /// <summary>Optional override for PuTTYNG's PuTTYNG.exe. Empty
+    /// string falls through to the PuttyNgBootstrap probe order.</summary>
+    public static string ReadPuttyNgExePath() =>
+        Read().TryGetValue("PuttyNgExePath", out var v) ? Convert.ToString(v) ?? string.Empty : string.Empty;
+
+    /// <summary>Persisted SSH terminal backend. Defaults to Embedded
+    /// (in-app VtNetCore-based terminal) for legacy compat.</summary>
+    public static SshLaunchMode ReadSshMode()
+    {
+        var s = Read();
+        if (!s.TryGetValue("SshMode", out var v)) return SshLaunchMode.Embedded;
+        return Enum.TryParse<SshLaunchMode>(Convert.ToString(v), out var m) ? m : SshLaunchMode.Embedded;
+    }
 
     /// <summary>Lightweight sanity check on a candidate <c>mstsc.exe</c>:
     /// existence + .exe extension + non-trivial size. Doesn't actually

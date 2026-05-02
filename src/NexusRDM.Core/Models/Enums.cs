@@ -96,6 +96,23 @@ public enum RdpLaunchMode
 }
 
 /// <summary>
+/// SSH terminal backend selection.
+/// <see cref="Embedded"/> uses our in-app VtNetCore-based terminal — fast,
+/// integrated with the audit log, supports per-cell selection/copy, but
+/// stumbles on heavyweight curses apps (top, htop, less) because the
+/// emulator is incomplete. <see cref="PuttyNg"/> embeds PuTTYNG (a fork
+/// of PuTTY designed for in-window hosting) into the session tab via
+/// owner-window pinning — battle-tested terminal at the cost of a
+/// separate process and no audit-log piping. PuTTYNG.exe is downloaded
+/// to %LocalAppData% on first use.
+/// </summary>
+public enum SshLaunchMode
+{
+    Embedded = 0,
+    PuttyNg  = 1,
+}
+
+/// <summary>
 /// Default resolution policy applied when an RDP session opens. Drives
 /// the value passed to <c>IMsRdpClient.DesktopWidth/DesktopHeight</c>
 /// before <c>Connect</c>.
