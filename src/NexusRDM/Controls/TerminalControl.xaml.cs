@@ -267,12 +267,25 @@ public sealed partial class TerminalControl : UserControl
             if (isHide && !currentlyAlt)
             {
                 _parser.Push(DecSet1049Enter);
-                SshLog.Info("Pseudo-alt ENTER: synthesized DECSET 1049 from ESC[?25l");
+                // The alt buffer is allocated lazily by VtNetCore the
+                // first time DECSET 1049 fires, and it's created at the
+                // controller's CONSTRUCTOR dimensions (24×80) — not the
+                // current viewport size. Force a resize right after the
+                // switch so top's frame bytes (which follow immediately
+                // in this same chunk) land in a buffer of the correct
+                // height. Without this, top only fills the top ~24 rows
+                // regardless of how tall the viewport actually is.
+                _vtc.ResizeView(_cols, _rows);
+                SshLog.Info($"Pseudo-alt ENTER: synthesized DECSET 1049 from ESC[?25l; resized alt to {_cols}×{_rows}");
             }
             else if (!isHide && currentlyAlt)
             {
                 _parser.Push(DecSet1049Exit);
-                SshLog.Info("Pseudo-alt EXIT: synthesized DECRESET 1049 from ESC[?25h");
+                // On exit, ensure the now-active normal buffer is at
+                // the right size too (defensive: keeps both buffers in
+                // sync regardless of which one was last resized).
+                _vtc.ResizeView(_cols, _rows);
+                SshLog.Info($"Pseudo-alt EXIT: synthesized DECRESET 1049 from ESC[?25h; resized normal to {_cols}×{_rows}");
             }
 
             // Push the original hide/show bytes so VtNetCore still
