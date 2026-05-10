@@ -13,6 +13,30 @@ public enum SshAuthMethod
     KeyboardInteractive
 }
 
+/// <summary>
+/// Per-connection SSH authentication policy. Drives the chain of
+/// <c>AuthenticationMethod</c> instances handed to SSH.NET at session
+/// open time.
+///
+/// <see cref="Stored"/> is the legacy default: username + password
+/// pulled from the credential vault, dialog if missing.
+/// <see cref="ServerPrompt"/> uses keyboard-interactive auth so the
+/// server's prompt text drives a dialog at connect time — useful for
+/// 2FA / OTP / PAM-prompted flows where the prompt text can change.
+/// <see cref="PrivateKey"/> reads an OpenSSH-format key file (PuTTY
+/// .ppk is not supported; convert via <c>puttygen → Export OpenSSH</c>).
+/// <see cref="KeyThenPrompt"/> tries the key first and falls through
+/// to <see cref="ServerPrompt"/> on rejection — the right pick for
+/// "key works at home, bastion forces 2FA" scenarios.
+/// </summary>
+public enum SshAuthMode
+{
+    Stored        = 0,
+    ServerPrompt  = 1,
+    PrivateKey    = 2,
+    KeyThenPrompt = 3,
+}
+
 public enum RdpColorDepth
 {
     Colors8Bit  = 8,

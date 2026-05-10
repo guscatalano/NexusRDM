@@ -13,8 +13,34 @@ public class ConnectionProfile
     public int    Port             { get; set; }
     public Guid?  GroupId          { get; set; }
 
+    /// <summary>Login username, stored plaintext on the profile. SSH
+    /// requires it in the very first auth packet — there's no
+    /// server-driven "what's your name?" mechanism — so it can't live
+    /// in the credential vault alongside the password (that path
+    /// always demands both). Optional: when null we fall back to the
+    /// vault entry (if any) and only prompt as a last resort.</summary>
+    public string? Username        { get; set; }
+
     /// <summary>Key into Windows Credential Manager. Null = prompt at connect time.</summary>
     public string? CredentialKey   { get; set; }
+
+    /// <summary>SSH-only: how authentication is performed. Defaults to
+    /// <see cref="SshAuthMode.Stored"/> for backward compat — every
+    /// pre-existing connection behaves exactly as before. Ignored for
+    /// RDP connections.</summary>
+    public SshAuthMode SshAuthMode { get; set; } = SshAuthMode.Stored;
+
+    /// <summary>SSH-only: absolute path to an OpenSSH-format private
+    /// key file. Used by <see cref="SshAuthMode.PrivateKey"/> and
+    /// <see cref="SshAuthMode.KeyThenPrompt"/>. Null otherwise.</summary>
+    public string? SshKeyFilePath  { get; set; }
+
+    /// <summary>SSH-only: credential-vault key for the private key's
+    /// passphrase. Null = key is unencrypted, or prompt at connect.
+    /// Stored separately from <see cref="CredentialKey"/> so a
+    /// connection can have BOTH a passphrase-encrypted key and a
+    /// fallback password (KeyThenPrompt mode).</summary>
+    public string? SshKeyPassphraseCredentialKey { get; set; }
 
     /// <summary>JSON-serialized RdpOptions. Null for SSH connections.</summary>
     public string? RdpSettingsJson { get; set; }

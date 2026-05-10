@@ -177,6 +177,28 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     [ObservableProperty] private string        _privateKeyPath   = string.Empty;
     [ObservableProperty] private int           _keepAliveSeconds = 30;
 
+    /// <summary>Per-connection SSH auth policy. Drives the
+    /// AuthenticationMethod chain at connect time. Independent of the
+    /// legacy <see cref="SshAuthMethod"/> field which lives in the
+    /// SshOptions JSON and is no longer authoritative.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedSshAuthModeOption))]
+    [NotifyPropertyChangedFor(nameof(SshKeyFieldsVisible))]
+    [NotifyPropertyChangedFor(nameof(SshPasswordFieldsVisible))]
+    private SshAuthMode _sshAuthMode = SshAuthMode.Stored;
+
+    /// <summary>True when the chosen mode requires a key file path
+    /// (PrivateKey / KeyThenPrompt). Drives field visibility in the
+    /// Edit panel.</summary>
+    public bool SshKeyFieldsVisible =>
+        SshAuthMode is SshAuthMode.PrivateKey or SshAuthMode.KeyThenPrompt;
+
+    /// <summary>True when the chosen mode uses a stored password
+    /// (Stored / KeyThenPrompt). ServerPrompt + PrivateKey hide the
+    /// password field — those modes don't store one.</summary>
+    public bool SshPasswordFieldsVisible =>
+        SshAuthMode is SshAuthMode.Stored or SshAuthMode.KeyThenPrompt;
+
     // ── RDP: Display ────────────────────────────────────────────────
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedRdpResolutionOption))]
@@ -426,6 +448,18 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         new("Keyboard-interactive",  SshAuthMethod.KeyboardInteractive),
     ];
 
+    /// <summary>User-facing options for <see cref="SshAuthMode"/>.
+    /// The display strings match what the EditPanel dropdown will
+    /// render. Order is the four-mode ladder: simplest stored creds
+    /// → server-driven prompts → key → key-with-fallback.</summary>
+    public IReadOnlyList<NamedOption<SshAuthMode>> SshAuthModeOptions { get; } =
+    [
+        new("Stored password",                SshAuthMode.Stored),
+        new("Prompt at connect (server-driven)", SshAuthMode.ServerPrompt),
+        new("Private key",                    SshAuthMode.PrivateKey),
+        new("Key, then prompt on failure",    SshAuthMode.KeyThenPrompt),
+    ];
+
     /// <summary>SelectedItem-style binding helpers; setters tolerate transient nulls during list refresh.</summary>
     public NamedOption<ConnectionProtocol>? SelectedProtocolOption
     {
@@ -437,6 +471,12 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
     {
         get => SshAuthOptions.FirstOrDefault(o => o.Value == SshAuthMethod);
         set { if (value is not null) SshAuthMethod = value.Value; }
+    }
+
+    public NamedOption<SshAuthMode>? SelectedSshAuthModeOption
+    {
+        get => SshAuthModeOptions.FirstOrDefault(o => o.Value == SshAuthMode);
+        set { if (value is not null) SshAuthMode = value.Value; }
     }
 
     partial void OnSshAuthMethodChanged(SshAuthMethod value) =>
@@ -474,6 +514,13 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         IconColor     = ParseHex(existing.IconColorHex);
         CredentialKey = existing.CredentialKey;
 
+        // Username on the profile is the authoritative source; the
+        // vault-stored copy (if any) gets overwritten if both exist.
+        // We pre-fill from the profile so the user sees what was set
+        // last time even when no credential was saved.
+        if (!string.IsNullOrEmpty(existing.Username))
+            Username = existing.Username;
+
         // SaveCredential defaults to true (the common case). Only opt out
         // when the existing profile is explicitly configured for prompts —
         // i.e. it has no key persisted, indicating "no saved credential".
@@ -501,8 +548,14 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         {
             var ssh = existing.SshSettings();
             SshAuthMethod    = ssh.AuthMethod;
-            PrivateKeyPath   = ssh.PrivateKeyPath ?? string.Empty;
+            PrivateKeyPath   = !string.IsNullOrEmpty(existing.SshKeyFilePath)
+                                  ? existing.SshKeyFilePath!
+                                  : (ssh.PrivateKeyPath ?? string.Empty);
             KeepAliveSeconds = ssh.KeepAliveSeconds;
+            // SshAuthMode is the new authoritative auth-policy field.
+            // Existing profiles default to Stored on EF migration, which
+            // matches their pre-feature behaviour.
+            SshAuthMode = existing.SshAuthMode;
         }
         else
         {
@@ -656,7 +709,22 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
               { AuthMethod = SshAuthMethod,
                 PrivateKeyPath = string.IsNullOrWhiteSpace(PrivateKeyPath) ? null : PrivateKeyPath,
                 KeepAliveSeconds = KeepAliveSeconds })
-            : null
+            : null,
+        // Mirror the auth-policy + key path onto the ConnectionProfile
+        // top-level fields (added in the AddSshAuthMode migration).
+        // These are what SshHandler.CreateSessionForProfile reads;
+        // the legacy SshOptions copy stays so older callers that read
+        // the JSON keep working, but it's no longer authoritative.
+        SshAuthMode    = Protocol == ConnectionProtocol.Ssh ? SshAuthMode : SshAuthMode.Stored,
+        SshKeyFilePath = Protocol == ConnectionProtocol.Ssh && !string.IsNullOrWhiteSpace(PrivateKeyPath)
+                            ? PrivateKeyPath
+                            : null,
+        // Persist the username on the profile in plaintext — SSH
+        // protocol needs it in the first auth packet, before any
+        // server-driven prompting can run, so it can't live in the
+        // password vault. Saved unconditionally (not gated on
+        // SaveCredential) since it isn't a secret.
+        Username = string.IsNullOrWhiteSpace(Username) ? null : Username,
     };
 
     private static string? NullIfBlank(string s) =>

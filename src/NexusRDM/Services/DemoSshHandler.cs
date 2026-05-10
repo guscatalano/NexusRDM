@@ -38,4 +38,18 @@ internal sealed class DemoSshHandler : ISshHandler
             return new DemoSshSession(profile, username);
         return _real.CreateSessionWithKey(profile, username, privateKeyPath, passphrase);
     }
+
+    public ISshSession CreateSessionForProfile(
+        ConnectionProfile profile,
+        string username,
+        string? storedPassword,
+        string? keyPassphrase,
+        SshKeyboardPromptHandler? onPrompt)
+    {
+        // Demo mode short-circuits all auth modes — there's no real
+        // server to negotiate with. Synthetic banner + prompt only.
+        if (_demo.IsActive)
+            return new DemoSshSession(profile, username);
+        return _real.CreateSessionForProfile(profile, username, storedPassword, keyPassphrase, onPrompt);
+    }
 }

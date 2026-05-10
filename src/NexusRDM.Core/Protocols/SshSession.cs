@@ -1,4 +1,5 @@
 using Renci.SshNet;
+using NexusRDM.Core.Diagnostics;
 using NexusRDM.Core.Interfaces;
 
 namespace NexusRDM.Core.Protocols;
@@ -10,7 +11,14 @@ namespace NexusRDM.Core.Protocols;
 /// </summary>
 public sealed class SshSession : ISshSession
 {
-    private readonly SshClient        _client;
+    // SshClient is constructed lazily — we may not know the username
+    // at session-creation time. It's resolved during ConnectAsync via
+    // _usernamePrompt + then passed to _clientFactory to materialise
+    // the actual SSH.NET client.
+    private SshClient?                _client;
+    private string                    _username;
+    private readonly Func<string, int, CancellationToken, Task<SshClient>>? _clientFactory;
+    private readonly SshKeyboardPromptHandler? _usernamePrompt;
     private ShellStream?              _shell;
     private CancellationTokenSource?  _readCts;
     private uint                      _cols = 220;
@@ -18,23 +26,95 @@ public sealed class SshSession : ISshSession
     private bool                      _disposed;
 
     public Guid ConnectionId { get; }
-    public bool IsConnected  => _client.IsConnected;
+    public bool IsConnected  => _client?.IsConnected ?? false;
 
     public event EventHandler<byte[]>? DataReceived;
     public event EventHandler?         Disconnected;
 
+    /// <summary>Legacy eager-construction path — used by callers that
+    /// already know the username and want to build the SshClient
+    /// themselves. The new
+    /// <see cref="SshHandler.CreateSessionForProfile"/> flow uses the
+    /// lazy ctor below instead.</summary>
     internal SshSession(Guid connectionId, SshClient client)
     {
         ConnectionId = connectionId;
         _client      = client;
+        _username    = string.Empty; // already baked into client.ConnectionInfo
+    }
+
+    /// <summary>Lazy-construction ctor. Username may be empty — if so,
+    /// <see cref="ConnectAsync"/> will use <paramref name="usernamePrompt"/>
+    /// to ask for one (rendered into the terminal via the broker)
+    /// before invoking <paramref name="clientFactory"/>. This is what
+    /// lets the UX skip the username dialog entirely.</summary>
+    internal SshSession(
+        Guid connectionId,
+        string username,
+        Func<string, int, CancellationToken, Task<SshClient>> clientFactory,
+        SshKeyboardPromptHandler? usernamePrompt)
+    {
+        ConnectionId    = connectionId;
+        _username       = username ?? string.Empty;
+        _clientFactory  = clientFactory;
+        _usernamePrompt = usernamePrompt;
     }
 
     public async Task ConnectAsync(CancellationToken ct = default)
     {
-        await Task.Run(_client.Connect, ct);
+        // Lazy path: ask for the username via the broker if we don't
+        // have one yet (SSH bakes the username into the very first
+        // auth packet, so the SshClient can only be built after).
+        if (_client is null && string.IsNullOrEmpty(_username) && _usernamePrompt is not null)
+        {
+            var prompted = await _usernamePrompt("login as: ", false, ct);
+            if (string.IsNullOrEmpty(prompted))
+                throw new OperationCanceledException("Username not provided — aborting connection.");
+            _username = prompted!;
+        }
+
+        // Auth retry loop — runs until the user successfully logs in
+        // OR cancels by pressing Ctrl+C in the password prompt (the
+        // broker returns null, our factory throws OperationCanceledException,
+        // and that propagates out of this loop). Matches the user's
+        // request: don't give up after N tries, just keep prompting.
+        // Behavior diverges from stock ssh.exe (which gives up at 3)
+        // but the cancel path keeps you from being stuck forever.
+        for (int attempt = 0; ; attempt++)
+        {
+            if (_client is null)
+            {
+                if (_clientFactory is null)
+                    throw new InvalidOperationException(
+                        "SshSession has no SshClient (no factory + no eager ctor).");
+                _client = await _clientFactory(_username, attempt, ct);
+            }
+
+            try
+            {
+                await Task.Run(_client.Connect, ct);
+                break;
+            }
+            catch (Renci.SshNet.Common.SshAuthenticationException ex)
+            {
+                // Push the failure into the terminal as if it were
+                // server output, so the user sees `Permission denied`
+                // exactly where the next prompt will appear.
+                var msg = "\r\n" + ex.Message + "\r\n";
+                DataReceived?.Invoke(this, System.Text.Encoding.UTF8.GetBytes(msg));
+                try { _client.Dispose(); } catch { }
+                _client = null;
+                // Loop continues — factory re-prompts for credentials
+                // because attempt > 0.
+            }
+        }
+
+        if (_client is null || !_client.IsConnected)
+            throw new InvalidOperationException("SSH authentication failed after retries.");
 
         var modes = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>();
         _shell    = _client.CreateShellStream("xterm-256color", _cols, _rows, 0, 0, 4096, modes);
+        SshLog.Info($"Shell opened: term=xterm-256color cols={_cols} rows={_rows} conn={ConnectionId}");
         _readCts  = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _ = ReadLoopAsync(_readCts.Token);
     }
@@ -44,28 +124,45 @@ public sealed class SshSession : ISshSession
         // The shell stream may be torn down by Disconnect/Dispose between the
         // time the user pressed a key and when this runs. Treat that as a
         // silent no-op rather than crashing the UI thread.
-        if (_disposed || _shell is null || !_client.IsConnected) return;
+        if (_disposed || _shell is null || _client is null || !_client.IsConnected) return;
 
         // SSH.NET's ShellStream overrides synchronous Write/Flush but inherits
         // the base Stream.WriteAsync/FlushAsync — those defaults deadlock here,
         // so we explicitly bounce to the sync API on the thread pool.
+        // The try/catch lives INSIDE the lambda: callers occasionally
+        // fire-and-forget this Task (e.g. fast keystroke loops), and a faulted
+        // Task with no observer can still surface the inner exception through
+        // the threadpool dispatcher on some runtimes. Catching at the source
+        // guarantees the worker exits cleanly regardless of whether the
+        // caller awaits.
         var shell = _shell;
-        try
+        // Diagnostic: log every send. Keystrokes are 1–10 bytes so the
+        // log stays compact; the hex preview makes it obvious whether
+        // 'q' / ESC / Ctrl+C actually reach the wire.
+        SshLog.Debug($"Send bytes={data.Length} preview={HexPreview(data, 32)} conn={ConnectionId}");
+        await Task.Run(() =>
         {
-            await Task.Run(() =>
+            try
             {
                 shell.Write(data, 0, data.Length);
                 shell.Flush();
-            }, ct);
-        }
-        catch (ObjectDisposedException) { /* stream torn down mid-write */ }
-        catch (System.IO.IOException)   { /* connection dropped */ }
+            }
+            catch (ObjectDisposedException ex)
+            {
+                SshLog.Warn($"Send failed (disposed): {ex.Message} conn={ConnectionId}");
+            }
+            catch (System.IO.IOException ex)
+            {
+                SshLog.Warn($"Send failed (IO): {ex.Message} conn={ConnectionId}");
+            }
+        }, ct);
     }
 
     public Task ResizeAsync(int columns, int rows, CancellationToken ct = default)
     {
         _cols = (uint)columns;
         _rows = (uint)rows;
+        SshLog.Debug($"PTY resize requested: cols={columns} rows={rows} conn={ConnectionId}");
         if (_disposed || _shell is null) return Task.CompletedTask;
 
         // SSH.NET 2024.2 doesn't expose a public resize on ShellStream,
@@ -95,8 +192,12 @@ public sealed class SshSession : ISshSession
                     types: new[] { typeof(uint), typeof(uint), typeof(uint), typeof(uint) },
                     modifiers: null);
                 method?.Invoke(channel, new object[] { _cols, _rows, 0u, 0u });
+                SshLog.Debug($"PTY resize sent to server: cols={_cols} rows={_rows} conn={ConnectionId}");
             }
-            catch { /* SSH.NET internals shifted — PTY stays stale */ }
+            catch (Exception ex)
+            {
+                SshLog.Warn($"PTY resize reflection failed: {ex.Message} conn={ConnectionId}");
+            }
         }, ct);
     }
 
@@ -105,7 +206,7 @@ public sealed class SshSession : ISshSession
         if (_disposed)
             return Task.CompletedTask;
         _readCts?.Cancel();
-        if (_client.IsConnected)
+        if (_client is not null && _client.IsConnected)
         {
             try { _client.Disconnect(); } catch (ObjectDisposedException) { }
         }
@@ -115,6 +216,8 @@ public sealed class SshSession : ISshSession
     private async Task ReadLoopAsync(CancellationToken ct)
     {
         var buf = new byte[4096];
+        long totalBytes = 0;
+        int  chunkCount = 0;
         try
         {
             while (!ct.IsCancellationRequested && _shell is not null)
@@ -129,6 +232,23 @@ public sealed class SshSession : ISshSession
                     var chunk = new byte[read];
                     Buffer.BlockCopy(buf, 0, chunk, 0, read);
                     DataReceived?.Invoke(this, chunk);
+
+                    // Diagnostic: log every SMALL chunk (≤ 256 bytes)
+                    // verbosely — those are the control sequences and
+                    // command echoes we need to debug. Large chunks
+                    // (full top frames, file dumps) get a one-line
+                    // summary without the hex preview to avoid log
+                    // spam at MB/s throughput.
+                    totalBytes += read;
+                    if (read <= 256)
+                    {
+                        SshLog.Debug($"Read chunk #{chunkCount} bytes={read} preview={HexPreview(chunk, 64)} conn={ConnectionId}");
+                    }
+                    else if (chunkCount < 4 || (chunkCount & 0x3F) == 0)
+                    {
+                        SshLog.Debug($"Read chunk #{chunkCount} bytes={read} (large, preview suppressed) conn={ConnectionId}");
+                    }
+                    chunkCount++;
                 }
                 else
                 {
@@ -137,8 +257,34 @@ public sealed class SshSession : ISshSession
             }
         }
         catch (OperationCanceledException) { }
-        catch (Exception) { /* connection dropped */ }
-        finally { Disconnected?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex)
+        {
+            SshLog.Warn($"Read loop exited: {ex.GetType().Name}: {ex.Message} totalBytes={totalBytes} conn={ConnectionId}");
+        }
+        finally
+        {
+            SshLog.Info($"Read loop ended: totalBytes={totalBytes} chunks={chunkCount} conn={ConnectionId}");
+            Disconnected?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Compact hex+ASCII preview of the first N bytes of a
+    /// chunk for log readability. Escape sequences show up as
+    /// "1B 5B 3F 31 30 34 39 68 (ESC[?1049h)" — easy to spot the
+    /// alt-buffer enter/exit in the log.</summary>
+    private static string HexPreview(byte[] data, int max)
+    {
+        int n = Math.Min(data.Length, max);
+        var sb = new System.Text.StringBuilder(n * 4);
+        for (int i = 0; i < n; i++) sb.Append(data[i].ToString("X2")).Append(' ');
+        sb.Append('|');
+        for (int i = 0; i < n; i++)
+        {
+            byte b = data[i];
+            sb.Append(b is >= 0x20 and < 0x7f ? (char)b : '.');
+        }
+        if (data.Length > max) sb.Append("…");
+        return sb.ToString();
     }
 
     public async ValueTask DisposeAsync()
@@ -147,6 +293,6 @@ public sealed class SshSession : ISshSession
         _disposed = true;
         await DisconnectAsync();
         _shell?.Dispose();
-        _client.Dispose();
+        _client?.Dispose();
     }
 }

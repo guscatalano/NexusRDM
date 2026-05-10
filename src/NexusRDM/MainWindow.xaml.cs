@@ -664,11 +664,27 @@ public sealed partial class MainWindow : Window
 
     private async Task OpenSshTabAsync(ConnectionProfile profile)
     {
-        var (username, password) = await ResolveCredentialsAsync(profile);
+        // The auth mode dictates which credential bits we pre-resolve:
+        //   Stored        → username + password from the vault (legacy)
+        //   ServerPrompt  → username only; password comes via on-demand
+        //                   keyboard-interactive dialogs from the server
+        //   PrivateKey    → username + key passphrase from the vault
+        //   KeyThenPrompt → both — key first, password fallback
+        var (username, password, keyPassphrase) = await ResolveSshCredentialsAsync(profile);
         if (username is null) return;
-        var session = _ssh.CreateSession(profile, username, password!);
+
+        // Always create the terminal broker — it handles the local
+        // username prompt at connect time (when profile.Username is
+        // empty) and any keyboard-interactive challenges the server
+        // sends during auth. Missing creds → terminal-rendered prompts;
+        // never a modal dialog.
+        var broker = new NexusRDM.Services.TerminalAuthBroker();
+        NexusRDM.Core.Interfaces.SshKeyboardPromptHandler onPrompt =
+            (text, masked, ct) => broker.PromptAsync(text, masked, ct);
+
+        var session = _ssh.CreateSessionForProfile(profile, username, password, keyPassphrase, onPrompt);
         var entry   = _sessions.AddSsh(profile, session);
-        var vm      = new SshSessionViewModel(profile, session, _sessions);
+        var vm      = new SshSessionViewModel(profile, session, _sessions, broker);
         // Use the same Segoe Fluent glyph the home-page legend shows
         // for SSH (CommandPrompt, U+E756) so tab + legend stay in sync.
         AddSessionTab(profile, entry, "", new SshSessionView(vm),
@@ -829,6 +845,75 @@ public sealed partial class MainWindow : Window
         var dlg = new CredentialPromptDialog { XamlRoot = Content.XamlRoot };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return (null, null);
         return (dlg.Username, dlg.Password);
+    }
+
+    /// <summary>SSH-specific credential resolution that honours
+    /// <see cref="SshAuthMode"/>. Returns
+    ///   • username — required for any SSH connection. Comes from the
+    ///     vault when stored; prompted otherwise. Returning null
+    ///     cancels the connect.
+    ///   • password — vault-resolved for Stored mode, optional fallback
+    ///     for KeyThenPrompt; null for ServerPrompt + PrivateKey since
+    ///     those drive their own auth path.
+    ///   • keyPassphrase — vault-resolved for PrivateKey /
+    ///     KeyThenPrompt when the user opted to save it; null for
+    ///     unencrypted keys or when prompting at connect.</summary>
+    private async Task<(string? Username, string? Password, string? KeyPassphrase)>
+        ResolveSshCredentialsAsync(ConnectionProfile profile)
+    {
+        // Demo mode short-circuit — same as ResolveCredentialsAsync.
+        var demo = App.Services.GetService<NexusRDM.Services.DemoModeService>();
+        if (demo is not null && demo.IsActive)
+            return ("demo", "demo", null);
+
+        // Username + password resolution. We never pop a dialog here —
+        // anything missing is asked for via the terminal at connect
+        // time. SSH protocol forces a username in the very first auth
+        // packet, so SshSession's lazy ConnectAsync prompts via the
+        // broker before constructing the SshClient when this is empty.
+        //
+        //   1. profile.Username (plaintext) — set at edit time.
+        //   2. Vault entry (legacy username storage from before the
+        //      first-class profile field existed).
+        //   3. Empty — SshSession will render `login as: ` into the
+        //      terminal at connect time and capture the response.
+        string? username = !string.IsNullOrEmpty(profile.Username) ? profile.Username : null;
+        string? password = null;
+        if (profile.CredentialKey is not null)
+        {
+            var c = _vault.Load(profile.CredentialKey);
+            if (c is not null)
+            {
+                username ??= c.Value.Username;
+                password   = c.Value.Password;
+            }
+        }
+        // Returning empty username (instead of null) signals "missing
+        // but go ahead — the terminal will prompt." We only return
+        // null on hard cancel paths (which no longer exist on this
+        // resolution branch).
+        username ??= string.Empty;
+
+        // Resolve key passphrase from its own vault slot (separate from
+        // CredentialKey so PrivateKey + Stored can both be set).
+        string? keyPassphrase = null;
+        if (profile.SshAuthMode is SshAuthMode.PrivateKey or SshAuthMode.KeyThenPrompt
+            && profile.SshKeyPassphraseCredentialKey is not null)
+        {
+            var c = _vault.Load(profile.SshKeyPassphraseCredentialKey);
+            // Vault stores user+pass pairs; we only care about the password slot.
+            if (c is not null) keyPassphrase = c.Value.Password;
+        }
+
+        // For non-Stored modes, drop the password we may have pulled
+        // from the vault — those modes get their secret from
+        // server-driven prompts, not the vault.
+        if (profile.SshAuthMode == SshAuthMode.ServerPrompt)
+            password = null;
+        if (profile.SshAuthMode == SshAuthMode.PrivateKey)
+            password = null;
+
+        return (username, password, keyPassphrase);
     }
 
     public async Task<ConnectionProfile?> ShowEditConnectionPanelAsync(ConnectionProfile? existing)

@@ -261,10 +261,10 @@
                                        Margin="0,12,0,2" />
                             <TextBox Header="Username"
                                      Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                            <ComboBox Header="Authentication method" HorizontalAlignment="Stretch"
-                                      ItemsSource="{x:Bind ViewModel.SshAuthOptions}"
+                            <ComboBox Header="Authentication" HorizontalAlignment="Stretch"
+                                      ItemsSource="{x:Bind ViewModel.SshAuthModeOptions}"
                                       DisplayMemberPath="Display"
-                                      SelectedItem="{x:Bind ViewModel.SelectedSshAuthOption, Mode=TwoWay}" />
+                                      SelectedItem="{x:Bind ViewModel.SelectedSshAuthModeOption, Mode=TwoWay}" />
                             <!-- Password — masked PasswordBox + plaintext TextBox toggle.
                                  Both bound to ViewModel.Password so the value
                                  stays in sync regardless of which is visible. -->

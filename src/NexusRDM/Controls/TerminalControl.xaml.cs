@@ -1,11 +1,18 @@
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Xaml;
+using NexusRDM.Core.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using System.Text;
+using System.Reflection;
 using VtNetCore.VirtualTerminal;
+using VtNetCore.VirtualTerminal.Enums;
 using VtNetCore.XTermParser;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
@@ -14,13 +21,14 @@ using Windows.UI;
 namespace NexusRDM.Controls;
 
 /// <summary>
-/// WinUI 3 terminal control backed by VtNetCore.
-/// Receives raw VT bytes via Feed(), renders to a Canvas using TextBlocks,
-/// and raises UserInput with raw bytes when the user types.
-///
-/// Rendering note: TextBlock-per-glyph is intentionally simple for M2.
-/// Replace the Render() body with a Win2D SwapChainPanel for GPU-accelerated
-/// colour/bold/underline in a future iteration.
+/// WinUI 3 terminal control backed by VtNetCore and rendered through
+/// Win2D (Direct2D + DirectWrite). Receives raw VT bytes via Feed(),
+/// updates the VtNetCore controller state, then invalidates the
+/// CanvasControl so OnDraw emits glyph runs and filled rectangles
+/// straight to a swap chain. The previous TextBlock-per-cell renderer
+/// allocated ~11,000 XAML elements per frame and could not keep up
+/// with high-throughput output; this path stays flat at one draw
+/// session per frame regardless of viewport size.
 ///
 /// Selection / copy: pointer-drag selects a rectangular range in cell
 /// coordinates. Ctrl+C copies + clears selection (sends SIGINT only when
@@ -34,6 +42,69 @@ public sealed partial class TerminalControl : UserControl
 
     private int _cols = 220;
     private int _rows = 50;
+
+    /// <summary>How many rows above the current viewport the user has
+    /// scrolled. 0 = following live output. While this is non-zero we
+    /// render lines from <see cref="_scrollback"/> and ignore the
+    /// cursor, so incoming data doesn't yank the user back to the
+    /// bottom.</summary>
+    private int _scrollOffset;
+
+    /// <summary>Cap on retained history. ~5000 lines is enough for a
+    /// typical "scroll up to read what just flew by" workflow without
+    /// blowing memory on long-running sessions.</summary>
+    private const int HistoryRows = 5000;
+
+    /// <summary>Our own scrollback buffer. VtNetCore in this version
+    /// doesn't reliably retain lines that scroll off the visible
+    /// area (vp.TopRow stays at 0, vp.GetLine throws on negative
+    /// indices), so we capture rows ourselves: snapshot the visible
+    /// area before each Feed, snapshot after, diff to find how many
+    /// rows shifted up, and push the disappearing rows here.
+    /// Stored as plain strings — colour/attribute fidelity is lost
+    /// in scrollback for now (live rendering still has full colour).
+    /// Bounded to <see cref="HistoryRows"/>; oldest entries drop off
+    /// the front when we hit the cap.</summary>
+    private readonly List<string> _scrollback = new();
+    private List<string>? _lastSnapshot;
+
+    /// <summary>True while the VtNetCore controller is in the alternate
+    /// screen buffer (DECSET 1049). Programs like <c>top</c>, <c>vim</c>,
+    /// <c>less</c> enter alt-buffer mode, repaint in place every frame,
+    /// then DECRESET on exit and the original buffer is restored. We
+    /// suppress scrollback capture and scrollback navigation while this
+    /// is set — matches xterm / Windows Terminal / PuTTY behaviour, and
+    /// avoids polluting history with transient TUI redraws.</summary>
+    private bool _inAltBuffer;
+
+    /// <summary>VtNetCore 1.0.9 marks <c>ActiveBuffer</c> as a private
+    /// property with no public accessor (the <c>Enable*Buffer</c> methods
+    /// are sealed-final on the interface so we can't override them
+    /// either). Read it via cached reflection. If a future version of
+    /// VtNetCore renames or removes the property this returns null and
+    /// we fall back to "always normal buffer" — equivalent to the
+    /// pre-fix behaviour, no crash.</summary>
+    private static readonly PropertyInfo? ActiveBufferProp =
+        typeof(VirtualTerminalController).GetProperty(
+            "ActiveBuffer",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+    private bool IsInAlternateBuffer() =>
+        ActiveBufferProp?.GetValue(_vtc) is EActiveBuffer.Alternative;
+
+    // ── Win2D state ───────────────────────────────────────────────────
+    // CanvasTextFormat is the DirectWrite handle that owns the font face
+    // and rendering settings (size, alignment, hinting). Constructed once,
+    // reused for every glyph run. _charWidth/_charHeight are measured
+    // from this format and drive cell-to-pixel math everywhere (cursor,
+    // selection, pointer hit-testing). They MUST stay in sync with the
+    // format — call MeasureCellMetrics whenever the format changes.
+    private CanvasTextFormat? _textFormat;
+    private float _charWidth  = 8f;
+    private float _charHeight = 18f;
+    // Reused per row to compose color-run strings without allocating
+    // a new StringBuilder for every span on every frame.
+    private readonly StringBuilder _rowBuf = new(256);
 
     /// <summary>Raw bytes to send back to the SSH channel.</summary>
     public event EventHandler<byte[]>? UserInput;
@@ -54,18 +125,40 @@ public sealed partial class TerminalControl : UserControl
         _parser = new DataConsumer(_vtc);
         InitializeComponent();
 
+        // Tell VtNetCore to retain history. Default is 0 — it discards
+        // every line that scrolls off the visible area, so PgUp can't
+        // see anything. With this set, ViewPort.GetLine(absRow) returns
+        // historical rows and we can scroll back into them.
+        _vtc.MaximumHistoryLines = HistoryRows;
+
         Background = new SolidColorBrush(Color.FromArgb(255, 12, 12, 12));
         IsTabStop  = true;
         UseSystemFocusVisuals = false;
-        KeyDown            += OnKeyDown;
-        CharacterReceived  += OnCharacterReceived;
-        SizeChanged        += OnSizeChanged;
-        PointerPressed     += OnPointerPressed;
-        PointerMoved       += OnPointerMoved;
-        PointerReleased    += OnPointerReleased;
-        PointerCaptureLost += OnPointerCaptureLost;
-        RightTapped        += OnRightTapped;
-        Loaded             += (_, _) => Focus(FocusState.Programmatic);
+        KeyDown             += OnKeyDown;
+        CharacterReceived   += OnCharacterReceived;
+        SizeChanged += OnSizeChanged;
+
+        // Win2D draw pipeline. The control raises Draw whenever it needs
+        // to paint (initial display, after Invalidate(), after resize).
+        // We construct the text format lazily on the first Draw because
+        // FontFamily / FontSize on UserControl are not yet resolved at
+        // ctor time (the XAML parser sets them after InitializeComponent
+        // returns).
+        TermCanvas.Draw += OnDraw;
+
+        // Custom scrollbar pointer handling — drag the thumb to
+        // change scroll offset.
+        VScrollTrack.PointerPressed     += OnScrollTrackPointerPressed;
+        VScrollTrack.PointerMoved       += OnScrollTrackPointerMoved;
+        VScrollTrack.PointerReleased    += OnScrollTrackPointerReleased;
+        VScrollTrack.PointerCaptureLost += OnScrollTrackPointerLost;
+        PointerPressed      += OnPointerPressed;
+        PointerMoved        += OnPointerMoved;
+        PointerReleased     += OnPointerReleased;
+        PointerCaptureLost  += OnPointerCaptureLost;
+        PointerWheelChanged += OnPointerWheelChanged;
+        RightTapped         += OnRightTapped;
+        Loaded              += (_, _) => Focus(FocusState.Programmatic);
 
         // VtNetCore can ask us to send data (e.g. device attribute responses)
         _vtc.SendData += (_, e) => UserInput?.Invoke(this, e.Data);
@@ -75,8 +168,207 @@ public sealed partial class TerminalControl : UserControl
 
     public void Feed(byte[] data)
     {
-        _parser.Push(data);
-        DispatcherQueue.TryEnqueue(Render);
+        bool wasAlt = _inAltBuffer;
+        // Only snapshot pre-state if we're going to diff (normal buffer).
+        // In alt mode the snapshot would be wasted work — top redraws
+        // the visible rows on every refresh and we'd never use the diff.
+        var pre = wasAlt ? null : (_lastSnapshot ?? SnapshotVisibleRows());
+
+        PushWithPseudoAltDetection(data);
+
+        bool nowAlt = IsInAlternateBuffer();
+
+        if (nowAlt != wasAlt)
+        {
+            // Buffer flipped (entered/exited top/vim/less). Diffing
+            // across buffers would treat the wholesale content swap as
+            // a giant "scroll" and dump garbage into history. Reset.
+            // Snap to live: top users want their viewport pinned to the
+            // current frame; after exiting, they want to see the
+            // restored shell, not be parked mid-scrollback.
+            _inAltBuffer  = nowAlt;
+            _lastSnapshot = null;
+            _scrollOffset = 0;
+            SshLog.Info($"Alt-buffer flip: {(nowAlt ? "ENTER" : "EXIT")} scrollback={_scrollback.Count} cols={_cols} rows={_rows}");
+        }
+        else if (!nowAlt)
+        {
+            // Stayed in normal buffer — diff and append scroll-off rows.
+            var post = SnapshotVisibleRows();
+            if (pre is not null) CaptureScrollOff(pre, post);
+            _lastSnapshot = post;
+        }
+        // Else: stayed in alt buffer — no capture, no snapshot tracking.
+
+        // Win2D internally coalesces multiple Invalidate() calls between
+        // frames into a single Draw, so we don't need our own pending
+        // flag any more. Going through Render() also keeps the
+        // scrollbar thumb in sync — streaming output grows _scrollback
+        // and the thumb size should shrink correspondingly.
+        Render();
+    }
+
+    /// <summary>Push <paramref name="data"/> into the VtNetCore parser,
+    /// but pre-scan for cursor-visibility toggles (<c>ESC[?25l</c> /
+    /// <c>ESC[?25h</c>) and synthesize the corresponding <c>DECSET 1049</c>
+    /// / <c>DECRESET 1049</c> sequences around them.
+    ///
+    /// Background: many full-screen TUIs (<c>top</c>, <c>htop</c>) issue
+    /// <c>hide-cursor</c> + clear-screen on entry and <c>show-cursor</c>
+    /// on exit, but only call <c>smcup</c> / <c>rmcup</c> when terminfo
+    /// is correctly configured. On servers where TERM has been
+    /// downgraded (e.g. <c>xterm</c> instead of <c>xterm-256color</c>,
+    /// or <c>infocmp</c> stripped of smcup), the program writes its
+    /// fullscreen frame straight into the normal screen buffer. On exit
+    /// the frame stays painted and the user can't tell they're back at
+    /// the shell prompt.
+    ///
+    /// We treat cursor-hide as an alt-buffer enter signal (and
+    /// cursor-show as exit). The visible behaviour matches a proper
+    /// <c>smcup</c>/<c>rmcup</c> terminal: top runs in the alt buffer,
+    /// and on exit the pre-top shell history is restored.
+    ///
+    /// The synthesized sequences go through VtNetCore's normal parser
+    /// path, which means save/restore of cursor state, attribute
+    /// reset, and buffer switching all happen exactly as if the server
+    /// had sent the standard DECSET 1049.</summary>
+    private void PushWithPseudoAltDetection(byte[] data)
+    {
+        int len = data.Length;
+        int i = 0;
+        while (i < len)
+        {
+            int markerIdx = FindCursorVisibilityMarker(data, i, out bool isHide);
+            int sliceEnd = markerIdx < 0 ? len : markerIdx;
+
+            if (sliceEnd > i)
+            {
+                if (i == 0 && sliceEnd == len)
+                {
+                    // Common fast path: no marker in the chunk, push the
+                    // original array without copying.
+                    _parser.Push(data);
+                }
+                else
+                {
+                    var slice = new byte[sliceEnd - i];
+                    Buffer.BlockCopy(data, i, slice, 0, slice.Length);
+                    _parser.Push(slice);
+                }
+            }
+
+            if (markerIdx < 0) break;
+
+            // Decide whether to inject DECSET / DECRESET 1049. We only
+            // do it on transitions — if the buffer state already matches
+            // the marker's implication, the program is just toggling
+            // cursor visibility within an already-known mode.
+            bool currentlyAlt = IsInAlternateBuffer();
+            if (isHide && !currentlyAlt)
+            {
+                _parser.Push(DecSet1049Enter);
+                SshLog.Info("Pseudo-alt ENTER: synthesized DECSET 1049 from ESC[?25l");
+            }
+            else if (!isHide && currentlyAlt)
+            {
+                _parser.Push(DecSet1049Exit);
+                SshLog.Info("Pseudo-alt EXIT: synthesized DECRESET 1049 from ESC[?25h");
+            }
+
+            // Push the original hide/show bytes so VtNetCore still
+            // updates its cursor-visible flag — the program's intent
+            // (hide / show cursor) is preserved on top of the buffer flip.
+            const int markerLen = 6;
+            var markerBytes = new byte[markerLen];
+            Buffer.BlockCopy(data, markerIdx, markerBytes, 0, markerLen);
+            _parser.Push(markerBytes);
+            i = markerIdx + markerLen;
+        }
+    }
+
+    private static readonly byte[] DecSet1049Enter = { 0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68 };
+    private static readonly byte[] DecSet1049Exit  = { 0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C };
+
+    /// <summary>Find the next <c>ESC[?25l</c> (hide) or <c>ESC[?25h</c>
+    /// (show) sequence in <paramref name="data"/> starting at
+    /// <paramref name="startIdx"/>. Returns the index of the ESC byte,
+    /// or -1 if none. The five-byte prefix <c>ESC[?25</c> is specific
+    /// enough that false positives in non-control text are not a
+    /// concern (printable text can't contain an ESC).</summary>
+    private static int FindCursorVisibilityMarker(byte[] data, int startIdx, out bool isHide)
+    {
+        isHide = false;
+        int end = data.Length - 5;
+        for (int i = startIdx; i <= end; i++)
+        {
+            if (data[i]     == 0x1B && data[i + 1] == 0x5B
+             && data[i + 2] == 0x3F && data[i + 3] == 0x32
+             && data[i + 4] == 0x35)
+            {
+                byte last = data[i + 5];
+                if (last == 0x6C) { isHide = true;  return i; }
+                if (last == 0x68) { isHide = false; return i; }
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>Snapshot every visible row's text content. Cells past
+    /// the line's actual width come back as null chars; we substitute
+    /// space and trim trailing whitespace per row so a line that only
+    /// uses the first 20 columns doesn't compare unequal to "the same
+    /// line, padded".</summary>
+    private List<string> SnapshotVisibleRows()
+    {
+        var result = new List<string>(_rows);
+        var vp = _vtc.ViewPort;
+        for (int row = 0; row < _rows; row++)
+        {
+            VtNetCore.VirtualTerminal.Model.TerminalLine? line;
+            try { line = vp.GetVisibleLine(row); }
+            catch (ArgumentOutOfRangeException) { line = null; }
+            if (line is null) { result.Add(string.Empty); continue; }
+            var sb = new System.Text.StringBuilder(line.Count);
+            for (int col = 0; col < line.Count; col++)
+            {
+                var c = line[col].Char;
+                sb.Append(c == '\0' ? ' ' : c);
+            }
+            result.Add(sb.ToString().TrimEnd());
+        }
+        return result;
+    }
+
+    /// <summary>Compare pre/post visible-area snapshots to find how
+    /// many rows scrolled up (i.e. became invisible above the top).
+    /// If <c>post[i] == pre[i + shift]</c> for a contiguous range,
+    /// then <c>shift</c> rows scrolled off — push them onto the
+    /// scrollback buffer in order. Bounded to <see cref="HistoryRows"/>.
+    /// Same-content edits without scroll produce shift=0 and nothing
+    /// gets captured.</summary>
+    private void CaptureScrollOff(List<string> pre, List<string> post)
+    {
+        if (pre.Count != post.Count || pre.Count == 0) return;
+        int rows = pre.Count;
+
+        // Try shift = 1, 2, ..., rows-1. Stop at the first match —
+        // that's the smallest shift that explains the post state.
+        for (int shift = 1; shift < rows; shift++)
+        {
+            bool match = true;
+            for (int i = 0; i < rows - shift; i++)
+            {
+                if (pre[i + shift] != post[i]) { match = false; break; }
+            }
+            if (!match) continue;
+
+            for (int i = 0; i < shift; i++)
+            {
+                _scrollback.Add(pre[i]);
+                if (_scrollback.Count > HistoryRows) _scrollback.RemoveAt(0);
+            }
+            return;
+        }
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
@@ -84,15 +376,34 @@ public sealed partial class TerminalControl : UserControl
     private static readonly Color DefaultFg     = Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
     private static readonly Color SelectionFill = Color.FromArgb(0x80, 0x4D, 0xA6, 0xFF);
 
+    /// <summary>Thin shim: sync the XAML scrollbar thumb (sibling
+    /// element, lives outside the Win2D surface), then invalidate the
+    /// CanvasControl so it raises Draw on the next frame. Win2D
+    /// coalesces multiple Invalidate calls between frames into one,
+    /// so callers can fire this freely without backing off.</summary>
     private void Render()
     {
-        TermCanvas.Children.Clear();
+        SyncScrollThumb();
+        TermCanvas.Invalidate();
+    }
 
-        double cw = CharWidth;
-        double ch = CharHeight;
-        var vp    = _vtc.ViewPort;
+    /// <summary>Win2D Draw event handler — paints the entire terminal
+    /// surface (selection, glyphs, cursor) in one drawing session.
+    /// Runs on the UI thread; reads from <see cref="_vtc"/> and
+    /// <see cref="_scrollback"/> which are also UI-thread-only.
+    ///
+    /// Performance: we group adjacent cells with identical fg+bg into
+    /// a single <c>FillRectangle</c> + <c>DrawText</c> pair. For a typical
+    /// terminal frame (mostly default-colour text), that's ~1–3 draw
+    /// calls per row instead of one element per glyph. The whole 50×220
+    /// viewport paints in well under a millisecond on a modern GPU.</summary>
+    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
+    {
+        var ds = args.DrawingSession;
+        EnsureTextFormat();
+        if (_textFormat is null) return;
 
-        // Selection highlight goes UNDER the glyphs so text stays readable.
+        // Selection highlight — drawn first so glyphs paint on top.
         if (_hasSelection || _isSelecting)
         {
             var (s, e) = NormalisedSelection();
@@ -101,90 +412,234 @@ public sealed partial class TerminalControl : UserControl
                 int startCol = (row == s.Row) ? s.Col : 0;
                 int endCol   = (row == e.Row) ? e.Col : _cols;
                 if (endCol <= startCol) continue;
-                var hl = new Rectangle
-                {
-                    Width  = (endCol - startCol) * cw,
-                    Height = ch,
-                    Fill   = new SolidColorBrush(SelectionFill),
-                };
-                Canvas.SetLeft(hl, startCol * cw);
-                Canvas.SetTop(hl,  row * ch);
-                TermCanvas.Children.Add(hl);
+                ds.FillRectangle(
+                    startCol * _charWidth,
+                    row      * _charHeight,
+                    (endCol - startCol) * _charWidth,
+                    _charHeight,
+                    SelectionFill);
             }
         }
+
+        var vp = _vtc.ViewPort;
 
         for (int row = 0; row < _rows; row++)
         {
-            var line = vp.GetVisibleLine(row);
+            int absRow = row + _scrollback.Count - _scrollOffset;
+            if (absRow < 0) continue;
+
+            if (absRow < _scrollback.Count)
+            {
+                // Scrollback: stored as plain strings, render in
+                // default foreground in one DrawText per row.
+                var text = _scrollback[absRow];
+                if (text.Length > 0)
+                {
+                    ds.DrawText(text, 0, row * _charHeight, DefaultFg, _textFormat);
+                }
+                continue;
+            }
+
+            int liveRow = absRow - _scrollback.Count;
+            VtNetCore.VirtualTerminal.Model.TerminalLine? line;
+            try { line = vp.GetVisibleLine(liveRow); }
+            catch (ArgumentOutOfRangeException) { line = null; }
             if (line is null) continue;
 
-            for (int col = 0; col < line.Count; col++)
-            {
-                var cell = line[col];
-                // Skip uninitialised cells. We DO render real spaces now —
-                // `top`/`htop`/`vim` clear regions by writing spaces with
-                // attributes, and skipping them used to leave stale glyphs
-                // bleeding through redraws.
-                if (cell.Char is '\0') continue;
-
-                var bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
-                if ((bgArgb >> 24) != 0)
-                {
-                    var bgRect = new Rectangle
-                    {
-                        Width  = cw,
-                        Height = ch,
-                        Fill   = new SolidColorBrush(ArgbToColor(bgArgb))
-                    };
-                    Canvas.SetLeft(bgRect, col * cw);
-                    Canvas.SetTop(bgRect,  row * ch);
-                    TermCanvas.Children.Add(bgRect);
-                }
-
-                if (cell.Char == ' ') continue; // bg is drawn; no glyph needed
-
-                // VtNetCore reports ARGB=0 (fully transparent) for the default
-                // foreground; fall back to a visible light gray in that case.
-                var fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
-                var fgColor = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
-
-                var tb = new TextBlock
-                {
-                    Text       = cell.Char.ToString(),
-                    FontFamily = FontFamily,
-                    FontSize   = FontSize,
-                    Foreground = new SolidColorBrush(fgColor)
-                };
-                Canvas.SetLeft(tb, col * cw);
-                Canvas.SetTop(tb,  row * ch);
-                TermCanvas.Children.Add(tb);
-            }
+            DrawLiveRow(ds, line, row);
         }
 
-        // Cursor block — suppressed during a selection drag so the user
-        // can see what they're highlighting without it strobing.
-        if (!_isSelecting)
+        // Cursor block. Suppressed during a selection drag (would
+        // strobe under the highlight) and while scrolled back (the
+        // cursor's true position is at the live bottom; drawing it on
+        // a historical view would be misleading).
+        if (!_isSelecting && _scrollOffset == 0)
         {
             var cur = vp.CursorPosition;
-            var cursor = new Rectangle
-            {
-                Width   = cw,
-                Height  = ch,
-                Fill    = new SolidColorBrush(Colors.White),
-                Opacity = 0.65
-            };
-            Canvas.SetLeft(cursor, cur.Column * cw);
-            Canvas.SetTop(cursor,  cur.Row    * ch);
-            TermCanvas.Children.Add(cursor);
+            ds.FillRectangle(
+                cur.Column * _charWidth,
+                cur.Row    * _charHeight,
+                _charWidth, _charHeight,
+                CursorFill);
         }
+    }
+
+    private static readonly Color CursorFill = Color.FromArgb(0xA6, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>Paint one live VtNetCore row, grouping adjacent cells
+    /// with the same fg+bg into a single draw-text + fill-rect pair.
+    /// VtNetCore reports per-cell attributes; long runs of the same
+    /// colour (the common case) collapse to one DrawText call each.</summary>
+    private void DrawLiveRow(
+        CanvasDrawingSession ds,
+        VtNetCore.VirtualTerminal.Model.TerminalLine line,
+        int row)
+    {
+        int spanStartCol = -1;
+        Color spanFg = DefaultFg;
+        uint  spanBgArgb = 0;
+        _rowBuf.Clear();
+
+        int colCount = Math.Min(line.Count, _cols);
+        for (int col = 0; col < colCount; col++)
+        {
+            var cell = line[col];
+            // Treat '\0' as a space inside spans so a run of un-set
+            // cells in the middle of a coloured region doesn't force
+            // a flush; the trailing TrimEnd in DrawText handles them.
+            // Real spaces still get rendered when their bg differs.
+            char c = cell.Char == '\0' ? ' ' : cell.Char;
+
+            uint  bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
+            uint  fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
+            Color fg     = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
+
+            if (spanStartCol < 0)
+            {
+                spanStartCol = col;
+                spanFg = fg;
+                spanBgArgb = bgArgb;
+                _rowBuf.Append(c);
+            }
+            else if (fg == spanFg && bgArgb == spanBgArgb)
+            {
+                _rowBuf.Append(c);
+            }
+            else
+            {
+                FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb);
+                _rowBuf.Clear();
+                spanStartCol = col;
+                spanFg = fg;
+                spanBgArgb = bgArgb;
+                _rowBuf.Append(c);
+            }
+        }
+        if (spanStartCol >= 0 && _rowBuf.Length > 0)
+            FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb);
+    }
+
+    /// <summary>Emit one span: fill the background rectangle if a
+    /// non-transparent bg colour is set, then draw the glyph run with
+    /// the foreground colour. Whitespace-only spans skip the DrawText
+    /// (the bg fill is already done).</summary>
+    private void FlushSpan(
+        CanvasDrawingSession ds,
+        int row, int colStart, string text,
+        Color fg, uint bgArgb)
+    {
+        float x = colStart * _charWidth;
+        float y = row      * _charHeight;
+        if ((bgArgb >> 24) != 0)
+        {
+            ds.FillRectangle(
+                x, y,
+                text.Length * _charWidth, _charHeight,
+                ArgbToColor(bgArgb));
+        }
+        // Skip DrawText for all-whitespace spans — the background is
+        // already painted, and DrawText with all-space input still
+        // does a full DirectWrite shaping pass we'd rather avoid.
+        bool hasGlyph = false;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] != ' ') { hasGlyph = true; break; }
+        }
+        if (hasGlyph) ds.DrawText(text, x, y, fg, _textFormat);
+    }
+
+    /// <summary>Construct the CanvasTextFormat lazily on first draw,
+    /// then re-measure cell dimensions. This must happen after XAML
+    /// has applied FontFamily / FontSize attributes set on the
+    /// containing element (e.g. SshSessionView.xaml sets
+    /// FontFamily="Cascadia Code, Consolas, Courier New" FontSize="13").</summary>
+    private void EnsureTextFormat()
+    {
+        if (_textFormat is not null) return;
+
+        // FontFamily.Source may be a comma-separated fallback list — that's
+        // XAML's syntax for "try these in order". DirectWrite (via
+        // CanvasTextFormat) treats the whole string as a single family
+        // name; if it doesn't resolve, DWrite silently substitutes the
+        // system default font (Segoe UI on most installs — proportional!).
+        // For a terminal that would catastrophically misalign cells
+        // against rendered text. Split on comma and take the first entry;
+        // if it's not installed DWrite still falls back to a system font,
+        // but at least we tried the user's preferred face first.
+        var familySource = FontFamily?.Source ?? "Cascadia Mono";
+        var family = familySource.Split(',')[0].Trim();
+        if (string.IsNullOrEmpty(family)) family = "Cascadia Mono";
+
+        _textFormat = new CanvasTextFormat
+        {
+            FontFamily        = family,
+            FontSize          = (float)FontSize,
+            WordWrapping      = CanvasWordWrapping.NoWrap,
+            VerticalAlignment = CanvasVerticalAlignment.Top,
+            HorizontalAlignment = CanvasHorizontalAlignment.Left,
+        };
+        MeasureCellMetrics();
+        // The cell grid may have been guessed using the heuristic
+        // metrics from the constructor — re-run sizing now that we
+        // have accurate measurements.
+        ResizeFromActual();
+    }
+
+    /// <summary>Measure the rendered cell box from the current text
+    /// format. The width is the per-character *advance* DirectWrite
+    /// will use when laying out a run of glyphs — we can't get this
+    /// from a single character (LayoutBounds.Width is the ink box,
+    /// not the advance; for "M" the two differ by enough that the
+    /// cursor drifts ~1 column per ~50 typed characters). Measure
+    /// a long monospaced run and divide; the mantissa is a clean
+    /// float.
+    ///
+    /// Height comes from LineMetrics[0].Height — that's the full
+    /// line box (ascent + descent + gap), matching DirectWrite's
+    /// inter-line spacing.</summary>
+    private void MeasureCellMetrics()
+    {
+        if (_textFormat is null) return;
+        var device = CanvasDevice.GetSharedDevice();
+        // 100 Ms minimises per-character measurement noise from
+        // bearings/kerning. Monospace fonts have constant advance, so
+        // total width / count is the exact advance.
+        const string SampleRun = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM" +
+                                 "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
+        using var layout = new CanvasTextLayout(device, SampleRun, _textFormat, 100000f, 1000f);
+        var lm = layout.LineMetrics;
+        _charWidth  = (float)(layout.LayoutBounds.Width / SampleRun.Length);
+        _charHeight = lm.Length > 0 ? lm[0].Height : (float)layout.LayoutBounds.Height;
+        if (_charWidth  <= 0) _charWidth  = (float)FontSize * 0.6f;
+        if (_charHeight <= 0) _charHeight = (float)FontSize * 1.4f;
+        SshLog.Info($"Cell metrics measured: family={_textFormat.FontFamily} size={FontSize} charW={_charWidth:F3} charH={_charHeight:F3} layoutBoundsH={layout.LayoutBounds.Height:F3} lineMetricCount={lm.Length}");
+    }
+
+    /// <summary>Recompute the cell grid (cols, rows) from the
+    /// CanvasControl's actual layout size and tell VtNetCore about it.
+    /// Called after metrics change or after the control resizes.</summary>
+    private void ResizeFromActual()
+    {
+        double w = TermCanvas.ActualWidth;
+        double h = TermCanvas.ActualHeight;
+        if (w <= 0 || h <= 0) return;
+
+        int newCols = Math.Max(10, (int)(w / _charWidth));
+        int newRows = Math.Max(4,  (int)(h / _charHeight));
+        if (newCols == _cols && newRows == _rows) return;
+        SshLog.Info($"Resize cell grid: cols {_cols}→{newCols} rows {_rows}→{newRows} (viewportW={w:F1} viewportH={h:F1} charW={_charWidth:F3} charH={_charHeight:F3})");
+        _cols = newCols;
+        _rows = newRows;
+        _vtc.ResizeView(_cols, _rows);
+        TermCanvas.Invalidate();
     }
 
     // ── Selection ─────────────────────────────────────────────────────────────
 
     private (int Row, int Col) PointToCell(Windows.Foundation.Point p)
     {
-        int col = Math.Clamp((int)(p.X / CharWidth), 0, _cols);
-        int row = Math.Clamp((int)(p.Y / CharHeight), 0, _rows - 1);
+        int col = Math.Clamp((int)(p.X / _charWidth),  0, _cols);
+        int row = Math.Clamp((int)(p.Y / _charHeight), 0, _rows - 1);
         return (row, col);
     }
 
@@ -246,12 +701,126 @@ public sealed partial class TerminalControl : UserControl
         Render();
     }
 
-    private async void OnRightTapped(object sender, RightTappedRoutedEventArgs e)
+    // ── Scrollback ────────────────────────────────────────────────────
+
+    private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
-        // Right-click pastes. PuTTY-style middle-click is overkill;
-        // right-click matches Windows Terminal's default behaviour.
+        // In alt-buffer mode the wheel forwards to the remote app
+        // (top/vim/less use it for their own scrolling/paging via
+        // mouse-protocol mode-1000 etc). For now we just drop wheel
+        // input in alt — sending it as ESC[A / ESC[B would be safer
+        // than leaking it into the shell, but that's out of scope here.
+        if (_inAltBuffer) { e.Handled = true; return; }
+
+        var p = e.GetCurrentPoint(this);
+        int delta = p.Properties.MouseWheelDelta; // 120 per notch
+        // Wheel-up (positive delta) increases _scrollOffset → look
+        // further back in history → thumb travels up. 3 lines per notch
+        // matches Windows Terminal / xterm defaults.
+        int lineDelta = delta / 40;
+        ScrollByLines(lineDelta);
         e.Handled = true;
-        await PasteFromClipboardAsync();
+    }
+
+    /// <summary>Adjust the scroll offset by <paramref name="lines"/>
+    /// (positive = scroll up into history, negative = back toward live).
+    /// Clamps to [0, _scrollback.Count] — our captured history is the
+    /// authoritative bound (VtNetCore's TopRow stays at 0 in this build,
+    /// which is why we maintain the buffer ourselves).</summary>
+    private void ScrollByLines(int lines)
+    {
+        var maxBack = _scrollback.Count;
+        var newOffset = Math.Clamp(_scrollOffset + lines, 0, maxBack);
+        if (newOffset == _scrollOffset) return;
+        _scrollOffset = newOffset;
+        Render();
+    }
+
+    /// <summary>Snap back to live output. Called from any keystroke
+    /// that produces input — matches PuTTY / xterm muscle memory:
+    /// scrolling back is read-only, the next keypress brings you home.</summary>
+    private void SnapToLive()
+    {
+        if (_scrollOffset == 0) return;
+        _scrollOffset = 0;
+        Render();
+    }
+
+    private void OnRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        // Right-click opens a context menu with Copy / Paste /
+        // Select all / Clear scrollback. Items grey out when not
+        // applicable (Copy without selection, Paste without text on
+        // the clipboard).
+        e.Handled = true;
+
+        var menu = new MenuFlyout();
+
+        var copy = new MenuFlyoutItem
+        {
+            Text      = "Copy",
+            IsEnabled = _hasSelection,
+            Icon      = new SymbolIcon(Symbol.Copy),
+        };
+        copy.Click += (_, _) =>
+        {
+            CopySelectionToClipboard();
+            ClearSelection();
+        };
+        menu.Items.Add(copy);
+
+        var paste = new MenuFlyoutItem
+        {
+            Text      = "Paste",
+            IsEnabled = ClipboardHasText(),
+            Icon      = new SymbolIcon(Symbol.Paste),
+        };
+        paste.Click += async (_, _) => await PasteFromClipboardAsync();
+        menu.Items.Add(paste);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var selectAll = new MenuFlyoutItem
+        {
+            Text = "Select all visible",
+            Icon = new SymbolIcon(Symbol.SelectAll),
+        };
+        selectAll.Click += (_, _) =>
+        {
+            _selAnchor   = (0, 0);
+            _selFocus    = (_rows - 1, _cols);
+            _hasSelection = true;
+            _isSelecting  = false;
+            Render();
+        };
+        menu.Items.Add(selectAll);
+
+        var clear = new MenuFlyoutItem { Text = "Clear scrollback" };
+        clear.Click += (_, _) =>
+        {
+            // VtNetCore doesn't expose a "drop history" API; the
+            // simplest reset is to flip MaximumHistoryLines to 0
+            // (drops all retained rows) and back. The visible
+            // viewport is unaffected.
+            var keep = _vtc.MaximumHistoryLines;
+            _vtc.MaximumHistoryLines = 0;
+            _vtc.MaximumHistoryLines = keep;
+            _scrollOffset = 0;
+            Render();
+        };
+        menu.Items.Add(clear);
+
+        menu.ShowAt(this, e.GetPosition(this));
+    }
+
+    private static bool ClipboardHasText()
+    {
+        try
+        {
+            var content = Clipboard.GetContent();
+            return content?.Contains(StandardDataFormats.Text) ?? false;
+        }
+        catch { return false; }
     }
 
     private void ClearSelection()
@@ -342,6 +911,27 @@ public sealed partial class TerminalControl : UserControl
             return;
         }
 
+        // Shift + PgUp/PgDn/Home/End — scrollback navigation.
+        // Without Shift these keys are sent to the remote shell as
+        // their VT escape sequences (existing behavior). With Shift
+        // they drive the scrollback buffer instead, matching xterm /
+        // Windows Terminal. Suppressed in alt-buffer mode — the
+        // scrollback isn't accessible there.
+        if (shift && (e.Key == VirtualKey.PageUp || e.Key == VirtualKey.PageDown ||
+                      e.Key == VirtualKey.Home   || e.Key == VirtualKey.End))
+        {
+            if (_inAltBuffer) { e.Handled = true; return; }
+            switch (e.Key)
+            {
+                case VirtualKey.PageUp:   ScrollByLines(  _rows - 1 ); break;
+                case VirtualKey.PageDown: ScrollByLines(-(_rows - 1)); break;
+                case VirtualKey.Home:     ScrollByLines(int.MaxValue);  break;
+                case VirtualKey.End:      SnapToLive();                 break;
+            }
+            e.Handled = true;
+            return;
+        }
+
         // Ctrl+C: copy if a selection exists, otherwise let it fall
         // through as SIGINT (^C, byte 0x03) via TranslateSpecialKey.
         if (ctrl && !shift && e.Key == VirtualKey.C && _hasSelection)
@@ -355,9 +945,11 @@ public sealed partial class TerminalControl : UserControl
         var bytes = TranslateSpecialKey(e.Key, ctrl, shift);
         if (bytes is { Length: > 0 })
         {
-            // Any keystroke that produces output dismisses a selection —
-            // matches PuTTY / xterm muscle memory.
+            // Any keystroke that produces output dismisses a selection
+            // and snaps the view back to the live bottom — matches
+            // PuTTY / xterm muscle memory.
             ClearSelection();
+            SnapToLive();
             UserInput?.Invoke(this, bytes);
             e.Handled = true;
         }
@@ -372,7 +964,9 @@ public sealed partial class TerminalControl : UserControl
         // (Enter=0x0D, Backspace=0x08, Tab=0x09, Escape=0x1B, etc.).
         if (e.Character < 0x20 || e.Character == 0x7F) return;
 
+        SshLog.Debug($"Key char received: '{(char)e.Character}' (0x{(int)e.Character:X2}) altBuf={_inAltBuffer} scrollOff={_scrollOffset}");
         ClearSelection();
+        SnapToLive();
         UserInput?.Invoke(this, System.Text.Encoding.UTF8.GetBytes(new[] { e.Character }));
         e.Handled = true;
     }
@@ -409,23 +1003,104 @@ public sealed partial class TerminalControl : UserControl
 
     // ── Sizing ────────────────────────────────────────────────────────────────
 
-    private double CharWidth  => FontSize * 0.601;
-    private double CharHeight => FontSize * 1.4;
-
+    /// <summary>The CanvasControl is sized by its Grid column ("*"), so
+    /// we don't set explicit Width/Height. SizeChanged fires once layout
+    /// assigns it a final size; we re-derive cols/rows from the actual
+    /// rendered metrics measured via DirectWrite and tell VtNetCore.</summary>
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        int newCols = Math.Max(10, (int)(e.NewSize.Width  / CharWidth));
-        int newRows = Math.Max(4,  (int)(e.NewSize.Height / CharHeight));
+        ResizeFromActual();
+    }
 
-        // Canvas needs explicit dimensions or it stays 0×0 and clips its children.
-        TermCanvas.Width  = e.NewSize.Width;
-        TermCanvas.Height = e.NewSize.Height;
+    // ── Custom scrollbar ──────────────────────────────────────────────
 
-        if (newCols == _cols && newRows == _rows) return;
-        _cols = newCols;
-        _rows = newRows;
-        _vtc.ResizeView(_cols, _rows);
-        DispatcherQueue.TryEnqueue(Render);
+    private bool _scrollDragging;
+    private double _scrollDragOffsetWithinThumb;
+
+    private void SyncScrollThumb()
+    {
+        var trackH = VScrollTrack.ActualHeight;
+        if (trackH <= 0) return;
+
+        // Scrollable range = how many lines we can drag back into.
+        // Bounded by what we've actually captured (matches the
+        // always-draggable bar's UX without showing fake range past
+        // the real history).
+        int maxBack = _scrollback.Count;
+        const double minThumb = 24;
+        // Thumb size scales with what fraction of total content is
+        // currently visible: live rows / (live + history).
+        double thumbH = Math.Max(minThumb, trackH * _rows / Math.Max(1, maxBack + _rows));
+        thumbH = Math.Min(thumbH, trackH);
+
+        // Position: scrollOffset 0 → thumb at bottom (track-thumb).
+        // scrollOffset maxBack → thumb at top (0). When maxBack == 0
+        // (no scrollback yet) we pin to bottom.
+        double frac = maxBack > 0 ? 1.0 - (double)_scrollOffset / maxBack : 0.0;
+        frac = Math.Clamp(frac, 0, 1);
+        double y = (trackH - thumbH) * frac;
+
+        VScrollThumb.Height = thumbH;
+        Canvas.SetTop(VScrollThumb, y);
+    }
+
+    private void OnScrollTrackPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        // No scrollback while top/vim/less is up; leave the bar inert.
+        if (_inAltBuffer) { e.Handled = true; return; }
+
+        var pt = e.GetCurrentPoint(VScrollTrack).Position;
+        var thumbY = Canvas.GetTop(VScrollThumb);
+        if (double.IsNaN(thumbY)) thumbY = 0;
+        var thumbH = VScrollThumb.Height;
+
+        if (pt.Y >= thumbY && pt.Y <= thumbY + thumbH)
+        {
+            // Drag start — record offset within thumb so the thumb
+            // doesn't jump to the cursor on first move.
+            _scrollDragging = true;
+            _scrollDragOffsetWithinThumb = pt.Y - thumbY;
+        }
+        else
+        {
+            // Click on the track but outside the thumb — page up/down.
+            int direction = pt.Y < thumbY ? +1 : -1;
+            ScrollByLines(direction * (_rows - 1));
+            return;
+        }
+        VScrollTrack.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnScrollTrackPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_scrollDragging) return;
+        var pt = e.GetCurrentPoint(VScrollTrack).Position;
+        var trackH = VScrollTrack.ActualHeight;
+        var thumbH = VScrollThumb.Height;
+        var max = trackH - thumbH;
+        if (max <= 0) return;
+        double newY = Math.Clamp(pt.Y - _scrollDragOffsetWithinThumb, 0, max);
+        double frac = 1.0 - (newY / max);
+        // Map drag fraction onto our captured scrollback range, not
+        // HistoryRows — otherwise dragging a half-empty bar still jumps
+        // to "5000 rows back" and Render asks for nonexistent rows.
+        int maxBack = _scrollback.Count;
+        _scrollOffset = Math.Clamp((int)Math.Round(frac * maxBack), 0, maxBack);
+        Render();
+    }
+
+    private void OnScrollTrackPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_scrollDragging) return;
+        _scrollDragging = false;
+        VScrollTrack.ReleasePointerCapture(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnScrollTrackPointerLost(object sender, PointerRoutedEventArgs e)
+    {
+        _scrollDragging = false;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -16,6 +16,15 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
     /// specific embed plumbing. Read-only.</summary>
     public ISshSession Session => _session;
 
+    /// <summary>Optional in-terminal auth broker. Non-null when the
+    /// connection's <c>SshAuthMode</c> uses keyboard-interactive
+    /// (<c>ServerPrompt</c> / <c>KeyThenPrompt</c>): SSH.NET fires
+    /// prompts into the broker, which paints them on the terminal
+    /// and consumes user input until Enter. The view checks
+    /// <c>AuthBroker?.IsActive</c> on every keystroke to decide
+    /// whether to route to the broker or the session.</summary>
+    public NexusRDM.Services.TerminalAuthBroker? AuthBroker { get; }
+
     public Guid   ConnectionId { get; }
     public string DisplayName  { get; }
     public string Host         { get; }
@@ -26,6 +35,16 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
 
     /// <summary>Raised when VT bytes arrive — the TerminalControl subscribes to this.</summary>
     public event EventHandler<byte[]>? DataReceived;
+
+    public SshSessionViewModel(
+        ConnectionProfile profile,
+        ISshSession session,
+        SessionManager mgr,
+        NexusRDM.Services.TerminalAuthBroker? authBroker = null)
+        : this(profile, session, mgr)
+    {
+        AuthBroker = authBroker;
+    }
 
     public SshSessionViewModel(ConnectionProfile profile, ISshSession session, SessionManager mgr)
     {

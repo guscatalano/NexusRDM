@@ -2,17 +2,48 @@
 <UserControl
     x:Class="NexusRDM.Controls.TerminalControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:win2d="using:Microsoft.Graphics.Canvas.UI.Xaml">
 
     <!--
-        Canvas-based renderer. TerminalControl.xaml.cs places TextBlock children
-        for each visible glyph. Canvas DesiredSize is (0,0) by default so we
-        size it explicitly in OnSizeChanged; otherwise nothing would be visible.
+        Win2D-backed renderer. The CanvasControl maps to a D3D11 swap
+        chain; TerminalControl.xaml.cs subscribes to its Draw event and
+        emits glyph runs + filled rectangles via the CanvasDrawingSession
+        (Direct2D / DirectWrite under the hood). This replaces the
+        previous TextBlock-per-cell layout, which allocated ~11k XAML
+        elements per render and could not keep up with high-throughput
+        terminal output (e.g. `cat` of large files, busy `top` frames).
     -->
     <Border Background="#0C0C0C">
-        <Canvas x:Name="TermCanvas"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top" />
+        <Grid ColumnDefinitions="*,Auto">
+            <!-- Direct2D drawing surface. Sized by the Grid column;
+                 the Draw event handler reads ActualWidth / ActualHeight
+                 to compute the cell grid. -->
+            <win2d:CanvasControl x:Name="TermCanvas"
+                                 Grid.Column="0"
+                                 ClearColor="#0C0C0C" />
+
+            <!-- Custom scrollbar: a 12-DIP-wide vertical strip with a
+                 rounded "thumb" rectangle whose Y + Height are driven
+                 by SyncScrollThumb() during the Draw cycle. Drag with
+                 pointer events; the strip is always visible (unlike
+                 WinUI's ScrollBar control which auto-hides). -->
+            <Border x:Name="VScrollTrack" Grid.Column="1"
+                    Width="12"
+                    Background="#14141A"
+                    BorderBrush="#1F1F2A"
+                    BorderThickness="1,0,0,0">
+                <Canvas x:Name="VScrollCanvas">
+                    <Rectangle x:Name="VScrollThumb"
+                               Width="8"
+                               Height="40"
+                               Fill="#4A4A5A"
+                               RadiusX="3" RadiusY="3"
+                               Canvas.Left="2"
+                               Canvas.Top="0" />
+                </Canvas>
+            </Border>
+        </Grid>
     </Border>
 
 </UserControl>

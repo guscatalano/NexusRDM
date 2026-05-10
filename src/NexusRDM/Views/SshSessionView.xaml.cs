@@ -51,8 +51,30 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             DispatcherQueue.TryEnqueue(() => Terminal.Feed(data));
         ViewModel.DataReceived += _dataHandler;
 
-        _userInputHandler = (_, data) => _ = ViewModel.SendInputAsync(data);
+        // User input routing:
+        //   • If an auth broker is in flight (server is mid-
+        //     keyboard-interactive challenge) → broker absorbs
+        //     keystrokes, feeds back into terminal as needed,
+        //     completes its TaskCompletionSource on Enter.
+        //   • Otherwise → bytes flow into the SSH shell via the VM.
+        _userInputHandler = (_, data) =>
+        {
+            if (ViewModel.AuthBroker is { IsActive: true } broker
+                && broker.OnUserInput(data))
+                return;
+            _ = ViewModel.SendInputAsync(data);
+        };
         Terminal.UserInput += _userInputHandler;
+
+        // Broker → terminal display path: prompt text from the server
+        // and echo of typed chars during auth both arrive here.
+        // Marshalled to the UI thread because SSH.NET fires
+        // AuthenticationPrompt on its connect thread.
+        if (ViewModel.AuthBroker is { } authBroker)
+        {
+            authBroker.OutputToTerminal += (_, data) =>
+                DispatcherQueue.TryEnqueue(() => Terminal.Feed(data));
+        }
 
         _terminalSizeHandler = async (_, _) =>
         {
@@ -94,7 +116,10 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Focus(FocusState.Programmatic);
+        // Focus the terminal directly (not the surrounding UserControl)
+        // so the user can immediately type at the `login as: ` /
+        // password prompts without first clicking into the terminal.
+        Terminal.Focus(FocusState.Programmatic);
 
         // Popped clone hosts a fresh window whose AppWindow has its own
         // size; HookSizeTracking would target the main window instead.
@@ -131,6 +156,23 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             // keep it in sync from here.
             if (ViewModel.Session is PuttySshSession putty2)
                 ApplyPuttyHostBounds(putty2);
+
+            // Sync the real terminal size to the SSH PTY. SshSession
+            // creates the shell with its hardcoded default 220×50
+            // because the size handshake hasn't happened yet; the
+            // first Terminal.SizeChanged event only fires when the
+            // UserControl resizes, which often won't happen again
+            // between Connect and the user running their first
+            // command. Without this call, programs that probe TIOCGWINSZ
+            // (top, htop, vim, less) think the screen is 220-wide and
+            // wrap every long line. Safe to call even when the size
+            // happens to already match — it's a no-op via VtNetCore's
+            // SendWindowChangeRequest path.
+            if (ViewModel.IsConnected)
+            {
+                var (cols, rows) = Terminal.TerminalSize;
+                await ViewModel.ResizeAsync(cols, rows);
+            }
 
             WriteTrace(ViewModel.IsConnected
                 ? "[ Connected. Awaiting shell prompt... ]"

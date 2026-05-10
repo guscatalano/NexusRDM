@@ -123,6 +123,13 @@ public sealed class ProxmoxSyncService
         var deleted  = 0;
         var skipped  = 0;
 
+        // Per-sync DNS cache. We try to upgrade hostnames → IPs
+        // opportunistically (cheap per-row reliability win — IP doesn't
+        // depend on the user's DNS server staying available); caching
+        // ensures we do at most one lookup per unique hostname per sync.
+        // Null entries record negative resolutions so we don't retry.
+        var dnsCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var r in resources)
         {
             var extId = ExternalIdOf(r);
@@ -160,7 +167,7 @@ public sealed class ProxmoxSyncService
                 probed = await ProbeProtocolAsync(discoveredIp!, ostype, ct);
 
             var protocol = probed ?? ResolveProtocol(directives, source.DefaultProtocol, r.Tags, ostype);
-            var host     = ResolveHost(directives, r, discoveredIp);
+            var host     = await ResolveHostAsync(directives, r, discoveredIp, dnsCache, ct);
             var port     = directives.Port ?? ConnectionProfile.DefaultPort(protocol);
             var user     = directives.User ?? source.DefaultUsername;
             var name     = string.IsNullOrWhiteSpace(r.Name) ? $"vm-{r.Vmid}" : r.Name!;
@@ -356,15 +363,68 @@ public sealed class ProxmoxSyncService
         return ConnectionProtocol.Ssh;
     }
 
+    /// <summary>Pure priority logic — user tag override, then
+    /// discovered IP, then VM name. Kept as a sync helper for unit
+    /// tests and for callers that don't want network I/O.</summary>
     internal static string ResolveHost(
         TagDirectives d, ProxmoxClusterResource r, string? discoveredIp)
     {
         if (!string.IsNullOrEmpty(d.Host))     return d.Host!;
         if (!string.IsNullOrEmpty(discoveredIp)) return discoveredIp!;
-        // Fall back to the VM name. Users frequently set a DNS A record
-        // matching the VM name; when they don't, the editor's Detach
-        // flow lets them set Host manually.
         return string.IsNullOrEmpty(r.Name) ? $"vm-{r.Vmid}" : r.Name!;
+    }
+
+    /// <summary>Same priority order as <see cref="ResolveHost"/> but
+    /// opportunistically DNS-resolves hostnames into IPs when the
+    /// resolved value would otherwise be a name. Discovered-IP paths
+    /// pass through unchanged (already an IP). DNS errors / timeouts
+    /// fall back to the original name — never fatal.</summary>
+    internal static async Task<string> ResolveHostAsync(
+        TagDirectives d, ProxmoxClusterResource r, string? discoveredIp,
+        IDictionary<string, string?> dnsCache, CancellationToken ct)
+    {
+        var raw = ResolveHost(d, r, discoveredIp);
+
+        // Discovered IP path? Already an IP; no upgrade needed.
+        bool wasDiscoveredIpPath =
+            string.IsNullOrEmpty(d.Host) && !string.IsNullOrEmpty(discoveredIp);
+        if (wasDiscoveredIpPath) return raw;
+
+        return await UpgradeToIpAsync(raw, dnsCache, ct);
+    }
+
+    /// <summary>If <paramref name="hostOrIp"/> already parses as an IP,
+    /// return it unchanged. Otherwise attempt a DNS lookup (cached,
+    /// 2-second timeout) and return the resolved IP — preferring IPv4
+    /// when available — or the original name if resolution fails.
+    /// Errors are swallowed: a missing PTR / NXDOMAIN / network blip
+    /// shouldn't fail the sync; the connection will just fall back to
+    /// using the hostname at connect time, exactly as before.</summary>
+    private static async Task<string> UpgradeToIpAsync(
+        string hostOrIp, IDictionary<string, string?> cache, CancellationToken ct)
+    {
+        if (System.Net.IPAddress.TryParse(hostOrIp, out _)) return hostOrIp;
+        if (cache.TryGetValue(hostOrIp, out var cached))
+            return cached ?? hostOrIp;
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
+            var addrs = await System.Net.Dns.GetHostAddressesAsync(hostOrIp, cts.Token);
+            // Prefer IPv4 — it's both more universal across hosts and
+            // it's what most homelab Proxmox networks use. Fall back
+            // to IPv6 if that's all the resolver returned.
+            var ipv4 = addrs.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+            var pick = (ipv4 ?? addrs.FirstOrDefault())?.ToString();
+            cache[hostOrIp] = pick;
+            return pick ?? hostOrIp;
+        }
+        catch
+        {
+            cache[hostOrIp] = null; // negative cache so we don't retry every row
+            return hostOrIp;
+        }
     }
 
     /// <summary>Best-effort IP + ostype discovery. Returns

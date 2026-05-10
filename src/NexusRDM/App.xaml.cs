@@ -214,6 +214,12 @@ public partial class App : Application
             .WriteTo.File(logPath, rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7)
             .CreateLogger();
 
+        // Route Core's terminal/SSH diagnostic events into Serilog.
+        // Core can't reference Serilog directly (would force UI deps
+        // onto a pure library), so it exposes a static Action sink that
+        // we forward here. Tag every message with [ssh] for easy grep.
+        NexusRDM.Core.Diagnostics.SshLog.Sink = msg => Log.Debug("[ssh] {Msg}", msg);
+
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
         services.AddNexusData(DbPath);

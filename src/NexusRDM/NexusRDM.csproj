@@ -80,6 +80,12 @@
   <ItemGroup>
     <!-- Upgraded to 1.7 (latest in local cache, matching installed 1.7 runtime) -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250310001" />
+    <!-- Win2D: Direct2D + DirectWrite hardware-accelerated rendering for
+         the embedded SSH terminal. We draw directly to a swap chain via
+         CanvasControl, replacing the previous TextBlock-per-cell approach
+         that allocated ~11,000 XAML elements per render and could not
+         keep up with high-throughput terminal output. -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" PrivateAssets="all" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.Segmented" Version="8.1.240916" />
