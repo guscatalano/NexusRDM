@@ -11,6 +11,16 @@ public sealed class InvertBoolConverter : IValueConverter
     public object ConvertBack(object value, Type t, object p, string l) => value is true ? false : true;
 }
 
+/// <summary>bool IsDirectory → Segoe Fluent glyph. Used by the SFTP
+/// file manager rows since x:Bind doesn't allow inline string literals
+/// in a ternary expression.</summary>
+public sealed class DirectoryGlyphConverter : IValueConverter
+{
+    public object Convert(object value, Type t, object p, string l) =>
+        value is true ? "" /* FilesFolder */ : "" /* Document */;
+    public object ConvertBack(object value, Type t, object p, string l) => throw new NotImplementedException();
+}
+
 /// <summary>string.Length > 0 → true. Drives InfoBar.IsOpen from an error string.</summary>
 public sealed class NonZeroToBoolConverter : IValueConverter
 {

@@ -143,6 +143,7 @@
             <conv:SshVisibilityConverter    x:Key="SshVisibilityConverter" />
             <conv:RdpVisibilityConverter    x:Key="RdpVisibilityConverter" />
             <conv:PrivKeyVisibilityConverter x:Key="PrivKeyVisibilityConverter" />
+            <conv:DirectoryGlyphConverter   x:Key="DirectoryGlyphConv" />
 
             <!-- Shared styles -->
             <Style x:Key="NxTreeItemStyle" TargetType="TreeViewItem">

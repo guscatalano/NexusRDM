@@ -102,7 +102,8 @@
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:SftpEntry">
                             <Grid ColumnDefinitions="Auto,*,80,140" VerticalAlignment="Center">
-                                <FontIcon Grid.Column="0" Glyph="{x:Bind ((x:String)((x:Boolean)IsDirectory ? '&#xE8B7;' : '&#xE8A5;'))}"
+                                <FontIcon Grid.Column="0"
+                                          Glyph="{x:Bind IsDirectory, Converter={StaticResource DirectoryGlyphConv}}"
                                           FontSize="11"
                                           Foreground="{StaticResource NxTx3}"
                                           Margin="0,0,6,0" />
@@ -173,7 +174,8 @@
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:SftpEntry">
                             <Grid ColumnDefinitions="Auto,*,80,140" VerticalAlignment="Center">
-                                <FontIcon Grid.Column="0" Glyph="{x:Bind ((x:String)((x:Boolean)IsDirectory ? '&#xE8B7;' : '&#xE8A5;'))}"
+                                <FontIcon Grid.Column="0"
+                                          Glyph="{x:Bind IsDirectory, Converter={StaticResource DirectoryGlyphConv}}"
                                           FontSize="11"
                                           Foreground="{StaticResource NxTx3}"
                                           Margin="0,0,6,0" />
