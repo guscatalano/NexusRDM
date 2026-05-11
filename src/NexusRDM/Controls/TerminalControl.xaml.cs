@@ -77,6 +77,16 @@ public sealed partial class TerminalControl : UserControl
     /// avoids polluting history with transient TUI redraws.</summary>
     private bool _inAltBuffer;
 
+    /// <summary>True only when WE synthesized the alt-buffer ENTER via
+    /// the ESC[?25l (hide-cursor) heuristic. Programs that issue real
+    /// DECSET 1049 (e.g. <c>vim</c>) drive VtNetCore directly; we must
+    /// NOT synthesize the matching EXIT on a subsequent ESC[?25h or
+    /// we'd kick them out of alt buffer mid-session — vim emits show-
+    /// cursor as part of its startup sequence right after entering alt,
+    /// and again every time it moves between modes. This flag scopes
+    /// the pseudo-alt heuristic to the cases that actually need it.</summary>
+    private bool _synthesizedAltEnter;
+
     /// <summary>VtNetCore 1.0.9 marks <c>ActiveBuffer</c> as a private
     /// property with no public accessor (the <c>Enable*Buffer</c> methods
     /// are sealed-final on the interface so we can't override them
@@ -207,6 +217,11 @@ public sealed partial class TerminalControl : UserControl
             _inAltBuffer  = nowAlt;
             _lastSnapshot = null;
             _scrollOffset = 0;
+            // Whatever caused the flip-to-normal (our synthesis or the
+            // program's own DECRESET 1049), the pseudo-alt session is
+            // over. Reset the flag so a future ESC[?25l in normal mode
+            // starts cleanly.
+            if (!nowAlt) _synthesizedAltEnter = false;
             SshLog.Info($"Alt-buffer flip: {(nowAlt ? "ENTER" : "EXIT")} scrollback={_scrollback.Count} cols={_cols} rows={_rows}");
         }
         else if (!nowAlt)
@@ -307,18 +322,21 @@ public sealed partial class TerminalControl : UserControl
                 // current viewport size. Force a resize right after the
                 // switch so top's frame bytes (which follow immediately
                 // in this same chunk) land in a buffer of the correct
-                // height. Without this, top only fills the top ~24 rows
-                // regardless of how tall the viewport actually is.
+                // height.
                 _vtc.ResizeView(_cols, _rows);
+                _synthesizedAltEnter = true;
                 SshLog.Info($"Pseudo-alt ENTER: synthesized DECSET 1049 from ESC[?25l; resized alt to {_cols}×{_rows}");
             }
-            else if (!isHide && currentlyAlt)
+            else if (!isHide && currentlyAlt && _synthesizedAltEnter)
             {
+                // Only synth the EXIT if WE caused the ENTER. Programs
+                // that entered via real DECSET 1049 (vim, less) emit
+                // ESC[?25h all the time — they hide/show the cursor on
+                // every mode change. Synthesizing DECRESET in response
+                // would yank them out of alt buffer mid-session.
                 _parser.Push(DecSet1049Exit);
-                // On exit, ensure the now-active normal buffer is at
-                // the right size too (defensive: keeps both buffers in
-                // sync regardless of which one was last resized).
                 _vtc.ResizeView(_cols, _rows);
+                _synthesizedAltEnter = false;
                 SshLog.Info($"Pseudo-alt EXIT: synthesized DECRESET 1049 from ESC[?25h; resized normal to {_cols}×{_rows}");
             }
 
