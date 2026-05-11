@@ -87,6 +87,15 @@ public sealed partial class TerminalControl : UserControl
     /// the pseudo-alt heuristic to the cases that actually need it.</summary>
     private bool _synthesizedAltEnter;
 
+    /// <summary>Single-Feed flag: set inside <see cref="HandleEraseScrollback"/>
+    /// when <c>ESC[3J</c> was detected. <see cref="Feed"/> then skips
+    /// the snapshot/diff pass for this cycle so we don't immediately
+    /// re-populate the just-cleared scrollback from the pre-clear
+    /// pre-snapshot (the diff finds a giant "shift" between the old
+    /// content and the post-clear blank-screen-with-prompt and adds
+    /// every pre-clear row back into history).</summary>
+    private bool _scrollbackJustCleared;
+
     /// <summary>VtNetCore 1.0.9 marks <c>ActiveBuffer</c> as a private
     /// property with no public accessor (the <c>Enable*Buffer</c> methods
     /// are sealed-final on the interface so we can't override them
@@ -196,6 +205,7 @@ public sealed partial class TerminalControl : UserControl
 
     public void Feed(byte[] data)
     {
+        _scrollbackJustCleared = false;
         bool wasAlt = _inAltBuffer;
         // Only snapshot pre-state if we're going to diff (normal buffer).
         // In alt mode the snapshot would be wasted work — top redraws
@@ -227,8 +237,14 @@ public sealed partial class TerminalControl : UserControl
         else if (!nowAlt)
         {
             // Stayed in normal buffer — diff and append scroll-off rows.
+            // BUT skip the diff entirely if ESC[3J fired this Feed: pre
+            // holds the pre-clear screen, post holds the post-clear
+            // screen, and the diff would find a giant "shift" that
+            // re-injects the just-erased rows into _scrollback. Take
+            // the post-clear snapshot as the new diff baseline instead.
             var post = SnapshotVisibleRows();
-            if (pre is not null) CaptureScrollOff(pre, post);
+            if (pre is not null && !_scrollbackJustCleared)
+                CaptureScrollOff(pre, post);
             _lastSnapshot = post;
         }
         // Else: stayed in alt buffer — no capture, no snapshot tracking.
@@ -369,6 +385,7 @@ public sealed partial class TerminalControl : UserControl
                 _scrollback.Clear();
                 _lastSnapshot = null;
                 _scrollOffset = 0;
+                _scrollbackJustCleared = true;
                 SshLog.Info("ESC[3J detected — scrollback cleared");
                 return;
             }
@@ -1128,20 +1145,30 @@ public sealed partial class TerminalControl : UserControl
         };
         menu.Items.Add(selectAll);
 
-        var clear = new MenuFlyoutItem { Text = "Clear scrollback" };
-        clear.Click += (_, _) =>
+        var clearItem = new MenuFlyoutItem { Text = "Clear scrollback" };
+        clearItem.Click += (_, _) =>
         {
-            // VtNetCore doesn't expose a "drop history" API; the
-            // simplest reset is to flip MaximumHistoryLines to 0
-            // (drops all retained rows) and back. The visible
-            // viewport is unaffected.
+            // Our scrollback is the renderer's source of truth — drop
+            // it. The diff baseline goes with it so the next Feed
+            // doesn't accidentally treat existing visible content as
+            // a "scrolled off" delta and re-populate the list.
+            int dropped = _scrollback.Count;
+            _scrollback.Clear();
+            _lastSnapshot = null;
+            _scrollOffset = 0;
+            // Also drop VtNetCore's internal history retention as a
+            // belt-and-suspenders measure. Some VtNetCore paths read
+            // scrolled-off rows via vp.GetLine with negative indices;
+            // if we ever extend the renderer to honour that, dropping
+            // the internal history now prevents stale rows from
+            // resurfacing.
             var keep = _vtc.MaximumHistoryLines;
             _vtc.MaximumHistoryLines = 0;
             _vtc.MaximumHistoryLines = keep;
-            _scrollOffset = 0;
+            SshLog.Info($"Manual scrollback clear via context menu (dropped {dropped} rows)");
             Render();
         };
-        menu.Items.Add(clear);
+        menu.Items.Add(clearItem);
 
         menu.ShowAt(this, e.GetPosition(this));
     }
