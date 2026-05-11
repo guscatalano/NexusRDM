@@ -718,8 +718,16 @@ public sealed partial class MainWindow : Window
     /// here.</summary>
     private async Task OpenSftpTabAsync(ConnectionProfile profile)
     {
+        NexusRDM.Core.Diagnostics.SshLog.Info(
+            $"OpenSftpTabAsync entry: profile={profile.DisplayName} host={profile.Host} " +
+            $"profileUser=[{profile.Username}] authMode={profile.SshAuthMode}");
+
         var (username, password, keyPassphrase) = await ResolveSshCredentialsAsync(profile);
         if (username is null) return;
+
+        NexusRDM.Core.Diagnostics.SshLog.Info(
+            $"OpenSftpTabAsync after resolve: user=[{username}] " +
+            $"hasPassword={password is not null} hasKeyPass={keyPassphrase is not null}");
 
         // SFTP has no terminal to render server-side prompts into, so
         // ResolveSshCredentialsAsync's "empty username means ask the
@@ -729,7 +737,9 @@ public sealed partial class MainWindow : Window
         // up front when we don't have one on file.
         if (string.IsNullOrWhiteSpace(username))
         {
+            NexusRDM.Core.Diagnostics.SshLog.Info("OpenSftpTabAsync: prompting for username via dialog");
             username = await PromptForSftpUsernameAsync(profile);
+            NexusRDM.Core.Diagnostics.SshLog.Info($"OpenSftpTabAsync: dialog returned user=[{username ?? "<null>"}]");
             if (string.IsNullOrWhiteSpace(username)) return;
         }
 

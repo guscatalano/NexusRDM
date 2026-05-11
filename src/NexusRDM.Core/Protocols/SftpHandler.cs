@@ -1,3 +1,4 @@
+using NexusRDM.Core.Diagnostics;
 using NexusRDM.Core.Interfaces;
 using NexusRDM.Core.Models;
 using Renci.SshNet;
@@ -34,6 +35,19 @@ public sealed class SftpHandler : ISftpHandler
             var resolvedUser     = username;
             var resolvedPassword = storedPassword;
             var methods          = new List<AuthenticationMethod>();
+
+            // SSH.NET's AuthenticationMethod base ctor rejects empty
+            // usernames with a generic ArgumentException. Fail loudly
+            // here with a clearer message — and log — so we don't
+            // confuse "no username" with deeper auth failures.
+            if (string.IsNullOrWhiteSpace(resolvedUser))
+            {
+                SshLog.Warn($"SftpHandler.Factory: empty username for profile={profile.DisplayName} host={profile.Host}");
+                throw new InvalidOperationException(
+                    "SFTP connect requires a username, but none was supplied. " +
+                    "Set the username on the connection profile, or enter one " +
+                    "when prompted.");
+            }
 
             switch (profile.SshAuthMode)
             {
