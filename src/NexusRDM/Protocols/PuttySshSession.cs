@@ -55,6 +55,24 @@ public sealed class PuttySshSession : ISshSession
     public event EventHandler<byte[]>? DataReceived { add { } remove { } }
     public event EventHandler?         Disconnected;
 
+    // Stats — PuTTY owns the SSH channel, so we have no visibility into
+    // cipher / banner / bytes. Surface what we DO know (PTY size from
+    // the host panel, process start time) and stub the rest.
+    private DateTimeOffset? _connectedAt;
+    public DateTimeOffset? ConnectedAt   => _connectedAt;
+    public long            BytesReceived => 0;
+    public long            BytesSent     => 0;
+    public string          ServerVersion => string.Empty;
+    public string          CipherInfo    => "(PuTTY backend)";
+    public int             PtyCols       => 0;
+    public int             PtyRows       => 0;
+
+    public Task<string> ExecAsync(string command, CancellationToken ct = default) =>
+        throw new NotSupportedException(
+            "Host stats panel needs a programmable SSH channel, which the " +
+            "PuTTY backend doesn't expose. Switch to the embedded terminal " +
+            "(Settings → SSH mode) to enable host stats.");
+
     public PuttySshSession(ConnectionProfile profile, string username, string password)
     {
         _profile  = profile;
@@ -121,6 +139,7 @@ public sealed class PuttySshSession : ISshSession
         };
         _proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start PuTTYNG.exe");
+        _connectedAt = DateTimeOffset.UtcNow;
 
         // Schedule pwfile deletion. PuTTY reads the file once at
         // connection-establish time (well within 5s on normal hosts).

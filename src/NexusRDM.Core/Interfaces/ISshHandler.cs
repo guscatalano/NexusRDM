@@ -15,6 +15,43 @@ public interface ISshSession : IAsyncDisposable
     Task SendAsync(byte[] data, CancellationToken ct = default);
     Task ResizeAsync(int columns, int rows, CancellationToken ct = default);
     Task DisconnectAsync();
+
+    // ── Session statistics ──────────────────────────────────────────
+    // All free / local-only — no extra channel traffic. Backends that
+    // can't surface a given stat (PuTTY, demo) return sensible empties
+    // ("" / 0) rather than throw.
+
+    /// <summary>When <see cref="ConnectAsync"/> succeeded. Null while
+    /// disconnected. Drives the "uptime" counter in the status strip.</summary>
+    DateTimeOffset? ConnectedAt { get; }
+
+    /// <summary>Total bytes received from the server since connect.</summary>
+    long BytesReceived { get; }
+
+    /// <summary>Total bytes sent to the server since connect.</summary>
+    long BytesSent { get; }
+
+    /// <summary>SSH banner, e.g. <c>"SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3"</c>.
+    /// Empty when not connected or when the backend doesn't expose it
+    /// (PuTTY-backed sessions).</summary>
+    string ServerVersion { get; }
+
+    /// <summary>Negotiated cipher + MAC, e.g. <c>"aes256-gcm + hmac-sha2-256"</c>.
+    /// Empty for backends that don't expose the channel.</summary>
+    string CipherInfo { get; }
+
+    /// <summary>Current PTY width in columns.</summary>
+    int PtyCols { get; }
+
+    /// <summary>Current PTY height in rows.</summary>
+    int PtyRows { get; }
+
+    /// <summary>Run a one-shot command on a separate exec channel
+    /// (does NOT touch the user's interactive shell). Used by the
+    /// optional host-stats panel to poll <c>/proc/loadavg</c>,
+    /// <c>/proc/meminfo</c>, etc. Throws <see cref="NotSupportedException"/>
+    /// on backends that don't expose a programmable channel (PuTTY).</summary>
+    Task<string> ExecAsync(string command, CancellationToken ct = default);
 }
 
 /// <summary>Callback the keyboard-interactive auth flow uses to ask

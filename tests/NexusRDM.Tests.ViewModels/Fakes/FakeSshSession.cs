@@ -50,6 +50,17 @@ public sealed class FakeSshSession : ISshSession
         return Task.CompletedTask;
     }
 
+    // ── Stats stubs (the VM's status strip reads these) ──────────────
+    public DateTimeOffset? ConnectedAt   { get; set; }
+    public long            BytesReceived { get; set; }
+    public long            BytesSent     { get; set; }
+    public string          ServerVersion { get; set; } = string.Empty;
+    public string          CipherInfo    { get; set; } = string.Empty;
+    public int             PtyCols       { get; set; }
+    public int             PtyRows       { get; set; }
+    public Task<string> ExecAsync(string command, CancellationToken ct = default) =>
+        Task.FromResult(string.Empty);
+
     /// <summary>Push synthetic shell output — simulates a server sending bytes back.</summary>
     public void EmitData(byte[] data) => DataReceived?.Invoke(this, data);
 

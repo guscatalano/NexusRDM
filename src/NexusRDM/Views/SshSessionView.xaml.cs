@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using NexusRDM.Protocols;
 using NexusRDM.Services;
@@ -78,8 +79,10 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
         _terminalSizeHandler = async (_, _) =>
         {
+            // SizeLabel is bound to ViewModel.PtyDisplay (driven by the
+            // 1-second stats timer), so we just propagate the size to
+            // the session and the binding picks it up on the next tick.
             var (cols, rows) = Terminal.TerminalSize;
-            SizeLabel.Text   = $"{cols}×{rows}";
             await ViewModel.ResizeAsync(cols, rows);
         };
         Terminal.SizeChanged += _terminalSizeHandler;
@@ -131,6 +134,14 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         // PuTTYNG backend: hide the in-app terminal, show the host
         // panel, hand the WinUI window's HWND to the session BEFORE
         // ConnectAsync (PuTTYNG accepts -hwndparent only at launch).
+        // Host-stats toggle only makes sense for the embedded backend,
+        // which exposes a programmable SSH channel via SshSession.ExecAsync.
+        // The PuTTY-backed session has no such channel, so hide the
+        // button rather than show it disabled and confusing.
+        HostStatsToggle.Visibility = ViewModel.HostStatsAvailable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         if (ViewModel.Session is PuttySshSession puttySession)
         {
             Terminal.Visibility       = Visibility.Collapsed;
@@ -242,6 +253,69 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private void WriteTrace(string line) =>
         Terminal.Feed(Encoding.UTF8.GetBytes(line + "\r\n"));
+
+    // ── Host stats panel ─────────────────────────────────────────────────
+
+    /// <summary>Toggle the host-stats panel. The first time the user
+    /// turns it on we show a ContentDialog explaining what will happen
+    /// (commands sent to the server every 5s, visible in audit logs).
+    /// Honoured only for backends that support a programmable channel —
+    /// PuTTY-backed sessions hide the toggle entirely.</summary>
+    private async void HostStatsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton btn) return;
+
+        if (btn.IsChecked == true)
+        {
+            // Turning ON — ask for confirmation with full disclosure.
+            // Belt-and-suspenders: the toggle's IsEnabled is bound to
+            // ViewModel.IsConnected, but binding latency could allow a
+            // click through. Check explicitly.
+            if (!ViewModel.HostStatsAvailable || !ViewModel.IsConnected)
+            {
+                btn.IsChecked = false;
+                return;
+            }
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title    = "Enable host stats?",
+                Content  = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    Text =
+                        "While the panel is open, NexusRDM will run a small set of read-only " +
+                        "commands on this server every 5 seconds:\n\n" +
+                        "    cat /proc/loadavg\n" +
+                        "    cat /proc/meminfo | head -3\n" +
+                        "    uptime -s\n" +
+                        "    who | wc -l\n" +
+                        "    df -P / | tail -1\n\n" +
+                        "These run on a separate SSH exec channel (not your interactive shell), " +
+                        "but they will show up in the server's audit logs and consume a small " +
+                        "amount of bandwidth. You can disable any time by clicking the toggle again."
+                },
+                PrimaryButtonText   = "Enable",
+                CloseButtonText     = "Cancel",
+                DefaultButton       = ContentDialogButton.Primary,
+            };
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                btn.IsChecked = false;
+                return;
+            }
+
+            ViewModel.StartHostStatsPolling();
+            HostStatsPanel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ViewModel.StopHostStatsPolling();
+            HostStatsPanel.Visibility = Visibility.Collapsed;
+        }
+    }
 
     // ── Window-mode controls (toolbar buttons + global hotkeys) ──────────
 

@@ -24,12 +24,68 @@ public sealed class SshSession : ISshSession
     private uint                      _cols = 220;
     private uint                      _rows = 50;
     private bool                      _disposed;
+    // Stats counters — Interlocked-updated from the read loop (threadpool)
+    // and SendAsync's lambda. Reads from UI thread don't need locking
+    // because long reads on x64 are atomic, but Interlocked.Add keeps
+    // the writes torn-free.
+    private long                      _bytesReceived;
+    private long                      _bytesSent;
+    private DateTimeOffset?           _connectedAt;
 
     public Guid ConnectionId { get; }
     public bool IsConnected  => _client?.IsConnected ?? false;
 
     public event EventHandler<byte[]>? DataReceived;
     public event EventHandler?         Disconnected;
+
+    public DateTimeOffset? ConnectedAt   => _connectedAt;
+    public long            BytesReceived => Interlocked.Read(ref _bytesReceived);
+    public long            BytesSent     => Interlocked.Read(ref _bytesSent);
+    public int             PtyCols       => (int)_cols;
+    public int             PtyRows       => (int)_rows;
+
+    public string ServerVersion =>
+        _client?.ConnectionInfo?.ServerVersion ?? string.Empty;
+
+    /// <summary>"&lt;cipher&gt; + &lt;mac&gt;" combined string — what most
+    /// SSH clients show in their status bar. Returns empty when the
+    /// channel hasn't negotiated yet.</summary>
+    public string CipherInfo
+    {
+        get
+        {
+            var ci = _client?.ConnectionInfo;
+            if (ci is null) return string.Empty;
+            var enc = ci.CurrentClientEncryption ?? string.Empty;
+            var mac = ci.CurrentClientHmacAlgorithm ?? string.Empty;
+            return string.IsNullOrEmpty(mac) ? enc : $"{enc} + {mac}";
+        }
+    }
+
+    public async Task<string> ExecAsync(string command, CancellationToken ct = default)
+    {
+        if (_disposed || _client is null || !_client.IsConnected)
+            return string.Empty;
+        // Separate exec channel — does NOT touch the user's interactive
+        // shell. SSH.NET's SshCommand opens its own channel, runs, closes.
+        // We bounce to the thread pool because Execute() blocks on
+        // network I/O.
+        var client = _client;
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var cmd = client.CreateCommand(command);
+                cmd.CommandTimeout = TimeSpan.FromSeconds(5);
+                return cmd.Execute() ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                SshLog.Warn($"ExecAsync failed: {ex.GetType().Name}: {ex.Message}");
+                return string.Empty;
+            }
+        }, ct);
+    }
 
     /// <summary>Legacy eager-construction path — used by callers that
     /// already know the username and want to build the SshClient
@@ -157,6 +213,7 @@ public sealed class SshSession : ISshSession
         };
         _shell    = _client.CreateShellStream("xterm-256color", _cols, _rows, 0, 0, 4096, modes);
         SshLog.Info($"Shell opened: term=xterm-256color cols={_cols} rows={_rows} conn={ConnectionId}");
+        _connectedAt = DateTimeOffset.UtcNow;
         _readCts  = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _ = ReadLoopAsync(_readCts.Token);
     }
@@ -182,6 +239,7 @@ public sealed class SshSession : ISshSession
         // log stays compact; the hex preview makes it obvious whether
         // 'q' / ESC / Ctrl+C actually reach the wire.
         SshLog.Debug($"Send bytes={data.Length} preview={HexPreview(data, 32)} conn={ConnectionId}");
+        Interlocked.Add(ref _bytesSent, data.Length);
         await Task.Run(() =>
         {
             try
@@ -273,6 +331,7 @@ public sealed class SshSession : ISshSession
                 {
                     var chunk = new byte[read];
                     Buffer.BlockCopy(buf, 0, chunk, 0, read);
+                    Interlocked.Add(ref _bytesReceived, read);
                     DataReceived?.Invoke(this, chunk);
 
                     // Diagnostic: log every SMALL chunk (≤ 256 bytes)

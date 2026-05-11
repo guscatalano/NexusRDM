@@ -11,8 +11,9 @@
     <!-- The TabView's content host hugs the UserControl's DesiredSize, so a
          pure XAML "Stretch" doesn't actually fill the tab area. Code-behind
          (OnLoaded) tracks the main window's content height and pushes it onto
-         RootGrid.Height; MinHeight stays as a sane floor before that runs. -->
-    <Grid x:Name="RootGrid" RowDefinitions="30,*,22"
+         RootGrid.Height; MinHeight stays as a sane floor before that runs.
+         Row layout: toolbar | optional host-stats panel | terminal | status bar. -->
+    <Grid x:Name="RootGrid" RowDefinitions="30,Auto,*,22"
           HorizontalAlignment="Stretch"
           VerticalAlignment="Stretch"
           MinHeight="400">
@@ -57,6 +58,23 @@
                 </StackPanel>
                 <!-- Window-mode buttons + Disconnect. -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                    <!-- Host stats toggle. Hidden when the backend is
+                         PuTTY (no programmable channel) and disabled
+                         until the session is actually connected — would
+                         otherwise let the user enable the panel before
+                         we have an SSH channel to query. -->
+                    <ToggleButton x:Name="HostStatsToggle"
+                                  Click="HostStatsToggle_Click"
+                                  IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}"
+                                  Background="{StaticResource NxBg2}"
+                                  BorderBrush="{StaticResource NxBrd}"
+                                  BorderThickness="1"
+                                  CornerRadius="4"
+                                  Padding="8,2"
+                                  FontSize="11"
+                                  Foreground="{StaticResource NxTx2}"
+                                  ToolTipService.ToolTip="Show live host stats — load avg, memory, disk, uptime, users"
+                                  Content="Host stats" />
                     <Button Click="FullScreen_Click"
                             Background="{StaticResource NxBg2}"
                             BorderBrush="{StaticResource NxBrd}"
@@ -90,11 +108,65 @@
             </Grid>
         </Border>
 
+        <!-- Host stats panel — collapsed by default, expanded after the
+             user enables it from the toolbar toggle (with a confirmation
+             dialog explaining what gets sent to the server). 5-second
+             poll cadence; values populated by SshSessionViewModel. -->
+        <Border Grid.Row="1"
+                x:Name="HostStatsPanel"
+                Visibility="Collapsed"
+                Background="{StaticResource NxBg1}"
+                BorderBrush="{StaticResource NxBrd}"
+                BorderThickness="0,0,0,1"
+                Padding="10,6">
+            <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="8" RowSpacing="2">
+                <!-- Row 0 -->
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Load:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="0" Grid.Column="1"
+                           Text="{x:Bind ViewModel.HostStatsLoad, Mode=OneWay}"
+                           FontSize="11" Foreground="{StaticResource NxTx1}"
+                           FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="Memory:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="0" Grid.Column="3"
+                           Text="{x:Bind ViewModel.HostStatsMemory, Mode=OneWay}"
+                           FontSize="11" Foreground="{StaticResource NxTx1}"
+                           FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="0" Grid.Column="4" Text="Disk /:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="0" Grid.Column="5"
+                           Text="{x:Bind ViewModel.HostStatsDisk, Mode=OneWay}"
+                           FontSize="11" Foreground="{StaticResource NxTx1}"
+                           FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
+                <!-- Row 1 -->
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Up:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Grid.Column="1"
+                           Text="{x:Bind ViewModel.HostStatsUptime, Mode=OneWay}"
+                           FontSize="11" Foreground="{StaticResource NxTx1}"
+                           FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="Users:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Grid.Column="3"
+                           Text="{x:Bind ViewModel.HostStatsUsers, Mode=OneWay}"
+                           FontSize="11" Foreground="{StaticResource NxTx1}"
+                           FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Grid.Column="4" Text="Polled:"
+                           FontSize="11" Foreground="{StaticResource NxTx3}" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Grid.Column="5" Text="every 5s"
+                           FontSize="11" Foreground="{StaticResource NxTx3}"
+                           FontStyle="Italic" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
         <!-- Terminal area — host the in-app TerminalControl OR a
              panel for an embedded external terminal (PuTTYNG). The
              code-behind toggles visibility based on the session
              type; only one is shown at a time. -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <controls:TerminalControl x:Name="Terminal"
                                       FontFamily="Cascadia Code, Consolas, Courier New"
                                       FontSize="13"
@@ -112,17 +184,41 @@
                     SizeChanged="PuttyHostPanel_SizeChanged" />
         </Grid>
 
-        <!-- Status bar -->
-        <Border Grid.Row="2"
+        <!-- Status bar — live SSH session statistics. All values are
+             local-only (no extra server traffic): PTY size, byte
+             counters, cipher, server banner, connection age. -->
+        <Border Grid.Row="3"
                 Background="#1E1E28"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,1,0,0">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="10,0">
-                <TextBlock Grid.Column="0" Text="SSH"
-                           Style="{StaticResource StatusTextStyle}" Margin="0,0,14,0" />
-                <TextBlock Grid.Column="1" x:Name="SizeLabel"
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto"
+                  Margin="10,0">
+                <TextBlock Grid.Column="0"  Text="SSH"
+                           Style="{StaticResource StatusTextStyle}" Margin="0,0,12,0" />
+                <TextBlock Grid.Column="1"  Text="·"
+                           Style="{StaticResource StatusTextStyle}" Margin="0,0,12,0" />
+                <TextBlock Grid.Column="2"  x:Name="SizeLabel"
+                           Text="{x:Bind ViewModel.PtyDisplay, Mode=OneWay}"
                            Style="{StaticResource StatusTextStyle}" />
-                <TextBlock Grid.Column="3" x:Name="HostStatusLabel"
+                <TextBlock Grid.Column="3"  Text="·"
+                           Style="{StaticResource StatusTextStyle}" Margin="12,0" />
+                <TextBlock Grid.Column="4"  Text="{x:Bind ViewModel.ServerDisplay, Mode=OneWay}"
+                           Style="{StaticResource StatusTextStyle}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="240" />
+                <TextBlock Grid.Column="5"  Text="·"
+                           Style="{StaticResource StatusTextStyle}" Margin="12,0" />
+                <TextBlock Grid.Column="6"  Text="{x:Bind ViewModel.CipherDisplay, Mode=OneWay}"
+                           Style="{StaticResource StatusTextStyle}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="220" />
+                <TextBlock Grid.Column="7"  Text="·"
+                           Style="{StaticResource StatusTextStyle}" Margin="12,0" />
+                <TextBlock Grid.Column="8"  Text="{x:Bind ViewModel.BytesDisplay, Mode=OneWay}"
+                           Style="{StaticResource StatusTextStyle}" />
+                <TextBlock Grid.Column="9"  Text="·"
+                           Style="{StaticResource StatusTextStyle}" Margin="12,0" />
+                <TextBlock Grid.Column="10" Text="{x:Bind ViewModel.UptimeDisplay, Mode=OneWay}"
+                           Style="{StaticResource StatusTextStyle}" />
+                <TextBlock Grid.Column="12" x:Name="HostStatusLabel"
                            Style="{StaticResource StatusTextStyle}" />
             </Grid>
         </Border>

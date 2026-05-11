@@ -38,9 +38,42 @@ internal sealed class DemoSshSession : ISshSession
     public event EventHandler<byte[]>? DataReceived;
     public event EventHandler?         Disconnected;
 
+    // Plausible-looking fake stats so the demo recording shows a
+    // populated status strip + host stats panel.
+    private DateTimeOffset? _connectedAt;
+    private long            _bytesReceived;
+    private long            _bytesSent;
+    private int             _cols = 147, _rows = 39;
+
+    public DateTimeOffset? ConnectedAt   => _connectedAt;
+    public long            BytesReceived => _bytesReceived;
+    public long            BytesSent     => _bytesSent;
+    public string          ServerVersion => "SSH-2.0-OpenSSH_9.6p1 (demo)";
+    public string          CipherInfo    => "aes256-gcm@openssh.com + (none)";
+    public int             PtyCols       => _cols;
+    public int             PtyRows       => _rows;
+
+    public Task<string> ExecAsync(string command, CancellationToken ct = default)
+    {
+        // Canned responses for the host-stats poll set so the demo
+        // panel populates with believable numbers without needing a
+        // real machine.
+        return Task.FromResult<string>(command switch
+        {
+            "cat /proc/loadavg"             => "0.42 0.51 0.49 2/482 12345\n",
+            "cat /proc/meminfo | head -3"   => "MemTotal:       65536000 kB\nMemFree:         9876543 kB\nMemAvailable:   24123456 kB\n",
+            "uptime -s"                     => "2026-04-12 09:14:22\n",
+            "who | wc -l"                   => "3\n",
+            "df -P / | tail -1"             => "/dev/sda1      488123444 224311232 244112844  49% /\n",
+            "nproc"                         => "16\n",
+            _                                => string.Empty,
+        });
+    }
+
     public Task ConnectAsync(CancellationToken ct = default)
     {
         IsConnected = true;
+        _connectedAt = DateTimeOffset.UtcNow;
 
         // Push the banner asynchronously so the UI can subscribe to
         // DataReceived between Connect and the first byte. Real SSH
@@ -69,6 +102,7 @@ internal sealed class DemoSshSession : ISshSession
     public Task SendAsync(byte[] data, CancellationToken ct = default)
     {
         if (!IsConnected) return Task.CompletedTask;
+        Interlocked.Add(ref _bytesSent, data.Length);
 
         // PTY echo: just push the bytes back so the user sees what
         // they typed. Track the in-progress line so we can run
@@ -97,7 +131,11 @@ internal sealed class DemoSshSession : ISshSession
     }
 
     public Task ResizeAsync(int columns, int rows, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        _cols = columns;
+        _rows = rows;
+        return Task.CompletedTask;
+    }
 
     public Task DisconnectAsync()
     {
@@ -175,5 +213,9 @@ internal sealed class DemoSshSession : ISshSession
     }
 
     private void Emit(string s) => Emit(Encoding.UTF8.GetBytes(s));
-    private void Emit(byte[] data) => DataReceived?.Invoke(this, data);
+    private void Emit(byte[] data)
+    {
+        Interlocked.Add(ref _bytesReceived, data.Length);
+        DataReceived?.Invoke(this, data);
+    }
 }
