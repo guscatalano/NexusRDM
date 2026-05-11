@@ -61,8 +61,13 @@
                     <!-- Cross-launch SFTP for the same profile. Wired
                          via the OpenSftpRequested event so MainWindow
                          (the only host that knows about ISftpHandler)
-                         can spawn the SFTP tab. -->
+                         can spawn the SFTP tab. Disabled until the
+                         underlying SSH session is connected — opening
+                         SFTP before login would just kick off a fresh
+                         auth round, but users expect "files" to mean
+                         "for the host I'm already logged into." -->
                     <Button x:Name="OpenSftpBtn" Click="OpenSftp_Click"
+                            IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}"
                             Background="{StaticResource NxBg2}"
                             BorderBrush="{StaticResource NxBrd}"
                             BorderThickness="1"

@@ -721,14 +721,24 @@ public sealed partial class MainWindow : Window
         var (username, password, keyPassphrase) = await ResolveSshCredentialsAsync(profile);
         if (username is null) return;
 
+        // SFTP has no terminal to render server-side prompts into, so
+        // ResolveSshCredentialsAsync's "empty username means ask the
+        // terminal later" convention doesn't work for us. SSH.NET's
+        // auth-method constructors reject empty usernames with
+        // ArgumentException at session-build time. Pop a modal dialog
+        // up front when we don't have one on file.
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            username = await PromptForSftpUsernameAsync(profile);
+            if (string.IsNullOrWhiteSpace(username)) return;
+        }
+
         var broker = new NexusRDM.Services.TerminalAuthBroker();
         NexusRDM.Core.Interfaces.SshKeyboardPromptHandler onPrompt =
             (text, masked, ct) => broker.PromptAsync(text, masked, ct);
-        // Note: SFTP currently has no terminal to render broker prompts
-        // into. For Stored/key-auth profiles this is fine — they don't
-        // hit the prompt path. ServerPrompt mode + missing password
-        // will deadlock until cancelled; a future revision could surface
-        // a modal credential dialog for SFTP-specific prompts.
+        // ServerPrompt mode + missing password still has nowhere to
+        // render the prompt; the broker waits forever. A modal password
+        // dialog for SFTP-specific cases is a follow-up.
 
         var session = _sftp.CreateSessionForProfile(profile, username, password, keyPassphrase, onPrompt);
         var entry   = _sessions.AddSftp(profile, session);
@@ -760,6 +770,33 @@ public sealed partial class MainWindow : Window
         if (n < 1024 * 1024) return $"{n / 1024.0:F1} KB";
         if (n < 1024L * 1024 * 1024) return $"{n / (1024.0 * 1024):F1} MB";
         return $"{n / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    /// <summary>One-shot dialog asking for an SFTP username when the
+    /// profile doesn't carry one. Used because SFTP has no terminal
+    /// to render the standard <c>"login as: "</c> server prompt into.
+    /// Returns the typed username (trimmed) or null on cancel.</summary>
+    private async Task<string?> PromptForSftpUsernameAsync(ConnectionProfile profile)
+    {
+        var tb = new TextBox { PlaceholderText = "root" };
+        var stack = new StackPanel { Spacing = 8 };
+        stack.Children.Add(new TextBlock
+        {
+            Text         = $"No username on file for {profile.Host}. Enter a username to connect via SFTP.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        stack.Children.Add(tb);
+        var dialog = new ContentDialog
+        {
+            XamlRoot          = SessionTabs.XamlRoot,
+            Title             = "SFTP username",
+            Content           = stack,
+            PrimaryButtonText = "Connect",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+        };
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary ? tb.Text?.Trim() : null;
     }
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)

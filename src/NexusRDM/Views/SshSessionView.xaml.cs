@@ -336,8 +336,16 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
-    private void OpenSftp_Click(object sender, RoutedEventArgs e) =>
+    private void OpenSftp_Click(object sender, RoutedEventArgs e)
+    {
+        // Belt-and-suspenders: the button's IsEnabled is bound to
+        // ViewModel.IsConnected, but binding propagation latency could
+        // let a click through immediately after Connect failed. Check
+        // explicitly so we don't try to spawn an SFTP tab from a dead
+        // session.
+        if (!ViewModel.IsConnected) return;
         OpenSftpRequested?.Invoke(this, ViewModel.Profile);
+    }
     private void PopOut_Click(object sender, RoutedEventArgs e)     => PopOut();
 
     public void ToggleFullScreen()
