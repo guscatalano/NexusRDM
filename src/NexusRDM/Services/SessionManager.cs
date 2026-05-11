@@ -28,6 +28,13 @@ public sealed class SessionManager : IDisposable
         return entry;
     }
 
+    public OpenSession AddSftp(ConnectionProfile profile, ISftpSession session)
+    {
+        var entry = new OpenSession(profile, sftpSession: session);
+        Sessions.Add(entry);
+        return entry;
+    }
+
     public async Task CloseAsync(OpenSession session)
     {
         Sessions.Remove(session);
@@ -50,6 +57,7 @@ public sealed class OpenSession : IAsyncDisposable
     public ConnectionProtocol Protocol     { get; }
     public ISshSession?       SshSession   { get; }
     public IRdpSession?       RdpSession   { get; private set; }
+    public ISftpSession?      SftpSession  { get; }
 
     /// <summary>Swap the live RDP session reference after a
     /// reconnect-from-toolbar — the new IRdpSession replaces the disposed
@@ -58,18 +66,22 @@ public sealed class OpenSession : IAsyncDisposable
     public void ReplaceRdpSession(IRdpSession s) => RdpSession = s;
 
     internal OpenSession(ConnectionProfile profile,
-        ISshSession? sshSession = null, IRdpSession? rdpSession = null)
+        ISshSession?  sshSession  = null,
+        IRdpSession?  rdpSession  = null,
+        ISftpSession? sftpSession = null)
     {
         ConnectionId = profile.Id;
         DisplayName  = profile.DisplayName;
         Protocol     = profile.Protocol;
         SshSession   = sshSession;
         RdpSession   = rdpSession;
+        SftpSession  = sftpSession;
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (SshSession is not null) await SshSession.DisposeAsync();
+        if (SshSession  is not null) await SshSession.DisposeAsync();
+        if (SftpSession is not null) await SftpSession.DisposeAsync();
         RdpSession?.Dispose();
     }
 }

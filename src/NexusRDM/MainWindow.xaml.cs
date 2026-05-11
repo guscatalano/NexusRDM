@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private readonly SessionManager     _sessions;
     private readonly ISshHandler        _ssh;
     private readonly IRdpHandler        _rdp;
+    private readonly ISftpHandler       _sftp;
     private readonly ICredentialVault   _vault;
     private readonly IConnectionService _svc;
 
@@ -34,6 +35,7 @@ public sealed partial class MainWindow : Window
         _sessions = App.Services.GetRequiredService<SessionManager>();
         _ssh      = App.Services.GetRequiredService<ISshHandler>();
         _rdp      = App.Services.GetRequiredService<IRdpHandler>();
+        _sftp     = App.Services.GetRequiredService<ISftpHandler>();
         _vault    = App.Services.GetRequiredService<ICredentialVault>();
         _svc      = App.Services.GetRequiredService<IConnectionService>();
 
@@ -51,7 +53,17 @@ public sealed partial class MainWindow : Window
             if (System.IO.File.Exists(iconPath)) AppWindow.SetIcon(iconPath);
         }
         catch { /* non-fatal — falls back to default icon */ }
-        ConnectionsPane.ConnectRequested += OnConnectRequested;
+        ConnectionsPane.ConnectRequested  += OnConnectRequested;
+        ConnectionsPane.OpenSftpRequested += async (_, p) =>
+        {
+            // Reuse an existing SFTP tab if one is open for this
+            // profile; otherwise spawn a new one. Same tab-reuse
+            // shape as OnConnectRequested.
+            foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
+                if (item.Tag is OpenSession os && os.ConnectionId == p.Id && os.SftpSession is not null)
+                { SessionTabs.SelectedItem = item; return; }
+            await OpenSftpTabAsync(p);
+        };
         ConnectionsPane.CollapseRequested += (_, _) => SidebarToggle_Click(null!, null!);
         // RDP sessions own a top-level Win32 form pinned over their host
         // tab. WinUI 3 TabView doesn't unload the inactive tab's content
@@ -685,11 +697,69 @@ public sealed partial class MainWindow : Window
         var session = _ssh.CreateSessionForProfile(profile, username, password, keyPassphrase, onPrompt);
         var entry   = _sessions.AddSsh(profile, session);
         var vm      = new SshSessionViewModel(profile, session, _sessions, broker);
+        var view    = new SshSessionView(vm);
+        // Cross-launch: "Files" in the SSH toolbar spawns an SFTP tab
+        // for the same profile. The reverse direction
+        // (SftpView.OpenSshRequested) is wired in OpenSftpTabAsync.
+        view.OpenSftpRequested += async (_, p) => await OpenSftpTabAsync(p);
         // Use the same Segoe Fluent glyph the home-page legend shows
         // for SSH (CommandPrompt, U+E756) so tab + legend stay in sync.
-        AddSessionTab(profile, entry, "", new SshSessionView(vm),
+        AddSessionTab(profile, entry, "", view,
             (SolidColorBrush)Application.Current.Resources["NxSsh"]);
         WireSessionAuditEvents(profile, session);
+    }
+
+    /// <summary>Open an SFTP tab against <paramref name="profile"/>. Always
+    /// creates a new session (separate TCP connection from any SSH tab
+    /// for the same profile) — the design choice is "transfers can't
+    /// stall the terminal, and either can be closed independently."
+    /// Cross-launch from an SFTP tab to its terminal goes through
+    /// <see cref="OpenSshTabAsync"/>; from a terminal to SFTP it lands
+    /// here.</summary>
+    private async Task OpenSftpTabAsync(ConnectionProfile profile)
+    {
+        var (username, password, keyPassphrase) = await ResolveSshCredentialsAsync(profile);
+        if (username is null) return;
+
+        var broker = new NexusRDM.Services.TerminalAuthBroker();
+        NexusRDM.Core.Interfaces.SshKeyboardPromptHandler onPrompt =
+            (text, masked, ct) => broker.PromptAsync(text, masked, ct);
+        // Note: SFTP currently has no terminal to render broker prompts
+        // into. For Stored/key-auth profiles this is fine — they don't
+        // hit the prompt path. ServerPrompt mode + missing password
+        // will deadlock until cancelled; a future revision could surface
+        // a modal credential dialog for SFTP-specific prompts.
+
+        var session = _sftp.CreateSessionForProfile(profile, username, password, keyPassphrase, onPrompt);
+        var entry   = _sessions.AddSftp(profile, session);
+        var vm      = new SftpSessionViewModel(profile, session, _sessions);
+        var view    = new SftpView(vm);
+        // Cross-launch: clicking "Terminal" in the SFTP toolbar opens
+        // an SSH tab for the same profile (reuses tab-reuse logic via
+        // OnConnectRequested's id-match scan).
+        view.OpenSshRequested += async (_, p) => await OpenSshTabAsync(p);
+        // Wire transfer-completed events into the audit log so every
+        // upload/download is recorded with direction + bytes + duration.
+        session.TransferCompleted += (_, t) => RecordAudit(async () =>
+        {
+            var verb = t.Direction == NexusRDM.Core.Interfaces.SftpTransferDirection.Upload ? "upload" : "download";
+            var msg  = t.Success
+                ? $"SFTP {verb} {FormatBytes(t.Bytes)} in {t.Elapsed.TotalSeconds:F1}s: {t.LocalPath} ↔ {t.RemotePath}"
+                : $"SFTP {verb} FAILED: {t.LocalPath} ↔ {t.RemotePath} — {t.ErrorMessage}";
+            await _svc.RecordAuditAsync(profile.Id, NexusRDM.Core.Models.AuditAction.FileTransfer, msg);
+        });
+        // "FilesFolder" Segoe Fluent glyph (U+E838) for the tab icon —
+        // distinguishes SFTP from SSH (CommandPrompt) and RDP (Remote).
+        AddSessionTab(profile, entry, "", view,
+            (SolidColorBrush)Application.Current.Resources["NxAccent"]);
+    }
+
+    private static string FormatBytes(long n)
+    {
+        if (n < 1024)        return $"{n} B";
+        if (n < 1024 * 1024) return $"{n / 1024.0:F1} KB";
+        if (n < 1024L * 1024 * 1024) return $"{n / (1024.0 * 1024):F1} MB";
+        return $"{n / (1024.0 * 1024 * 1024):F2} GB";
     }
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)

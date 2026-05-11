@@ -24,6 +24,13 @@ public interface IConnectionService
     Task RecordDisconnectedAsync(Guid connectionId, string? reason = null, CancellationToken ct = default);
     Task RecordFailedAsync(Guid connectionId, string reason, CancellationToken ct = default);
 
+    /// <summary>Record a free-form audit row tagged with an explicit
+    /// <see cref="AuditAction"/>. Used for events that don't fit the
+    /// connect/disconnect/fail trio — currently SFTP file transfers.
+    /// The detail string is opaque; callers shape it for human display
+    /// in the audit log view.</summary>
+    Task RecordAuditAsync(Guid connectionId, AuditAction action, string detail, CancellationToken ct = default);
+
     Task<IReadOnlyList<ConnectionProfile>> SearchAsync(string query, CancellationToken ct = default);
 
     /// <summary>Return the N most recent audit entries across all connections.</summary>

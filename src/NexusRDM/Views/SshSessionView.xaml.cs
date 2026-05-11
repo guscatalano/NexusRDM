@@ -18,6 +18,12 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     private bool _connectStarted;
     private readonly bool _isPoppedClone;
 
+    /// <summary>Raised when the toolbar's "Files" button is clicked.
+    /// MainWindow handles this by spawning an SFTP tab via
+    /// <c>OpenSftpTabAsync</c> — paralleling the existing SFTP→SSH
+    /// cross-launch event on <see cref="SftpView"/>.</summary>
+    public event EventHandler<NexusRDM.Core.Models.ConnectionProfile>? OpenSftpRequested;
+
     // Strong refs to event handlers so the popped clone can unsubscribe
     // when its window closes (otherwise the closures keep the view
     // alive forever, holding refs to the now-orphaned Terminal).
@@ -329,6 +335,9 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     private Microsoft.UI.Xaml.Window? _hostingWindowForClone;
 
     private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    private void OpenSftp_Click(object sender, RoutedEventArgs e) =>
+        OpenSftpRequested?.Invoke(this, ViewModel.Profile);
     private void PopOut_Click(object sender, RoutedEventArgs e)     => PopOut();
 
     public void ToggleFullScreen()

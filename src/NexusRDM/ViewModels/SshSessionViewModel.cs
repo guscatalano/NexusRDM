@@ -29,9 +29,13 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
     /// whether to route to the broker or the session.</summary>
     public NexusRDM.Services.TerminalAuthBroker? AuthBroker { get; }
 
-    public Guid   ConnectionId { get; }
-    public string DisplayName  { get; }
-    public string Host         { get; }
+    public Guid              ConnectionId { get; }
+    public string            DisplayName  { get; }
+    public string            Host         { get; }
+    /// <summary>The connection profile this session is bound to.
+    /// Used by cross-launch buttons (e.g. "Files" → SFTP) so the host
+    /// MainWindow can spawn a sibling tab against the same profile.</summary>
+    public ConnectionProfile Profile      { get; }
 
     [ObservableProperty] private bool   _isConnected;
     [ObservableProperty] private bool   _isConnecting = true;
@@ -78,6 +82,7 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
         ConnectionId = profile.Id;
         DisplayName  = profile.DisplayName;
         Host         = $"{profile.Host}:{profile.Port}";
+        Profile      = profile;
         _session     = session;
         _mgr         = mgr;
 

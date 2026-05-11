@@ -12,6 +12,9 @@ public sealed partial class ConnectionsPane : UserControl
 {
     public ConnectionsViewModel ViewModel { get; }
     public event EventHandler<ConnectionProfile>? ConnectRequested;
+    /// <summary>Right-click → "Open SFTP" on an SSH-protocol profile.
+    /// Wired in MainWindow → OpenSftpTabAsync.</summary>
+    public event EventHandler<ConnectionProfile>? OpenSftpRequested;
     public event EventHandler? CollapseRequested;
 
     public ConnectionsPane()
@@ -248,6 +251,19 @@ public sealed partial class ConnectionsPane : UserControl
             var connect = new MenuFlyoutItem { Text = "Connect", Icon = new FontIcon { Glyph = "\uE8AF" } };
             connect.Click += (_, _) => ConnectRequested?.Invoke(this, node.Profile);
             menu.Items.Add(connect);
+
+            // "Open SFTP" only makes sense for SSH-protocol profiles —
+            // the SFTP subsystem rides over the SSH transport.
+            if (node.Profile.Protocol == NexusRDM.Core.Models.ConnectionProtocol.Ssh)
+            {
+                var sftp = new MenuFlyoutItem
+                {
+                    Text = "Open SFTP",
+                    Icon = new FontIcon { Glyph = "" }, // FilesFolder
+                };
+                sftp.Click += (_, _) => OpenSftpRequested?.Invoke(this, node.Profile);
+                menu.Items.Add(sftp);
+            }
             menu.Items.Add(new MenuFlyoutSeparator());
 
             var edit = new MenuFlyoutItem { Text = "Edit…", Icon = new SymbolIcon(Symbol.Edit) };

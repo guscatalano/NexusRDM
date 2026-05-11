@@ -162,6 +162,10 @@ Mostly fringe protocols.
 
 - **Connection-state opacity.** SshSession exposes `IsConnected` and `Disconnected`, but not "in alt-buffer fullscreen mode" / "in bracketed paste" / "current cursor visible". Sometimes we read VtNetCore state directly via reflection (`ActiveBuffer`). A cleaner abstraction would surface terminal state on a public type the View can data-bind.
 
+## Related
+
+- **SFTP file transfer**: see `docs/sftp.md` for the two-pane SFTP tab. Uses the same `ConnectionProfile` + credential resolution path as this terminal, but opens a separate `SftpClient` on its own TCP connection so big transfers can't stall the interactive session. Cross-launches in both directions: SSH tab → "Files" button → SFTP tab; SFTP tab → "Terminal" button → SSH tab.
+
 ## References
 
 - RFC 4254 — SSH Connection Protocol (§6 Interactive Sessions): <https://www.rfc-editor.org/rfc/rfc4254>

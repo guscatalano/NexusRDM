@@ -241,6 +241,10 @@ public partial class App : Application
         services.AddSingleton<ISshHandler>(sp => new Services.DemoSshHandler(
             sp.GetRequiredService<SshHandler>(),
             sp.GetRequiredService<Services.DemoModeService>()));
+        // SFTP handler. Lives in Core, takes no extra factory — the
+        // SshHandler's PuTTYNG embedding doesn't apply to SFTP (always
+        // uses the SSH.NET-backed SftpClient).
+        services.AddSingleton<ISftpHandler>(_ => new NexusRDM.Core.Protocols.SftpHandler());
         // RDP backend is a dispatcher that picks Mstsc / MstscAx / FreeRdp at
         // session-open time based on the user's setting. The MstscAx factory
         // lives in this project (Forms host); Core stays UI-agnostic. We then

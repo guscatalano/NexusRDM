@@ -129,6 +129,18 @@ public sealed class ConnectionService : IConnectionService
         }, ct);
     }
 
+    public async Task RecordAuditAsync(Guid id, AuditAction action, string detail, CancellationToken ct = default)
+    {
+        var p = await _repo.GetByIdAsync(id, ct);
+        await LogAuditAsync(new AuditEntry
+        {
+            ConnectionId = id,
+            DisplayName  = p?.DisplayName ?? string.Empty,
+            Action       = action,
+            Detail       = detail,
+        }, ct);
+    }
+
     /// <summary>Builds a human-readable summary of the fields that
     /// changed between two <see cref="ConnectionProfile"/> snapshots.
     /// Returns null when nothing changed (the audit Detail stays empty

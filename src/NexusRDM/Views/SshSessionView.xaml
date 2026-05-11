@@ -58,6 +58,20 @@
                 </StackPanel>
                 <!-- Window-mode buttons + Disconnect. -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                    <!-- Cross-launch SFTP for the same profile. Wired
+                         via the OpenSftpRequested event so MainWindow
+                         (the only host that knows about ISftpHandler)
+                         can spawn the SFTP tab. -->
+                    <Button x:Name="OpenSftpBtn" Click="OpenSftp_Click"
+                            Background="{StaticResource NxBg2}"
+                            BorderBrush="{StaticResource NxBrd}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,2"
+                            FontSize="11"
+                            Foreground="{StaticResource NxTx2}"
+                            ToolTipService.ToolTip="Open an SFTP file manager tab for this host"
+                            Content="Files" />
                     <!-- Host stats toggle. Hidden when the backend is
                          PuTTY (no programmable channel) and disabled
                          until the session is actually connected — would

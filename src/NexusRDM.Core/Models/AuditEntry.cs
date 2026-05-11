@@ -10,6 +10,7 @@ public enum AuditAction
     Synced,        // sync run completed (Proxmox / Hyper-V / Discovery)
     PowerAction,   // user triggered Start / Stop / Reboot / etc.
     Detached,      // user detached a row from its sync source
+    FileTransfer,  // SFTP upload or download completed (Detail carries direction + paths + bytes)
 }
 
 public class AuditEntry

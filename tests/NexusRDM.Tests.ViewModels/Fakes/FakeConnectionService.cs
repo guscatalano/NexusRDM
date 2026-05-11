@@ -60,6 +60,7 @@ public sealed class FakeConnectionService : IConnectionService
     public Task RecordConnectedAsync(Guid connectionId, CancellationToken ct = default) => Task.CompletedTask;
     public Task RecordDisconnectedAsync(Guid connectionId, string? reason = null, CancellationToken ct = default) => Task.CompletedTask;
     public Task RecordFailedAsync(Guid connectionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
+    public Task RecordAuditAsync(Guid connectionId, AuditAction action, string detail, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<ConnectionProfile>> SearchAsync(string query, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ConnectionProfile>>(
