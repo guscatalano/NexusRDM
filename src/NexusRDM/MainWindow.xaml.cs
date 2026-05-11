@@ -698,10 +698,16 @@ public sealed partial class MainWindow : Window
         var entry   = _sessions.AddSsh(profile, session);
         var vm      = new SshSessionViewModel(profile, session, _sessions, broker);
         var view    = new SshSessionView(vm);
-        // Cross-launch: "Files" in the SSH toolbar spawns an SFTP tab
-        // for the same profile. The reverse direction
-        // (SftpView.OpenSshRequested) is wired in OpenSftpTabAsync.
-        view.OpenSftpRequested += async (_, p) => await OpenSftpTabAsync(p);
+        // Cross-launch: "Files" in the SSH toolbar surfaces the SFTP
+        // tab for the same profile. Reuse an existing tab if one's
+        // already open (the user explicitly asked for "show me files
+        // for THIS host" — re-spawning would be jarring); only open a
+        // new one if none exists.
+        view.OpenSftpRequested += async (_, p) =>
+        {
+            if (TryActivateExistingTab(p.Id, requireSftp: true)) return;
+            await OpenSftpTabAsync(p);
+        };
         // Use the same Segoe Fluent glyph the home-page legend shows
         // for SSH (CommandPrompt, U+E756) so tab + legend stay in sync.
         AddSessionTab(profile, entry, "", view,
@@ -729,12 +735,28 @@ public sealed partial class MainWindow : Window
             $"OpenSftpTabAsync after resolve: user=[{username}] " +
             $"hasPassword={password is not null} hasKeyPass={keyPassphrase is not null}");
 
+        // Reuse credentials from an existing SSH session for the same
+        // profile if one is open and connected. This is the common
+        // "I just typed the username at the terminal prompt and now I
+        // want files" path — without reuse we'd re-prompt despite the
+        // user already telling us the username seconds ago.
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            var existingSsh = _sessions.Sessions
+                .FirstOrDefault(s => s.ConnectionId == profile.Id && s.SshSession is { IsConnected: true })
+                ?.SshSession;
+            if (existingSsh is not null && !string.IsNullOrWhiteSpace(existingSsh.ConnectedUsername))
+            {
+                username = existingSsh.ConnectedUsername;
+                NexusRDM.Core.Diagnostics.SshLog.Info(
+                    $"OpenSftpTabAsync: reusing username from open SSH session: [{username}]");
+            }
+        }
+
         // SFTP has no terminal to render server-side prompts into, so
         // ResolveSshCredentialsAsync's "empty username means ask the
-        // terminal later" convention doesn't work for us. SSH.NET's
-        // auth-method constructors reject empty usernames with
-        // ArgumentException at session-build time. Pop a modal dialog
-        // up front when we don't have one on file.
+        // terminal later" convention doesn't work for us. Only pop the
+        // dialog as a last resort, after the SSH-session reuse above.
         if (string.IsNullOrWhiteSpace(username))
         {
             NexusRDM.Core.Diagnostics.SshLog.Info("OpenSftpTabAsync: prompting for username via dialog");
@@ -757,7 +779,15 @@ public sealed partial class MainWindow : Window
         // Cross-launch: clicking "Terminal" in the SFTP toolbar opens
         // an SSH tab for the same profile (reuses tab-reuse logic via
         // OnConnectRequested's id-match scan).
-        view.OpenSshRequested += async (_, p) => await OpenSshTabAsync(p);
+        // Cross-launch: "Terminal" in the SFTP toolbar surfaces the
+        // SSH tab for the same profile. Reuse an existing terminal if
+        // one's already open, so you don't end up with two terminals
+        // for one host every time you bounce between tabs.
+        view.OpenSshRequested += async (_, p) =>
+        {
+            if (TryActivateExistingTab(p.Id, requireSsh: true)) return;
+            await OpenSshTabAsync(p);
+        };
         // Wire transfer-completed events into the audit log so every
         // upload/download is recorded with direction + bytes + duration.
         session.TransferCompleted += (_, t) => RecordAudit(async () =>
@@ -780,6 +810,25 @@ public sealed partial class MainWindow : Window
         if (n < 1024 * 1024) return $"{n / 1024.0:F1} KB";
         if (n < 1024L * 1024 * 1024) return $"{n / (1024.0 * 1024):F1} MB";
         return $"{n / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    /// <summary>Find an open tab whose ConnectionId matches and which
+    /// also has the requested session kind (SSH or SFTP). Select it
+    /// and return true; return false if no match. Used by cross-launch
+    /// buttons so clicking "Files" / "Terminal" on a profile that
+    /// already has the other tab pulls the existing one up instead of
+    /// spawning a duplicate.</summary>
+    private bool TryActivateExistingTab(Guid connectionId, bool requireSsh = false, bool requireSftp = false)
+    {
+        foreach (var item in SessionTabs.TabItems.OfType<TabViewItem>())
+        {
+            if (item.Tag is not OpenSession os || os.ConnectionId != connectionId) continue;
+            if (requireSsh  && os.SshSession  is null) continue;
+            if (requireSftp && os.SftpSession is null) continue;
+            SessionTabs.SelectedItem = item;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>One-shot dialog asking for an SFTP username when the

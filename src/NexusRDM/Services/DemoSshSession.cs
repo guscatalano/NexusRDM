@@ -52,6 +52,7 @@ internal sealed class DemoSshSession : ISshSession
     public string          CipherInfo    => "aes256-gcm@openssh.com + (none)";
     public int             PtyCols       => _cols;
     public int             PtyRows       => _rows;
+    public string          ConnectedUsername => _username;
 
     public Task<string> ExecAsync(string command, CancellationToken ct = default)
     {

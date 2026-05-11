@@ -38,11 +38,12 @@ public sealed class SshSession : ISshSession
     public event EventHandler<byte[]>? DataReceived;
     public event EventHandler?         Disconnected;
 
-    public DateTimeOffset? ConnectedAt   => _connectedAt;
-    public long            BytesReceived => Interlocked.Read(ref _bytesReceived);
-    public long            BytesSent     => Interlocked.Read(ref _bytesSent);
-    public int             PtyCols       => (int)_cols;
-    public int             PtyRows       => (int)_rows;
+    public DateTimeOffset? ConnectedAt       => _connectedAt;
+    public long            BytesReceived     => Interlocked.Read(ref _bytesReceived);
+    public long            BytesSent         => Interlocked.Read(ref _bytesSent);
+    public int             PtyCols           => (int)_cols;
+    public int             PtyRows           => (int)_rows;
+    public string          ConnectedUsername => _username ?? string.Empty;
 
     public string ServerVersion =>
         _client?.ConnectionInfo?.ServerVersion ?? string.Empty;

@@ -46,6 +46,14 @@ public interface ISshSession : IAsyncDisposable
     /// <summary>Current PTY height in rows.</summary>
     int PtyRows { get; }
 
+    /// <summary>The username actually used for the live auth session.
+    /// Important when <see cref="ConnectionProfile.Username"/> is empty
+    /// and the user typed one into the terminal broker's <c>"login as: "</c>
+    /// prompt — we want SFTP / future tunnels to reuse what SSH resolved
+    /// instead of re-prompting. Empty until <see cref="ConnectAsync"/>
+    /// returns successfully.</summary>
+    string ConnectedUsername { get; }
+
     /// <summary>Run a one-shot command on a separate exec channel
     /// (does NOT touch the user's interactive shell). Used by the
     /// optional host-stats panel to poll <c>/proc/loadavg</c>,

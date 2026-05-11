@@ -58,6 +58,7 @@ public sealed class FakeSshSession : ISshSession
     public string          CipherInfo    { get; set; } = string.Empty;
     public int             PtyCols       { get; set; }
     public int             PtyRows       { get; set; }
+    public string          ConnectedUsername { get; set; } = string.Empty;
     public Task<string> ExecAsync(string command, CancellationToken ct = default) =>
         Task.FromResult(string.Empty);
 

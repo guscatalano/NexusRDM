@@ -66,6 +66,7 @@ public sealed class PuttySshSession : ISshSession
     public string          CipherInfo    => "(PuTTY backend)";
     public int             PtyCols       => 0;
     public int             PtyRows       => 0;
+    public string          ConnectedUsername => _username ?? string.Empty;
 
     public Task<string> ExecAsync(string command, CancellationToken ct = default) =>
         throw new NotSupportedException(
