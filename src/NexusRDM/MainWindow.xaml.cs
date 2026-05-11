@@ -765,12 +765,24 @@ public sealed partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(username)) return;
         }
 
-        var broker = new NexusRDM.Services.TerminalAuthBroker();
-        NexusRDM.Core.Interfaces.SshKeyboardPromptHandler onPrompt =
-            (text, masked, ct) => broker.PromptAsync(text, masked, ct);
-        // ServerPrompt mode + missing password still has nowhere to
-        // render the prompt; the broker waits forever. A modal password
-        // dialog for SFTP-specific cases is a follow-up.
+        // SFTP prompts go through a modal dialog, not a TerminalAuthBroker.
+        // The broker writes prompt text into a terminal stream — SFTP
+        // doesn't have one, so a broker-backed onPrompt just hangs
+        // forever on the first missing secret. The dialog version
+        // hops to the UI thread (SftpHandler's factory runs on the
+        // threadpool), shows a ContentDialog, returns the typed value
+        // through a TaskCompletionSource.
+        NexusRDM.Core.Interfaces.SshKeyboardPromptHandler onPrompt = (text, masked, _) =>
+        {
+            var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool queued = DispatcherQueue.TryEnqueue(async () =>
+            {
+                try { tcs.SetResult(await PromptForSftpSecretAsync(profile, text, masked)); }
+                catch (Exception ex) { tcs.SetException(ex); }
+            });
+            if (!queued) tcs.SetResult(null);
+            return tcs.Task;
+        };
 
         var session = _sftp.CreateSessionForProfile(profile, username, password, keyPassphrase, onPrompt);
         var entry   = _sessions.AddSftp(profile, session);
@@ -856,6 +868,54 @@ public sealed partial class MainWindow : Window
         };
         var result = await dialog.ShowAsync();
         return result == ContentDialogResult.Primary ? tb.Text?.Trim() : null;
+    }
+
+    /// <summary>Modal dialog used as SFTP's keyboard-interactive prompt
+    /// handler. Pass <paramref name="masked"/> = true for password-style
+    /// inputs (the dialog renders a PasswordBox); false for echoed text
+    /// (TextBox). Returns the typed value verbatim — no trim — because
+    /// passwords with deliberate trailing spaces shouldn't be silently
+    /// mangled. Cancel returns null which SftpHandler treats as "skip
+    /// this auth method," matching how the SSH broker handles Ctrl+C.</summary>
+    private async Task<string?> PromptForSftpSecretAsync(ConnectionProfile profile, string promptText, bool masked)
+    {
+        FrameworkElement field = masked
+            ? new PasswordBox { PlaceholderText = "Password" }
+            : new TextBox     { PlaceholderText = "" };
+
+        var stack = new StackPanel { Spacing = 8 };
+        stack.Children.Add(new TextBlock
+        {
+            Text         = $"{profile.DisplayName} ({profile.Host}) is asking for credentials:",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize     = 12,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text         = promptText,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize     = 12,
+            Opacity      = 0.75,
+        });
+        stack.Children.Add(field);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot          = SessionTabs.XamlRoot,
+            Title             = "SFTP authentication",
+            Content           = stack,
+            PrimaryButtonText = "OK",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+        };
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return null;
+        return field switch
+        {
+            PasswordBox pb => pb.Password,
+            TextBox     tb => tb.Text,
+            _              => null,
+        };
     }
 
     private async Task OpenRdpTabAsync(ConnectionProfile profile)
