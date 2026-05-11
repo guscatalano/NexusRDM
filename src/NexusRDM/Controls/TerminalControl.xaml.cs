@@ -100,6 +100,7 @@ public sealed partial class TerminalControl : UserControl
     // selection, pointer hit-testing). They MUST stay in sync with the
     // format — call MeasureCellMetrics whenever the format changes.
     private CanvasTextFormat? _textFormat;
+    private CanvasTextFormat? _textFormatBold;
     private float _charWidth  = 8f;
     private float _charHeight = 18f;
     // Reused per row to compose color-run strings without allocating
@@ -160,8 +161,25 @@ public sealed partial class TerminalControl : UserControl
         RightTapped         += OnRightTapped;
         Loaded              += (_, _) => Focus(FocusState.Programmatic);
 
+        // Focus reporting (xterm ESC[?1004h). Programs like vim opt
+        // in and expect ESC[I when the terminal gains focus, ESC[O
+        // when it loses it (used to auto-save, refresh git status,
+        // etc.). VtNetCore parses the enable/disable and surfaces
+        // it as SendFocusInAndFocusOutEvents — gate emission on that.
+        GotFocus  += (_, _) => SendFocusEvent(true);
+        LostFocus += (_, _) => SendFocusEvent(false);
+
         // VtNetCore can ask us to send data (e.g. device attribute responses)
         _vtc.SendData += (_, e) => UserInput?.Invoke(this, e.Data);
+    }
+
+    private static readonly byte[] FocusInBytes  = { 0x1B, 0x5B, 0x49 }; // ESC[I
+    private static readonly byte[] FocusOutBytes = { 0x1B, 0x5B, 0x4F }; // ESC[O
+
+    private void SendFocusEvent(bool gained)
+    {
+        if (!_vtc.SendFocusInAndFocusOutEvents) return;
+        UserInput?.Invoke(this, gained ? FocusInBytes : FocusOutBytes);
     }
 
     // ── Feed VT data ──────────────────────────────────────────────────────────
@@ -234,6 +252,22 @@ public sealed partial class TerminalControl : UserControl
     /// had sent the standard DECSET 1049.</summary>
     private void PushWithPseudoAltDetection(byte[] data)
     {
+        // OSC 52 clipboard-set sequences must be intercepted BEFORE the
+        // bytes reach VtNetCore, because VtNetCore 1.0.9 has no handler
+        // for them and would just drop the parser into an "unknown OSC"
+        // state. The scanner returns spans of bytes that should pass
+        // through plus side-effects (clipboard sets) to perform.
+        data = HandleOsc52(data);
+
+        // ESC[3J = "erase saved lines" (xterm extension, terminfo E3).
+        // Linux `clear` and Windows Terminal's "clear buffer" emit this
+        // after the visible-area erase. VtNetCore 1.0.9 doesn't handle
+        // it, and our scrollback list lives outside VtNetCore anyway —
+        // so detect it ourselves and drop _scrollback. The sequence is
+        // still passed through (harmless if VtNetCore can't parse it;
+        // future versions may).
+        HandleEraseScrollback(data);
+
         int len = data.Length;
         int i = 0;
         while (i < len)
@@ -301,6 +335,144 @@ public sealed partial class TerminalControl : UserControl
 
     private static readonly byte[] DecSet1049Enter = { 0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68 };
     private static readonly byte[] DecSet1049Exit  = { 0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C };
+
+    /// <summary>Scan for <c>ESC[3J</c> (CSI 3 J = "erase saved lines"
+    /// / "erase scrollback", xterm extension). If found, drop our
+    /// scrollback buffer so <c>clear</c> actually deletes history
+    /// instead of just clearing the visible area.</summary>
+    private void HandleEraseScrollback(byte[] data)
+    {
+        int end = data.Length - 3;
+        for (int i = 0; i <= end; i++)
+        {
+            if (data[i] == 0x1B && data[i + 1] == 0x5B
+             && data[i + 2] == 0x33 && data[i + 3] == 0x4A)
+            {
+                _scrollback.Clear();
+                _lastSnapshot = null;
+                _scrollOffset = 0;
+                SshLog.Info("ESC[3J detected — scrollback cleared");
+                return;
+            }
+        }
+    }
+
+    /// <summary>Scan <paramref name="data"/> for OSC 52 clipboard-set
+    /// sequences (<c>ESC ] 52 ; &lt;params&gt; ; &lt;base64&gt; ST</c>
+    /// where ST is BEL <c>0x07</c> or <c>ESC \</c>). For each one
+    /// found, base64-decode the payload and push it to the Windows
+    /// clipboard. Return a new byte array with the OSC 52 sequences
+    /// removed so VtNetCore's parser doesn't see them — VtNetCore 1.0.9
+    /// has no handler and would treat the bytes as text.
+    ///
+    /// Query form (<c>ESC]52;c;?ST</c>) is dropped silently; we don't
+    /// publish clipboard contents back over the channel for security
+    /// (would let a malicious server exfiltrate whatever's on the host
+    /// clipboard the moment the user opens an SSH session).</summary>
+    private byte[] HandleOsc52(byte[] data)
+    {
+        // Fast path: no ESC byte means no OSC anything.
+        int firstEsc = Array.IndexOf(data, (byte)0x1B);
+        if (firstEsc < 0) return data;
+
+        List<(int start, int endExclusive, string? payload)>? hits = null;
+        int i = firstEsc;
+        while (i + 4 < data.Length)
+        {
+            // OSC prefix: ESC ] 5 2 ;  → bytes 0x1B 0x5D 0x35 0x32 0x3B
+            if (data[i] == 0x1B && data[i + 1] == 0x5D
+             && data[i + 2] == 0x35 && data[i + 3] == 0x32 && data[i + 4] == 0x3B)
+            {
+                int paramStart = i + 5;
+                // Find the terminator: BEL (0x07) or ESC \ (0x1B 0x5C).
+                int term = paramStart;
+                int termLen = 0;
+                while (term < data.Length)
+                {
+                    if (data[term] == 0x07) { termLen = 1; break; }
+                    if (data[term] == 0x1B && term + 1 < data.Length && data[term + 1] == 0x5C)
+                    { termLen = 2; break; }
+                    term++;
+                }
+                if (termLen == 0) break; // truncated; let it pass through
+
+                // Body between paramStart and term has the form
+                // "<targets>;<base64-or-?>".
+                int semi = Array.IndexOf(data, (byte)';', paramStart, term - paramStart);
+                string? payload = null;
+                if (semi >= 0 && semi + 1 < term)
+                {
+                    int pStart = semi + 1;
+                    int pLen = term - pStart;
+                    if (pLen > 0 && data[pStart] != (byte)'?')
+                    {
+                        try
+                        {
+                            var b64 = System.Text.Encoding.ASCII.GetString(data, pStart, pLen);
+                            var raw = Convert.FromBase64String(b64);
+                            payload = System.Text.Encoding.UTF8.GetString(raw);
+                        }
+                        catch
+                        {
+                            // Malformed base64 — ignore, don't crash the
+                            // session. The hit is still stripped so the
+                            // garbage doesn't reach the parser.
+                        }
+                    }
+                }
+
+                int endExclusive = term + termLen;
+                (hits ??= new()).Add((i, endExclusive, payload));
+                i = endExclusive;
+                continue;
+            }
+            i++;
+        }
+
+        if (hits is null) return data;
+
+        // Apply clipboard sets. Coalesce to a single Clipboard.SetContent
+        // even if multiple OSC 52 sequences appeared in one chunk —
+        // the last one wins, matching xterm behaviour.
+        string? lastPayload = null;
+        foreach (var hit in hits)
+            if (hit.payload is not null) lastPayload = hit.payload;
+        if (lastPayload is not null)
+        {
+            try
+            {
+                var dp = new DataPackage();
+                dp.SetText(lastPayload);
+                Clipboard.SetContent(dp);
+                SshLog.Info($"OSC 52 clipboard set: {lastPayload.Length} chars");
+            }
+            catch (Exception ex)
+            {
+                SshLog.Warn($"OSC 52 clipboard set failed: {ex.Message}");
+            }
+        }
+
+        // Build a new byte array with the OSC 52 spans removed.
+        int totalRemoved = 0;
+        foreach (var hit in hits) totalRemoved += hit.endExclusive - hit.start;
+        var output = new byte[data.Length - totalRemoved];
+        int srcIdx = 0, dstIdx = 0;
+        foreach (var hit in hits)
+        {
+            int keepLen = hit.start - srcIdx;
+            if (keepLen > 0)
+            {
+                Buffer.BlockCopy(data, srcIdx, output, dstIdx, keepLen);
+                dstIdx += keepLen;
+            }
+            srcIdx = hit.endExclusive;
+        }
+        if (srcIdx < data.Length)
+        {
+            Buffer.BlockCopy(data, srcIdx, output, dstIdx, data.Length - srcIdx);
+        }
+        return output;
+    }
 
     /// <summary>Find the next <c>ESC[?25l</c> (hide) or <c>ESC[?25h</c>
     /// (show) sequence in <paramref name="data"/> starting at
@@ -387,6 +559,7 @@ public sealed partial class TerminalControl : UserControl
     // ── Render ────────────────────────────────────────────────────────────────
 
     private static readonly Color DefaultFg     = Color.FromArgb(0xFF, 0xE8, 0xE8, 0xF0);
+    private static readonly Color TerminalBg    = Color.FromArgb(0xFF, 0x0C, 0x0C, 0x0C);
     private static readonly Color SelectionFill = Color.FromArgb(0x80, 0x4D, 0xA6, 0xFF);
 
     /// <summary>Thin shim: sync the XAML scrollbar thumb (sibling
@@ -462,18 +635,33 @@ public sealed partial class TerminalControl : UserControl
             DrawLiveRow(ds, line, row);
         }
 
-        // Cursor block. Suppressed during a selection drag (would
-        // strobe under the highlight) and while scrolled back (the
-        // cursor's true position is at the live bottom; drawing it on
-        // a historical view would be misleading).
-        if (!_isSelecting && _scrollOffset == 0)
+        // Cursor. Suppressed during a selection drag (would strobe
+        // under the highlight), while scrolled back (the cursor's true
+        // position is at the live bottom; drawing it on a historical
+        // view would be misleading), and when DECTCEM has hidden it
+        // (programs like top/vim toggle this).
+        if (!_isSelecting && _scrollOffset == 0 && _vtc.CursorState.ShowCursor)
         {
             var cur = vp.CursorPosition;
-            ds.FillRectangle(
-                cur.Column * _charWidth,
-                cur.Row    * _charHeight,
-                _charWidth, _charHeight,
-                CursorFill);
+            float cx = cur.Column * _charWidth;
+            float cy = cur.Row    * _charHeight;
+            // DECSCUSR: cursor shape from VtNetCore (block / underline /
+            // bar). VtNetCore parses the `ESC[<n> q` sequence into
+            // CursorShape; we just respect it on each render. No blink
+            // — most users find it distracting and we don't run a per-
+            // frame timer.
+            switch (_vtc.CursorState.CursorShape)
+            {
+                case ECursorShape.Underline:
+                    ds.FillRectangle(cx, cy + _charHeight - 2f, _charWidth, 2f, CursorFill);
+                    break;
+                case ECursorShape.Bar:
+                    ds.FillRectangle(cx, cy, 2f, _charHeight, CursorFill);
+                    break;
+                default: // Block
+                    ds.FillRectangle(cx, cy, _charWidth, _charHeight, CursorFill);
+                    break;
+            }
         }
     }
 
@@ -491,6 +679,8 @@ public sealed partial class TerminalControl : UserControl
         int spanStartCol = -1;
         Color spanFg = DefaultFg;
         uint  spanBgArgb = 0;
+        bool  spanBold = false;
+        bool  spanUnderline = false;
         _rowBuf.Clear();
 
         int colCount = Math.Min(line.Count, _cols);
@@ -503,43 +693,90 @@ public sealed partial class TerminalControl : UserControl
             // Real spaces still get rendered when their bg differs.
             char c = cell.Char == '\0' ? ' ' : cell.Char;
 
-            uint  bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
+            // SGR attributes. VtNetCore exposes Bright (bold), Underscore,
+            // Reverse, Blink, Hidden — no Italic in 1.0.9. Reverse swaps
+            // fg / bg cell-locally; do that before coalescing so spans
+            // group by the actually-rendered colours.
+            bool bold      = cell.Attributes.Bright;
+            bool underline = cell.Attributes.Underscore;
+
+            // Resolve foreground: prefer the RGB triple (set by SGR 38;5;N
+            // or 38;2;R;G;B), fall back to the named-ANSI enum + bright
+            // flag (set by SGR 30-37). VtNetCore 1.0.9 doesn't auto-
+            // populate ForegroundRgb when only the enum was set, so
+            // reading RGB alone misses every ANSI-named cell — that was
+            // the htop "no colors" bug.
             uint  fgArgb = cell.Attributes.ForegroundRgb?.ARGB ?? 0u;
-            Color fg     = (fgArgb >> 24) == 0 ? DefaultFg : ArgbToColor(fgArgb);
+            Color fg = (fgArgb >> 24) != 0
+                ? ArgbToColor(fgArgb)
+                : AnsiColorFg(cell.Attributes.ForegroundColor, bold);
+
+            uint  bgArgb = cell.Attributes.BackgroundRgb?.ARGB ?? 0u;
+            // For bg, use the RGB if set, else the named enum if the
+            // cell explicitly painted a bg (i.e. enum is not the default
+            // Black AND no rgb). VtNetCore reports Black as the default
+            // bg even when nothing has been painted, so we can't blindly
+            // honour it — that would paint every empty cell solid black
+            // over our terminal background. Heuristic: only emit a bg
+            // fill when SOME attribute on the cell looks "really set"
+            // (rgb provided, or reverse, or non-black bg enum).
+            if (cell.Attributes.Reverse)
+            {
+                // Swap fg and bg. Reversed text on a default-bg cell
+                // should still be visible — use the terminal background
+                // as the swap source.
+                Color origBg = (bgArgb >> 24) != 0
+                    ? ArgbToColor(bgArgb)
+                    : AnsiColorBg(cell.Attributes.BackgroundColor, defaultIsTransparent: true) ?? TerminalBg;
+                Color reversedBg = fg;
+                fg = origBg;
+                bgArgb = ColorToArgb(reversedBg);
+            }
+            else if ((bgArgb >> 24) == 0)
+            {
+                // No RGB bg set. Map the enum if it represents a real
+                // user-set colour; null means "leave transparent".
+                var enumBg = AnsiColorBg(cell.Attributes.BackgroundColor, defaultIsTransparent: true);
+                if (enumBg is Color enumBgVal) bgArgb = ColorToArgb(enumBgVal);
+            }
 
             if (spanStartCol < 0)
             {
-                spanStartCol = col;
-                spanFg = fg;
-                spanBgArgb = bgArgb;
+                spanStartCol  = col;
+                spanFg        = fg;
+                spanBgArgb    = bgArgb;
+                spanBold      = bold;
+                spanUnderline = underline;
                 _rowBuf.Append(c);
             }
-            else if (fg == spanFg && bgArgb == spanBgArgb)
+            else if (fg == spanFg && bgArgb == spanBgArgb && bold == spanBold && underline == spanUnderline)
             {
                 _rowBuf.Append(c);
             }
             else
             {
-                FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb);
+                FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb, spanBold, spanUnderline);
                 _rowBuf.Clear();
-                spanStartCol = col;
-                spanFg = fg;
-                spanBgArgb = bgArgb;
+                spanStartCol  = col;
+                spanFg        = fg;
+                spanBgArgb    = bgArgb;
+                spanBold      = bold;
+                spanUnderline = underline;
                 _rowBuf.Append(c);
             }
         }
         if (spanStartCol >= 0 && _rowBuf.Length > 0)
-            FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb);
+            FlushSpan(ds, row, spanStartCol, _rowBuf.ToString(), spanFg, spanBgArgb, spanBold, spanUnderline);
     }
 
-    /// <summary>Emit one span: fill the background rectangle if a
-    /// non-transparent bg colour is set, then draw the glyph run with
-    /// the foreground colour. Whitespace-only spans skip the DrawText
-    /// (the bg fill is already done).</summary>
+    /// <summary>Emit one span: optional bg fill, glyph run with the
+    /// foreground colour and weight (bold uses a separate cached text
+    /// format), optional underline line at the row's baseline + 1px.
+    /// Whitespace-only spans skip the DrawText pass.</summary>
     private void FlushSpan(
         CanvasDrawingSession ds,
         int row, int colStart, string text,
-        Color fg, uint bgArgb)
+        Color fg, uint bgArgb, bool bold, bool underline)
     {
         float x = colStart * _charWidth;
         float y = row      * _charHeight;
@@ -550,16 +787,66 @@ public sealed partial class TerminalControl : UserControl
                 text.Length * _charWidth, _charHeight,
                 ArgbToColor(bgArgb));
         }
-        // Skip DrawText for all-whitespace spans — the background is
-        // already painted, and DrawText with all-space input still
-        // does a full DirectWrite shaping pass we'd rather avoid.
         bool hasGlyph = false;
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] != ' ') { hasGlyph = true; break; }
         }
-        if (hasGlyph) ds.DrawText(text, x, y, fg, _textFormat);
+        if (hasGlyph)
+        {
+            var format = bold ? (_textFormatBold ?? _textFormat) : _textFormat;
+            ds.DrawText(text, x, y, fg, format);
+        }
+        if (underline)
+        {
+            // 1-DIP thick line at the bottom of the cell. Underlines
+            // sit at the descender area so they don't collide with
+            // glyph ink even on bold/Italic faces.
+            float uy = y + _charHeight - 1.5f;
+            ds.FillRectangle(x, uy, text.Length * _charWidth, 1.0f, fg);
+        }
     }
+
+    private static uint ColorToArgb(Color c) =>
+        (uint)((c.A << 24) | (c.R << 16) | (c.G << 8) | c.B);
+
+    /// <summary>Map a VtNetCore named-ANSI foreground to its RGB. Uses
+    /// the xterm-classic palette (compatible with what most TUIs were
+    /// authored against). When <paramref name="bright"/> is true the
+    /// SGR 1 "bold-brightens-foreground" convention applies — the
+    /// intensified variant is used. Falling-through default for an
+    /// un-set cell (enum still at default White) gives a slightly
+    /// brighter near-white that matches DefaultFg closely.</summary>
+    private static Color AnsiColorFg(ETerminalColor c, bool bright) => c switch
+    {
+        ETerminalColor.Black   => bright ? Color.FromArgb(0xFF, 0x7F, 0x7F, 0x7F) : Color.FromArgb(0xFF, 0x00, 0x00, 0x00),
+        ETerminalColor.Red     => bright ? Color.FromArgb(0xFF, 0xFF, 0x55, 0x55) : Color.FromArgb(0xFF, 0xCD, 0x00, 0x00),
+        ETerminalColor.Green   => bright ? Color.FromArgb(0xFF, 0x55, 0xFF, 0x55) : Color.FromArgb(0xFF, 0x00, 0xCD, 0x00),
+        ETerminalColor.Yellow  => bright ? Color.FromArgb(0xFF, 0xFF, 0xFF, 0x55) : Color.FromArgb(0xFF, 0xCD, 0xCD, 0x00),
+        ETerminalColor.Blue    => bright ? Color.FromArgb(0xFF, 0x5C, 0x5C, 0xFF) : Color.FromArgb(0xFF, 0x00, 0x00, 0xEE),
+        ETerminalColor.Magenta => bright ? Color.FromArgb(0xFF, 0xFF, 0x55, 0xFF) : Color.FromArgb(0xFF, 0xCD, 0x00, 0xCD),
+        ETerminalColor.Cyan    => bright ? Color.FromArgb(0xFF, 0x55, 0xFF, 0xFF) : Color.FromArgb(0xFF, 0x00, 0xCD, 0xCD),
+        ETerminalColor.White   => bright ? Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF) : DefaultFg,
+        _                       => DefaultFg,
+    };
+
+    /// <summary>Background palette. <paramref name="defaultIsTransparent"/>
+    /// returns null when the value looks like VtNetCore's default
+    /// (Black with no other signal), so the renderer can skip the bg
+    /// fill instead of painting every untouched cell solid black over
+    /// our terminal background.</summary>
+    private static Color? AnsiColorBg(ETerminalColor c, bool defaultIsTransparent) => c switch
+    {
+        ETerminalColor.Black   => defaultIsTransparent ? null : (Color?)Color.FromArgb(0xFF, 0x00, 0x00, 0x00),
+        ETerminalColor.Red     => Color.FromArgb(0xFF, 0xCD, 0x00, 0x00),
+        ETerminalColor.Green   => Color.FromArgb(0xFF, 0x00, 0xCD, 0x00),
+        ETerminalColor.Yellow  => Color.FromArgb(0xFF, 0xCD, 0xCD, 0x00),
+        ETerminalColor.Blue    => Color.FromArgb(0xFF, 0x00, 0x00, 0xEE),
+        ETerminalColor.Magenta => Color.FromArgb(0xFF, 0xCD, 0x00, 0xCD),
+        ETerminalColor.Cyan    => Color.FromArgb(0xFF, 0x00, 0xCD, 0xCD),
+        ETerminalColor.White   => Color.FromArgb(0xFF, 0xE5, 0xE5, 0xE5),
+        _                       => null,
+    };
 
     /// <summary>Construct the CanvasTextFormat lazily on first draw,
     /// then re-measure cell dimensions. This must happen after XAML
@@ -587,6 +874,21 @@ public sealed partial class TerminalControl : UserControl
         {
             FontFamily        = family,
             FontSize          = (float)FontSize,
+            WordWrapping      = CanvasWordWrapping.NoWrap,
+            VerticalAlignment = CanvasVerticalAlignment.Top,
+            HorizontalAlignment = CanvasHorizontalAlignment.Left,
+        };
+        // Separate bold format. A real monospace font's bold weight has
+        // the SAME advance width as regular, so we don't re-measure
+        // (it's the contract of monospace). If a non-monospace font
+        // slipped through fallback, bold-on-some-runs would still render
+        // mostly correctly because we coalesce by attribute and each
+        // span draws at its own start x.
+        _textFormatBold = new CanvasTextFormat
+        {
+            FontFamily        = family,
+            FontSize          = (float)FontSize,
+            FontWeight        = Microsoft.UI.Text.FontWeights.Bold,
             WordWrapping      = CanvasWordWrapping.NoWrap,
             VerticalAlignment = CanvasVerticalAlignment.Top,
             HorizontalAlignment = CanvasHorizontalAlignment.Left,

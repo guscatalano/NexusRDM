@@ -174,9 +174,13 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                 await ViewModel.ResizeAsync(cols, rows);
             }
 
-            WriteTrace(ViewModel.IsConnected
-                ? "[ Connected. Awaiting shell prompt... ]"
-                : $"[ Connect returned but not connected: {ViewModel.StatusMessage} ]");
+            if (!ViewModel.IsConnected)
+                WriteTrace($"[ Connect returned but not connected: {ViewModel.StatusMessage} ]");
+            // No "connected, awaiting prompt" message on success — by
+            // the time we await past ConnectAsync the banner + prompt
+            // have already been Fed into the terminal, so injecting
+            // our own trace bytes here paints them out of order at the
+            // bottom of the real output.
         }
         catch (Exception ex)
         {

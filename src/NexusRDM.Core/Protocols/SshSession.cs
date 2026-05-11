@@ -112,7 +112,49 @@ public sealed class SshSession : ISshSession
         if (_client is null || !_client.IsConnected)
             throw new InvalidOperationException("SSH authentication failed after retries.");
 
-        var modes = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>();
+        // pty-req terminal modes (RFC 4254 §8). Matches what xterm /
+        // PuTTY negotiate by default. The big-impact one is IUTF8=1 —
+        // tells the server's line discipline that bytes coming in are
+        // UTF-8 so multibyte erase / kill / werase work on whole code
+        // points instead of single bytes. The rest mirror "canonical
+        // interactive shell" defaults; without an explicit modes dict
+        // most servers fall back to sane values anyway, but being
+        // explicit avoids surprises on stripped-down embedded systems.
+        var modes = new Dictionary<Renci.SshNet.Common.TerminalModes, uint>
+        {
+            // Input handling
+            { Renci.SshNet.Common.TerminalModes.IUTF8,  1 }, // UTF-8 input
+            { Renci.SshNet.Common.TerminalModes.ICRNL,  1 }, // CR → NL on input
+            { Renci.SshNet.Common.TerminalModes.IXON,   1 }, // Ctrl+S / Ctrl+Q flow control
+            { Renci.SshNet.Common.TerminalModes.IMAXBEL,1 }, // BEL on full input queue
+
+            // Local modes
+            { Renci.SshNet.Common.TerminalModes.ISIG,   1 }, // Ctrl+C/Z/\ generate signals
+            { Renci.SshNet.Common.TerminalModes.ICANON, 1 }, // Line buffering / editing
+            { Renci.SshNet.Common.TerminalModes.IEXTEN, 1 }, // Extended functions (Ctrl+V etc.)
+            { Renci.SshNet.Common.TerminalModes.ECHO,   1 }, // Echo input
+            { Renci.SshNet.Common.TerminalModes.ECHOE,  1 }, // Backspace erases on echo
+            { Renci.SshNet.Common.TerminalModes.ECHOK,  1 }, // Kill erases line
+            { Renci.SshNet.Common.TerminalModes.ECHOCTL,1 }, // Render ^X for control chars
+
+            // Output
+            { Renci.SshNet.Common.TerminalModes.OPOST,  1 }, // Output post-processing
+            { Renci.SshNet.Common.TerminalModes.ONLCR,  1 }, // NL → CRNL on output
+
+            // Character size
+            { Renci.SshNet.Common.TerminalModes.CS8,    1 }, // 8-bit characters
+
+            // Special character bindings (ASCII control codes)
+            { Renci.SshNet.Common.TerminalModes.VINTR,   3   }, // Ctrl+C
+            { Renci.SshNet.Common.TerminalModes.VQUIT,   28  }, // Ctrl+\
+            { Renci.SshNet.Common.TerminalModes.VERASE,  127 }, // DEL (backspace)
+            { Renci.SshNet.Common.TerminalModes.VKILL,   21  }, // Ctrl+U
+            { Renci.SshNet.Common.TerminalModes.VEOF,    4   }, // Ctrl+D
+            { Renci.SshNet.Common.TerminalModes.VSUSP,   26  }, // Ctrl+Z
+            { Renci.SshNet.Common.TerminalModes.VWERASE, 23  }, // Ctrl+W
+            { Renci.SshNet.Common.TerminalModes.VLNEXT,  22  }, // Ctrl+V
+            { Renci.SshNet.Common.TerminalModes.VREPRINT,18  }, // Ctrl+R
+        };
         _shell    = _client.CreateShellStream("xterm-256color", _cols, _rows, 0, 0, 4096, modes);
         SshLog.Info($"Shell opened: term=xterm-256color cols={_cols} rows={_rows} conn={ConnectionId}");
         _readCts  = CancellationTokenSource.CreateLinkedTokenSource(ct);
