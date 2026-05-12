@@ -48,19 +48,15 @@ public sealed partial class SftpView : UserControl, ISessionView
             TextWrapping = TextWrapping.Wrap,
         });
 
-        // Only show the bulk-action checkbox when there's actually a
-        // bulk to apply it to. QueueDepth is the count remaining AFTER
-        // the current file (which has already been dequeued by the
-        // pump), so a single-file drop reads as 0 here.
-        CheckBox? apply = null;
-        if (ViewModel.QueueDepth > 0)
+        // Always show the checkbox. Apply-to-all is now sticky across
+        // batches for this tab, so even a 1-file drag benefits — the
+        // user can pre-commit "always overwrite" and never see this
+        // dialog again until the tab closes.
+        var apply = new CheckBox
         {
-            apply = new CheckBox
-            {
-                Content = $"Apply to remaining conflicts ({ViewModel.QueueDepth} files left)",
-            };
-            stack.Children.Add(apply);
-        }
+            Content = "Apply to all conflicts in this tab (until I close it)",
+        };
+        stack.Children.Add(apply);
         var dlg = new ContentDialog
         {
             XamlRoot            = XamlRoot,
@@ -72,7 +68,7 @@ public sealed partial class SftpView : UserControl, ISessionView
             DefaultButton       = ContentDialogButton.Primary,
         };
         var result = await dlg.ShowAsync();
-        bool toAll = apply?.IsChecked == true;
+        bool toAll = apply.IsChecked == true;
         return result switch
         {
             ContentDialogResult.Primary   => toAll ? SftpSessionViewModel.ConflictChoice.OverwriteAll : SftpSessionViewModel.ConflictChoice.Overwrite,
@@ -96,7 +92,7 @@ public sealed partial class SftpView : UserControl, ISessionView
             await ViewModel.NavigateLocalAsync(entry);
     }
 
-    private void LocalList_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    private async void LocalList_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         if (LocalList.SelectedItem is not SftpEntry entry) return;
         var menu = new MenuFlyout();
@@ -113,9 +109,71 @@ public sealed partial class SftpView : UserControl, ISessionView
             upload.Click += (_, _) => ViewModel.EnqueueUpload(entry);
             menu.Items.Add(upload);
         }
+
+        // Always-available local actions: open the current folder in
+        // Explorer, plus delete (with confirmation) on a real entry.
+        if (menu.Items.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
+
+        var openExplorer = new MenuFlyoutItem
+        {
+            Text = "Open in Explorer",
+            Icon = new SymbolIcon(Symbol.OpenFile),
+        };
+        openExplorer.Click += (_, _) => OpenLocalExplorer(entry);
+        menu.Items.Add(openExplorer);
+
+        if (entry.Name != "..")
+        {
+            var del = new MenuFlyoutItem { Text = "Delete (local)", Icon = new SymbolIcon(Symbol.Delete) };
+            del.Click += async (_, _) => await ConfirmAndDeleteLocalAsync(entry);
+            menu.Items.Add(del);
+        }
+
         if (menu.Items.Count > 0)
             menu.ShowAt((FrameworkElement)sender, e.GetPosition((UIElement)sender));
         e.Handled = true;
+        await System.Threading.Tasks.Task.CompletedTask;
+    }
+
+    /// <summary>Open Windows Explorer at the current local pane path
+    /// (or at the selected entry, when the user right-clicked one).
+    /// If the entry is a file, we open the parent folder with the
+    /// file pre-selected via the <c>/select,</c> verb — same as
+    /// "Show in Explorer" elsewhere.</summary>
+    private static void OpenLocalExplorer(SftpEntry entry)
+    {
+        try
+        {
+            var args = entry.IsDirectory
+                ? $"\"{entry.FullPath}\""
+                : $"/select,\"{entry.FullPath}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = args,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            NexusRDM.Core.Diagnostics.SshLog.Warn($"Open in Explorer failed: {ex.Message}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task ConfirmAndDeleteLocalAsync(SftpEntry entry)
+    {
+        var dlg = new ContentDialog
+        {
+            XamlRoot          = XamlRoot,
+            Title             = $"Delete {(entry.IsDirectory ? "folder" : "file")}?",
+            Content           = $"\"{entry.FullPath}\" will be permanently deleted from your local disk. " +
+                                "This cannot be undone.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+        };
+        if (await dlg.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.DeleteLocalAsync(entry);
     }
 
     private async void LocalPathBox_KeyDown(object sender, KeyRoutedEventArgs e)

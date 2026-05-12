@@ -14,6 +14,30 @@ public sealed class InvertBoolConverter : IValueConverter
 /// <summary>bool IsDirectory → Segoe Fluent glyph. Used by the SFTP
 /// file manager rows since x:Bind doesn't allow inline string literals
 /// in a ternary expression.</summary>
+/// <summary>long bytes -> human size ("12.3 KB", "1.2 MB", "-" for
+/// 0/negative which we use as the "size N/A" sentinel for directory
+/// rows). Used by the SFTP file manager so the Size column renders
+/// something readable instead of raw bytes (and directories show a
+/// dash instead of "0").</summary>
+public sealed class BytesToHumanConverter : IValueConverter
+{
+    public object Convert(object value, Type t, object p, string l)
+    {
+        long n = value switch
+        {
+            long l1 => l1,
+            int  i1 => i1,
+            _       => 0,
+        };
+        if (n <= 0)                  return "—"; // em dash
+        if (n < 1024)                return $"{n} B";
+        if (n < 1024 * 1024)         return $"{n / 1024.0:F1} KB";
+        if (n < 1024L * 1024 * 1024) return $"{n / (1024.0 * 1024):F1} MB";
+        return $"{n / (1024.0 * 1024 * 1024):F2} GB";
+    }
+    public object ConvertBack(object value, Type t, object p, string l) => throw new NotImplementedException();
+}
+
 public sealed class DirectoryGlyphConverter : IValueConverter
 {
     public object Convert(object value, Type t, object p, string l) =>

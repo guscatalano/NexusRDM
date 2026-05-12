@@ -123,6 +123,13 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     public Task RefreshLocalAsync() => Task.Run(() =>
     {
         var snapshot = ListLocal(LocalPath);
+        // Same order rule as the remote pane: ".." first, then
+        // directories alphabetically, then files alphabetically.
+        snapshot = snapshot
+            .OrderByDescending(e => e.Name == "..")
+            .ThenByDescending(e => e.IsDirectory)
+            .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         App.MainWin?.DispatcherQueue.TryEnqueue(() =>
         {
             LocalEntries.Clear();
@@ -360,14 +367,19 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             TransferStatus  = "Idle";
             TransferPercent = 0;
             // Reset batch aggregates so the next single-file drop
-            // starts from 0/1, not N/N+1. Also drop any "apply to
-            // remaining" choice — a fresh queue starts with a fresh
-            // conflict policy.
+            // starts from 0/1, not N/N+1.
+            //
+            // NOTE: we deliberately do NOT reset _appliedToRemaining
+            // here. The user's complaint was "the dialog keeps popping
+            // up for every file" — that's because each single drag
+            // was a 1-file batch and the apply-to-all only stuck for
+            // the current batch. Keeping the choice sticky across
+            // batches means "Apply to remaining" really means "for
+            // this tab, until I close it or restart."
             QueueDoneFiles      = 0;
             QueueTotalFiles     = 0;
             QueueDoneBytes      = 0;
             QueueTotalBytes     = 0;
-            _appliedToRemaining = null;
             UpdateBatchProgress();
             // Refresh both panes — the just-completed transfer changed
             // sizes / added an entry on one side.
@@ -501,6 +513,29 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         var path = RemotePath.TrimEnd('/') + "/" + name;
         await _sftp.CreateDirectoryAsync(path);
         await RefreshRemoteAsync();
+    }
+
+    /// <summary>Delete a local file or directory. Symmetric with the
+    /// existing remote-delete; only used by the local-pane right-click
+    /// menu. No undo / recycle bin in v1 — straight to permanent
+    /// deletion, with confirmation handled by the View.</summary>
+    [RelayCommand]
+    public async Task DeleteLocalAsync(SftpEntry e)
+    {
+        if (e.Name == "..") return;
+        await Task.Run(() =>
+        {
+            try
+            {
+                if (e.IsDirectory) System.IO.Directory.Delete(e.FullPath, recursive: true);
+                else               System.IO.File.Delete(e.FullPath);
+            }
+            catch (Exception ex)
+            {
+                NexusRDM.Core.Diagnostics.SshLog.Warn($"DeleteLocal failed: {e.FullPath} — {ex.Message}");
+            }
+        });
+        await RefreshLocalAsync();
     }
 
     [RelayCommand]

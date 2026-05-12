@@ -124,14 +124,28 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
         _statsTimer = dq.CreateTimer();
         _statsTimer.Interval = TimeSpan.FromSeconds(1);
         _statsTimer.IsRepeating = true;
-        _statsTimer.Tick += (_, _) => RefreshStats();
+        _statsTimer.Tick += (_, _) =>
+        {
+            try { RefreshStats(); }
+            catch (Exception ex)
+            {
+                // Last-resort: never let a stat refresh tear down the
+                // dispatcher queue. Log + stop the timer.
+                NexusRDM.Core.Diagnostics.SshLog.Warn($"RefreshStats threw: {ex.GetType().Name}: {ex.Message}");
+                _statsTimer?.Stop();
+            }
+        };
         RefreshStats();
         _statsTimer.Start();
     }
 
     private void RefreshStats()
     {
-        if (!IsConnected) return;
+        // Belt-and-suspenders: IsConnected can lag the underlying
+        // session state by a tick, and the getters below can throw
+        // ObjectDisposedException if the SshClient was disposed mid-
+        // tick. Bail out and let OnSessionDisconnected stop the timer.
+        if (!IsConnected || !_session.IsConnected) return;
         // Uptime: rolling, formatted as Xh Ym Zs (only show non-zero parts).
         if (_session.ConnectedAt is DateTimeOffset since)
         {

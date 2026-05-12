@@ -45,21 +45,37 @@ public sealed class SshSession : ISshSession
     public int             PtyRows           => (int)_rows;
     public string          ConnectedUsername => _username ?? string.Empty;
 
-    public string ServerVersion =>
-        _client?.ConnectionInfo?.ServerVersion ?? string.Empty;
+    public string ServerVersion
+    {
+        // SSH.NET's BaseClient.ConnectionInfo getter throws
+        // ObjectDisposedException after Disconnect/Dispose. The stats
+        // timer can fire one more time before its host VM observes the
+        // Disconnected event — and that tick crashes the dispatcher
+        // queue. Return empty instead.
+        get
+        {
+            try { return _client?.ConnectionInfo?.ServerVersion ?? string.Empty; }
+            catch (ObjectDisposedException) { return string.Empty; }
+        }
+    }
 
     /// <summary>"&lt;cipher&gt; + &lt;mac&gt;" combined string — what most
     /// SSH clients show in their status bar. Returns empty when the
-    /// channel hasn't negotiated yet.</summary>
+    /// channel hasn't negotiated yet, or when the client has been
+    /// disposed mid-tick.</summary>
     public string CipherInfo
     {
         get
         {
-            var ci = _client?.ConnectionInfo;
-            if (ci is null) return string.Empty;
-            var enc = ci.CurrentClientEncryption ?? string.Empty;
-            var mac = ci.CurrentClientHmacAlgorithm ?? string.Empty;
-            return string.IsNullOrEmpty(mac) ? enc : $"{enc} + {mac}";
+            try
+            {
+                var ci = _client?.ConnectionInfo;
+                if (ci is null) return string.Empty;
+                var enc = ci.CurrentClientEncryption ?? string.Empty;
+                var mac = ci.CurrentClientHmacAlgorithm ?? string.Empty;
+                return string.IsNullOrEmpty(mac) ? enc : $"{enc} + {mac}";
+            }
+            catch (ObjectDisposedException) { return string.Empty; }
         }
     }
 

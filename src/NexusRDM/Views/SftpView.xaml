@@ -98,8 +98,33 @@
                           SelectionMode="Single"
                           Background="{StaticResource NxBg0}"
                           BorderThickness="0">
+                    <ListView.Header>
+                        <Grid ColumnDefinitions="20,*,90,150"
+                              Background="{StaticResource NxBg1}"
+                              Padding="6,4"
+                              BorderBrush="{StaticResource NxBrd}"
+                              BorderThickness="0,0,0,1">
+                            <TextBlock Grid.Column="1" Text="Name" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}" />
+                            <TextBlock Grid.Column="2" Text="Size" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       HorizontalAlignment="Right" />
+                            <TextBlock Grid.Column="3" Text="Modified" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </ListView.Header>
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
+                            <!-- Stretch the per-row Grid to the full
+                                 ListView width so all rows share the
+                                 same column boundaries; without this
+                                 each row sizes to its content and the
+                                 columns visibly wobble row-to-row. -->
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Padding" Value="6,2" />
                             <Setter Property="MinHeight" Value="22" />
                         </Style>
@@ -116,7 +141,8 @@
                                 <TextBlock Grid.Column="1" Text="{x:Bind Name}"
                                            FontSize="12" Foreground="{StaticResource NxTx1}"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="2" Text="{x:Bind Size}"
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind Size, Converter={StaticResource BytesConv}}"
                                            FontSize="11" Foreground="{StaticResource NxTx3}"
                                            HorizontalAlignment="Right" />
                                 <TextBlock Grid.Column="3" Text="{x:Bind LastModified.LocalDateTime}"
@@ -176,8 +202,33 @@
                           SelectionMode="Single"
                           Background="{StaticResource NxBg0}"
                           BorderThickness="0">
+                    <ListView.Header>
+                        <Grid ColumnDefinitions="20,*,90,150"
+                              Background="{StaticResource NxBg1}"
+                              Padding="6,4"
+                              BorderBrush="{StaticResource NxBrd}"
+                              BorderThickness="0,0,0,1">
+                            <TextBlock Grid.Column="1" Text="Name" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}" />
+                            <TextBlock Grid.Column="2" Text="Size" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       HorizontalAlignment="Right" />
+                            <TextBlock Grid.Column="3" Text="Modified" FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource NxTx3}"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </ListView.Header>
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
+                            <!-- Stretch the per-row Grid to the full
+                                 ListView width so all rows share the
+                                 same column boundaries; without this
+                                 each row sizes to its content and the
+                                 columns visibly wobble row-to-row. -->
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Padding" Value="6,2" />
                             <Setter Property="MinHeight" Value="22" />
                         </Style>
@@ -194,7 +245,8 @@
                                 <TextBlock Grid.Column="1" Text="{x:Bind Name}"
                                            FontSize="12" Foreground="{StaticResource NxTx1}"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="2" Text="{x:Bind Size}"
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind Size, Converter={StaticResource BytesConv}}"
                                            FontSize="11" Foreground="{StaticResource NxTx3}"
                                            HorizontalAlignment="Right" />
                                 <TextBlock Grid.Column="3" Text="{x:Bind LastModified.LocalDateTime}"
