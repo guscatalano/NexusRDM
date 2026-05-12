@@ -198,6 +198,94 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         _ = PumpQueueAsync();
     }
 
+    /// <summary>Recursive download. Walk the remote tree rooted at
+    /// <paramref name="remoteDir"/>, mirror its structure under the
+    /// local pane's current path, and enqueue every file as an
+    /// individual transfer. Skips symlinks (to avoid loops) and
+    /// silently logs (via SshLog.Warn) any directory whose listing
+    /// fails — typically permissions.</summary>
+    public async Task EnqueueDownloadDirectoryAsync(SftpEntry remoteDir)
+    {
+        if (!IsConnected || !remoteDir.IsDirectory) return;
+        var localRoot = System.IO.Path.Combine(LocalPath, remoteDir.Name);
+        await WalkRemoteAsync(remoteDir.FullPath, localRoot);
+        QueueDepth = _queue.Count;
+        _ = PumpQueueAsync();
+    }
+
+    private async Task WalkRemoteAsync(string remotePath, string localPath)
+    {
+        try { System.IO.Directory.CreateDirectory(localPath); }
+        catch (Exception ex)
+        {
+            NexusRDM.Core.Diagnostics.SshLog.Warn($"WalkRemote mkdir local failed: {localPath} — {ex.Message}");
+            return;
+        }
+        IReadOnlyList<SftpEntry> entries;
+        try { entries = await _sftp.ListDirectoryAsync(remotePath); }
+        catch (Exception ex)
+        {
+            NexusRDM.Core.Diagnostics.SshLog.Warn($"WalkRemote list failed: {remotePath} — {ex.Message}");
+            return;
+        }
+        foreach (var e in entries)
+        {
+            if (e.Name == "." || e.Name == "..") continue;
+            if (e.IsSymlink) continue; // don't follow — could be a cycle
+            var localChild = System.IO.Path.Combine(localPath, e.Name);
+            if (e.IsDirectory)
+            {
+                await WalkRemoteAsync(e.FullPath, localChild);
+            }
+            else
+            {
+                _queue.Enqueue(new TransferRequest(
+                    SftpTransferDirection.Download, localChild, e.FullPath, e.Size));
+            }
+        }
+    }
+
+    /// <summary>Recursive upload. Walk the local tree rooted at
+    /// <paramref name="localDir"/>, mirror its structure under the
+    /// remote pane's current path, and enqueue every file. Creates
+    /// missing remote directories on the way down.</summary>
+    public async Task EnqueueUploadDirectoryAsync(SftpEntry localDir)
+    {
+        if (!IsConnected || !localDir.IsDirectory) return;
+        var remoteRoot = RemotePath.TrimEnd('/') + "/" + localDir.Name;
+        try { await _sftp.CreateDirectoryAsync(remoteRoot); }
+        catch { /* may already exist */ }
+        await WalkLocalAsync(localDir.FullPath, remoteRoot);
+        QueueDepth = _queue.Count;
+        _ = PumpQueueAsync();
+    }
+
+    private async Task WalkLocalAsync(string localPath, string remotePath)
+    {
+        try
+        {
+            foreach (var sub in System.IO.Directory.EnumerateDirectories(localPath))
+            {
+                var name      = System.IO.Path.GetFileName(sub);
+                var remoteSub = remotePath + "/" + name;
+                try { await _sftp.CreateDirectoryAsync(remoteSub); } catch { /* exists */ }
+                await WalkLocalAsync(sub, remoteSub);
+            }
+            foreach (var file in System.IO.Directory.EnumerateFiles(localPath))
+            {
+                var name = System.IO.Path.GetFileName(file);
+                long size = 0;
+                try { size = new System.IO.FileInfo(file).Length; } catch { }
+                _queue.Enqueue(new TransferRequest(
+                    SftpTransferDirection.Upload, file, remotePath + "/" + name, size));
+            }
+        }
+        catch (Exception ex)
+        {
+            NexusRDM.Core.Diagnostics.SshLog.Warn($"WalkLocal failed: {localPath} — {ex.Message}");
+        }
+    }
+
     private async Task PumpQueueAsync()
     {
         if (_pumpRunning) return;
@@ -252,6 +340,20 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     }
 
     // ── Misc commands ────────────────────────────────────────────────
+
+    /// <summary>Stream a remote file into a byte array. Used by the
+    /// image / hex preview paths — never writes to disk. Returns null
+    /// when the file exceeds <paramref name="maxBytes"/>, on read
+    /// failure, or when called against a directory.</summary>
+    public async Task<byte[]?> ReadRemoteBytesAsync(SftpEntry entry, long maxBytes, CancellationToken ct = default)
+    {
+        if (!IsConnected || entry.IsDirectory) return null;
+        if (entry.Size > maxBytes)             return null;
+        var ms = new System.IO.MemoryStream(capacity: (int)Math.Min(entry.Size, 64 * 1024));
+        try { await _sftp.DownloadFileAsync(entry.FullPath, ms, progress: null, ct); }
+        catch { return null; }
+        return ms.ToArray();
+    }
 
     /// <summary>Stream a remote file into memory + decode as UTF-8.
     /// Returns null on failure or if the file exceeds
@@ -315,7 +417,186 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         StatusMessage = "Disconnected";
     }
 
-    public async ValueTask DisposeAsync() => await _sftp.DisposeAsync();
+    // ── Edit in place ────────────────────────────────────────────────
+    //
+    // Workflow: download remote file to a per-session %TEMP%
+    // directory; Process.Start it (shell verb open, so it uses the
+    // user's default editor); a FileSystemWatcher watches the file
+    // for writes. On change (debounced 500ms because most editors
+    // emit several Change events per save) we re-upload. The
+    // EditSession stays live until either the user closes the SFTP
+    // tab (DisposeAsync sweeps them) or they invoke "Stop editing"
+    // from the right-click menu.
+
+    private readonly Dictionary<string, EditSession> _activeEdits = new();
+
+    /// <summary>Begin an edit-in-place session for <paramref name="remote"/>.
+    /// Downloads to %TEMP%, opens in the user's default editor,
+    /// starts watching for saves. Re-entrant: a second call against
+    /// the same remote path just re-launches the editor pointed at
+    /// the existing temp file.</summary>
+    public async Task<EditSession?> BeginEditInPlaceAsync(SftpEntry remote)
+    {
+        if (!IsConnected || remote.IsDirectory) return null;
+
+        // Re-use an existing session if already editing this file.
+        if (_activeEdits.TryGetValue(remote.FullPath, out var existing))
+        {
+            existing.LaunchEditor();
+            return existing;
+        }
+
+        var tempDir  = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "NexusRDM-edit",
+            ConnectionId.ToString("N"),
+            Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tempDir);
+        var tempPath = System.IO.Path.Combine(tempDir, remote.Name);
+
+        // Initial download. The watcher attaches AFTER this completes
+        // so we don't fire a spurious upload on our own write.
+        try
+        {
+            using var fs = System.IO.File.Create(tempPath);
+            await _sftp.DownloadFileAsync(remote.FullPath, fs);
+        }
+        catch (Exception ex)
+        {
+            NexusRDM.Core.Diagnostics.SshLog.Warn($"Edit-in-place download failed: {remote.FullPath} — {ex.Message}");
+            try { System.IO.Directory.Delete(tempDir, recursive: true); } catch { }
+            return null;
+        }
+
+        var session = new EditSession(this, remote.FullPath, tempPath);
+        _activeEdits[remote.FullPath] = session;
+        session.Start();
+        return session;
+    }
+
+    /// <summary>Stop an edit-in-place session. Cleans up the watcher
+    /// + best-effort deletes the temp file. Doesn't try to close the
+    /// user's editor — we don't own that process beyond launching it.</summary>
+    public void StopEditInPlace(string remotePath)
+    {
+        if (_activeEdits.Remove(remotePath, out var session))
+            session.Dispose();
+    }
+
+    public IReadOnlyDictionary<string, EditSession> ActiveEdits => _activeEdits;
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var s in _activeEdits.Values.ToList())
+            s.Dispose();
+        _activeEdits.Clear();
+        await _sftp.DisposeAsync();
+    }
+
+    public sealed class EditSession : IDisposable
+    {
+        private readonly SftpSessionViewModel _owner;
+        private System.IO.FileSystemWatcher?  _watcher;
+        private System.Threading.Timer?       _debounce;
+        private bool                          _uploading;
+        private bool                          _disposed;
+
+        public string RemotePath { get; }
+        public string TempPath   { get; }
+
+        internal EditSession(SftpSessionViewModel owner, string remotePath, string tempPath)
+        {
+            _owner     = owner;
+            RemotePath = remotePath;
+            TempPath   = tempPath;
+        }
+
+        internal void Start()
+        {
+            var dir = System.IO.Path.GetDirectoryName(TempPath)!;
+            var name = System.IO.Path.GetFileName(TempPath);
+            _watcher = new System.IO.FileSystemWatcher(dir, name)
+            {
+                NotifyFilter = System.IO.NotifyFilters.LastWrite | System.IO.NotifyFilters.Size,
+                EnableRaisingEvents = true,
+            };
+            _watcher.Changed += OnLocalChanged;
+            LaunchEditor();
+        }
+
+        internal void LaunchEditor()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = TempPath,
+                    UseShellExecute = true, // opens with user's default app for that extension
+                });
+            }
+            catch (Exception ex)
+            {
+                NexusRDM.Core.Diagnostics.SshLog.Warn($"Edit-in-place launch failed: {TempPath} — {ex.Message}");
+            }
+        }
+
+        private void OnLocalChanged(object sender, System.IO.FileSystemEventArgs e)
+        {
+            // Editors typically save in a flurry — Word writes a .tmp,
+            // renames, touches mtime, etc. Debounce so we re-upload
+            // once after the burst settles instead of every event.
+            _debounce?.Dispose();
+            _debounce = new System.Threading.Timer(_ => _ = UploadAsync(), null, 500, System.Threading.Timeout.Infinite);
+        }
+
+        private async Task UploadAsync()
+        {
+            if (_disposed || _uploading) return;
+            _uploading = true;
+            try
+            {
+                // Retry the open a few times — editors sometimes hold
+                // an exclusive handle for a beat after save.
+                System.IO.FileStream? fs = null;
+                for (int attempt = 0; attempt < 5; attempt++)
+                {
+                    try { fs = System.IO.File.OpenRead(TempPath); break; }
+                    catch (System.IO.IOException)
+                    {
+                        await Task.Delay(100);
+                    }
+                }
+                if (fs is null) return;
+                using (fs)
+                {
+                    await _owner._sftp.UploadFileAsync(fs, RemotePath);
+                }
+                NexusRDM.Core.Diagnostics.SshLog.Info($"Edit-in-place re-uploaded: {RemotePath}");
+            }
+            catch (Exception ex)
+            {
+                NexusRDM.Core.Diagnostics.SshLog.Warn($"Edit-in-place upload failed: {RemotePath} — {ex.Message}");
+            }
+            finally
+            {
+                _uploading = false;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _watcher?.Dispose();
+            _debounce?.Dispose();
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(TempPath)!;
+                System.IO.Directory.Delete(dir, recursive: true);
+            }
+            catch { /* file may still be open in editor */ }
+        }
+    }
 
     private readonly record struct TransferRequest(
         SftpTransferDirection Direction,

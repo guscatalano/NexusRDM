@@ -46,13 +46,21 @@ public sealed partial class SftpView : UserControl, ISessionView
     {
         if (LocalList.SelectedItem is not SftpEntry entry) return;
         var menu = new MenuFlyout();
-        if (!entry.IsDirectory)
+        if (entry.Name == "..") { /* no actions on the up-row */ }
+        else if (entry.IsDirectory)
+        {
+            var uploadDir = new MenuFlyoutItem { Text = "Upload folder →", Icon = new SymbolIcon(Symbol.Upload) };
+            uploadDir.Click += async (_, _) => await ViewModel.EnqueueUploadDirectoryAsync(entry);
+            menu.Items.Add(uploadDir);
+        }
+        else
         {
             var upload = new MenuFlyoutItem { Text = "Upload →", Icon = new SymbolIcon(Symbol.Upload) };
             upload.Click += (_, _) => ViewModel.EnqueueUpload(entry);
             menu.Items.Add(upload);
         }
-        menu.ShowAt((FrameworkElement)sender, e.GetPosition((UIElement)sender));
+        if (menu.Items.Count > 0)
+            menu.ShowAt((FrameworkElement)sender, e.GetPosition((UIElement)sender));
         e.Handled = true;
     }
 
@@ -165,6 +173,131 @@ public sealed partial class SftpView : UserControl, ISessionView
     private static bool IsRemotePath(string path) =>
         path.Length > 0 && path[0] == '/' && (path.Length < 2 || path[1] != ':');
 
+    // ── Preview helpers (image + hex) ────────────────────────────────
+
+    private const long ImagePreviewMaxBytes = 10L * 1024 * 1024;
+    private const long HexPreviewMaxBytes   =  256L * 1024;
+
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff",
+    };
+
+    private static bool IsImageExtension(string name)
+    {
+        var ext = System.IO.Path.GetExtension(name);
+        return !string.IsNullOrEmpty(ext) && ImageExtensions.Contains(ext);
+    }
+
+    /// <summary>Stream remote bytes into a BitmapImage, show in a
+    /// ContentDialog. Image bytes live in memory only; no temp file.</summary>
+    private async System.Threading.Tasks.Task PreviewImageAsync(SftpEntry entry)
+    {
+        var bytes = await ViewModel.ReadRemoteBytesAsync(entry, ImagePreviewMaxBytes);
+        if (bytes is null)
+        {
+            await ShowSimpleErrorAsync($"Could not read image: {entry.Name}");
+            return;
+        }
+        var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+        using (var ras = new Windows.Storage.Streams.InMemoryRandomAccessStream())
+        {
+            using (var writer = new Windows.Storage.Streams.DataWriter(ras.GetOutputStreamAt(0)))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+            }
+            ras.Seek(0);
+            await bitmap.SetSourceAsync(ras);
+        }
+        var image = new Image
+        {
+            Source = bitmap,
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            MaxHeight = 600,
+            MaxWidth  = 900,
+        };
+        var dlg = new ContentDialog
+        {
+            XamlRoot        = XamlRoot,
+            Title           = $"{entry.Name} — {entry.Size:N0} bytes (image preview)",
+            Content         = image,
+            CloseButtonText = "Close",
+            DefaultButton   = ContentDialogButton.Close,
+        };
+        await dlg.ShowAsync();
+    }
+
+    /// <summary>Classic hex+ASCII dump dialog. 16-byte rows with a
+    /// gap between the two 8-byte halves, ASCII column on the right.</summary>
+    private async System.Threading.Tasks.Task PreviewHexAsync(SftpEntry entry)
+    {
+        var bytes = await ViewModel.ReadRemoteBytesAsync(entry, HexPreviewMaxBytes);
+        if (bytes is null)
+        {
+            await ShowSimpleErrorAsync($"Could not read file: {entry.Name}");
+            return;
+        }
+        var dump = FormatHexDump(bytes);
+        var tb = new TextBox
+        {
+            Text             = dump,
+            IsReadOnly       = true,
+            AcceptsReturn    = true,
+            TextWrapping     = TextWrapping.NoWrap,
+            FontFamily       = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas, Courier New"),
+            FontSize         = 12,
+            Height           = 480,
+            MinWidth         = 760,
+        };
+        ScrollViewer.SetHorizontalScrollBarVisibility(tb, ScrollBarVisibility.Auto);
+        ScrollViewer.SetVerticalScrollBarVisibility(tb,   ScrollBarVisibility.Auto);
+        var dlg = new ContentDialog
+        {
+            XamlRoot        = XamlRoot,
+            Title           = $"{entry.Name} — {entry.Size:N0} bytes (hex preview, not saved)",
+            Content         = tb,
+            CloseButtonText = "Close",
+            DefaultButton   = ContentDialogButton.Close,
+        };
+        await dlg.ShowAsync();
+    }
+
+    private static string FormatHexDump(byte[] data)
+    {
+        var sb = new System.Text.StringBuilder(data.Length * 4);
+        for (int i = 0; i < data.Length; i += 16)
+        {
+            sb.Append(i.ToString("X8")).Append("  ");
+            for (int j = 0; j < 16; j++)
+            {
+                if (i + j < data.Length) sb.Append(data[i + j].ToString("X2")).Append(' ');
+                else                     sb.Append("   ");
+                if (j == 7) sb.Append(' '); // gap between the two halves
+            }
+            sb.Append(" |");
+            for (int j = 0; j < 16 && i + j < data.Length; j++)
+            {
+                byte b = data[i + j];
+                sb.Append(b is >= 0x20 and < 0x7f ? (char)b : '.');
+            }
+            sb.AppendLine("|");
+        }
+        return sb.ToString();
+    }
+
+    private async System.Threading.Tasks.Task ShowSimpleErrorAsync(string message)
+    {
+        var dlg = new ContentDialog
+        {
+            XamlRoot        = XamlRoot,
+            Title           = "Preview failed",
+            Content         = message,
+            CloseButtonText = "OK",
+        };
+        await dlg.ShowAsync();
+    }
+
     // ── Remote pane events ───────────────────────────────────────────
 
     private async void RemoteList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
@@ -177,19 +310,22 @@ public sealed partial class SftpView : UserControl, ISessionView
     {
         if (RemoteList.SelectedItem is not SftpEntry entry) return;
         var menu = new MenuFlyout();
+        if (entry.IsDirectory && entry.Name != "..")
+        {
+            var dlDir = new MenuFlyoutItem { Text = "← Download folder", Icon = new SymbolIcon(Symbol.Download) };
+            dlDir.Click += async (_, _) => await ViewModel.EnqueueDownloadDirectoryAsync(entry);
+            menu.Items.Add(dlDir);
+        }
         if (!entry.IsDirectory && entry.Name != "..")
         {
             var dl = new MenuFlyoutItem { Text = "← Download", Icon = new SymbolIcon(Symbol.Download) };
             dl.Click += (_, _) => ViewModel.EnqueueDownload(entry);
             menu.Items.Add(dl);
 
-            // Preview is a read-only inline view of the file's text —
-            // does NOT write anything to local disk. Disabled (item
-            // still shown but greyed) when the size exceeds our 1 MB
-            // cap; the byte count is in the tooltip so the user knows
-            // why. We accept any extension; if the bytes look binary
-            // the UTF-8 fallback renders replacement chars + the user
-            // can dismiss.
+            menu.Items.Add(new MenuFlyoutSeparator());
+
+            // Preview (text). Cap enforced via IsEnabled; reads
+            // in-memory only, never writes to local disk.
             var prev = new MenuFlyoutItem
             {
                 Text      = "Preview (text)",
@@ -201,9 +337,67 @@ public sealed partial class SftpView : UserControl, ISessionView
                 : $"Read the file in-memory without saving to disk ({entry.Size:N0} bytes).");
             prev.Click += async (_, _) => await PreviewRemoteAsync(entry);
             menu.Items.Add(prev);
+
+            // Preview (image). Same in-memory pattern, capped at 10
+            // MB. Extension whitelist keeps the item hidden on files
+            // that obviously won't decode.
+            if (IsImageExtension(entry.Name))
+            {
+                var img = new MenuFlyoutItem
+                {
+                    Text      = "Preview (image)",
+                    Icon      = new SymbolIcon(Symbol.Pictures),
+                    IsEnabled = entry.Size <= ImagePreviewMaxBytes,
+                };
+                ToolTipService.SetToolTip(img, entry.Size > ImagePreviewMaxBytes
+                    ? $"Image too large ({entry.Size:N0} bytes; cap is 10 MB). Download instead."
+                    : $"Decode and display the image in-memory ({entry.Size:N0} bytes).");
+                img.Click += async (_, _) => await PreviewImageAsync(entry);
+                menu.Items.Add(img);
+            }
+
+            // Preview (hex). For binary files where the text preview
+            // would be unreadable. Capped at 256 KB since hex dumps
+            // are ~4x the source size as text.
+            var hex = new MenuFlyoutItem
+            {
+                Text      = "Preview (hex)",
+                Icon      = new SymbolIcon(Symbol.Tag),
+                IsEnabled = entry.Size <= HexPreviewMaxBytes,
+            };
+            ToolTipService.SetToolTip(hex, entry.Size > HexPreviewMaxBytes
+                ? $"File too large for hex preview ({entry.Size:N0} bytes; cap is 256 KB)."
+                : $"Show as hex + ASCII dump ({entry.Size:N0} bytes).");
+            hex.Click += async (_, _) => await PreviewHexAsync(entry);
+            menu.Items.Add(hex);
+
+            menu.Items.Add(new MenuFlyoutSeparator());
+
+            // Edit in place. Downloads to %TEMP%, opens in the user's
+            // default editor for that extension, watches for saves
+            // and re-uploads. Lifecycle ends when the SFTP tab closes
+            // or via "Stop editing."
+            bool alreadyEditing = ViewModel.ActiveEdits.ContainsKey(entry.FullPath);
+            var edit = new MenuFlyoutItem
+            {
+                Text = alreadyEditing ? "Re-open editor" : "Edit in place",
+                Icon = new SymbolIcon(Symbol.Edit),
+            };
+            ToolTipService.SetToolTip(edit,
+                "Download to a temp file, open in your default editor, " +
+                "auto-upload on save. The tab keeps watching until you close it.");
+            edit.Click += async (_, _) => await ViewModel.BeginEditInPlaceAsync(entry);
+            menu.Items.Add(edit);
+            if (alreadyEditing)
+            {
+                var stop = new MenuFlyoutItem { Text = "Stop editing", Icon = new SymbolIcon(Symbol.Cancel) };
+                stop.Click += (_, _) => ViewModel.StopEditInPlace(entry.FullPath);
+                menu.Items.Add(stop);
+            }
         }
         if (entry.Name != "..")
         {
+            menu.Items.Add(new MenuFlyoutSeparator());
             var del = new MenuFlyoutItem { Text = "Delete", Icon = new SymbolIcon(Symbol.Delete) };
             del.Click += async (_, _) => await ViewModel.DeleteRemoteAsync(entry);
             menu.Items.Add(del);
