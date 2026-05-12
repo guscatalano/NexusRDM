@@ -25,6 +25,7 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     private readonly SessionManager _mgr;
     private readonly Queue<TransferRequest> _queue = new();
     private bool _pumpRunning;
+    private bool _pumpCancelled;
     private ConflictChoice? _appliedToRemaining;
 
     public enum ConflictChoice
@@ -355,14 +356,35 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         _pumpRunning = true;
         try
         {
-            while (_queue.Count > 0)
+            // Outer "drain-and-recheck" loop. The inner loop processes
+            // the queue. RefreshLocalAsync / RefreshRemoteAsync
+            // afterwards await Task.Run, which yields control even
+            // when their bodies complete quickly. Another caller (or
+            // the same caller, after our fire-and-forget continuation
+            // hops back to the threadpool) can land more EnqueueUpload
+            // / EnqueueDownload calls in that yield window — those
+            // calls see _pumpRunning=true and bail. Without this
+            // outer recheck, those files would sit in the queue
+            // forever waiting for a fresh pump that never comes.
+            // _pumpCancelled latches when the user picks Cancel on
+            // the conflict dialog so we don't re-prompt for files
+            // that snuck in mid-yield.
+            while (!_pumpCancelled && _queue.Count > 0)
             {
-                var req = _queue.Dequeue();
-                QueueDepth = _queue.Count;
-                await RunOneTransferAsync(req);
-                QueueDoneFiles++;
-                QueueDoneBytes += Math.Max(0, req.TotalSize);
-                UpdateBatchProgress();
+                while (!_pumpCancelled && _queue.Count > 0)
+                {
+                    var req = _queue.Dequeue();
+                    QueueDepth = _queue.Count;
+                    await RunOneTransferAsync(req);
+                    QueueDoneFiles++;
+                    QueueDoneBytes += Math.Max(0, req.TotalSize);
+                    UpdateBatchProgress();
+                }
+                if (_pumpCancelled) break;
+                // Inter-batch refresh. May yield; the outer loop will
+                // catch any straggler enqueues that landed mid-yield.
+                await RefreshLocalAsync();
+                await RefreshRemoteAsync();
             }
             TransferStatus  = "Idle";
             TransferPercent = 0;
@@ -381,12 +403,12 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             QueueDoneBytes      = 0;
             QueueTotalBytes     = 0;
             UpdateBatchProgress();
-            // Refresh both panes — the just-completed transfer changed
-            // sizes / added an entry on one side.
-            await RefreshLocalAsync();
-            await RefreshRemoteAsync();
         }
-        finally { _pumpRunning = false; }
+        finally
+        {
+            _pumpRunning   = false;
+            _pumpCancelled = false; // fresh slate for the next pump
+        }
     }
 
     private async Task RunOneTransferAsync(TransferRequest req)
@@ -426,10 +448,14 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
                         TransferStatus = $"Skipped: {Path.GetFileName(req.RemotePath)}";
                         return;
                     case ConflictChoice.Cancel:
-                        // Drop the rest of the queue so the user isn't
-                        // asked again for every remaining conflict.
+                        // Drop the rest of the queue AND latch a
+                        // "cancelled" flag so files that get enqueued
+                        // during the inter-batch refresh yield don't
+                        // trigger another prompt. The flag clears
+                        // when the pump exits (finally block).
                         _queue.Clear();
                         QueueDepth = 0;
+                        _pumpCancelled = true;
                         TransferStatus = "Cancelled.";
                         return;
                 }
