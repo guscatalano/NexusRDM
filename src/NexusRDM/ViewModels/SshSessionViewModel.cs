@@ -108,10 +108,18 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
     }
 
     /// <summary>Pulse the status-strip stats on a 1-second DispatcherQueueTimer.
-    /// Cheap: reads in-memory counters on the session; no network.</summary>
+    /// Cheap: reads in-memory counters on the session; no network.
+    /// Wrapped defensively because <c>DispatcherQueue.GetForCurrentThread</c>
+    /// throws a COM ClassFactory exception in non-WinUI test contexts
+    /// rather than returning null — the test runner doesn't host a
+    /// dispatcher queue at all. Failure to set up the timer is fine:
+    /// the rest of the VM works without live stats, and headless test
+    /// runs don't need them.</summary>
     private void StartStatsTimer()
     {
-        var dq = DispatcherQueue.GetForCurrentThread();
+        DispatcherQueue? dq = null;
+        try { dq = DispatcherQueue.GetForCurrentThread(); }
+        catch { /* COM unavailable — test or background thread */ }
         if (dq is null) return;
         _statsTimer = dq.CreateTimer();
         _statsTimer.Interval = TimeSpan.FromSeconds(1);
@@ -153,7 +161,9 @@ public sealed partial class SshSessionViewModel : ObservableObject, IAsyncDispos
     public void StartHostStatsPolling()
     {
         if (_hostStatsTimer is not null || !HostStatsAvailable) return;
-        var dq = DispatcherQueue.GetForCurrentThread();
+        DispatcherQueue? dq = null;
+        try { dq = DispatcherQueue.GetForCurrentThread(); }
+        catch { /* COM unavailable */ }
         if (dq is null) return;
         _hostStatsCts = new CancellationTokenSource();
         _hostStatsTimer = dq.CreateTimer();
