@@ -90,6 +90,11 @@
                           ItemsSource="{x:Bind ViewModel.LocalEntries}"
                           DoubleTapped="LocalList_DoubleTapped"
                           RightTapped="LocalList_RightTapped"
+                          CanDragItems="True"
+                          DragItemsStarting="LocalList_DragItemsStarting"
+                          AllowDrop="True"
+                          DragOver="LocalList_DragOver"
+                          Drop="LocalList_Drop"
                           SelectionMode="Single"
                           Background="{StaticResource NxBg0}"
                           BorderThickness="0">
@@ -162,6 +167,11 @@
                           ItemsSource="{x:Bind ViewModel.RemoteEntries}"
                           DoubleTapped="RemoteList_DoubleTapped"
                           RightTapped="RemoteList_RightTapped"
+                          CanDragItems="True"
+                          DragItemsStarting="RemoteList_DragItemsStarting"
+                          AllowDrop="True"
+                          DragOver="RemoteList_DragOver"
+                          Drop="RemoteList_Drop"
                           SelectionMode="Single"
                           Background="{StaticResource NxBg0}"
                           BorderThickness="0">

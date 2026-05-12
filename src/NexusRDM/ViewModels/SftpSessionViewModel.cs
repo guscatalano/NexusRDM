@@ -253,6 +253,37 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
 
     // ── Misc commands ────────────────────────────────────────────────
 
+    /// <summary>Stream a remote file into memory + decode as UTF-8.
+    /// Returns null on failure or if the file exceeds
+    /// <see cref="PreviewMaxBytes"/>. NEVER writes anything to local
+    /// disk — the file lives only inside the returned string. Used by
+    /// the right-click "Preview" path in the SFTP view.</summary>
+    public async Task<string?> ReadRemoteTextAsync(SftpEntry entry, CancellationToken ct = default)
+    {
+        if (!IsConnected || entry.IsDirectory)            return null;
+        if (entry.Size > PreviewMaxBytes)                 return null;
+        var ms = new System.IO.MemoryStream(capacity: (int)Math.Min(entry.Size, 64 * 1024));
+        try
+        {
+            await _sftp.DownloadFileAsync(entry.FullPath, ms, progress: null, ct);
+        }
+        catch
+        {
+            return null;
+        }
+        // Decode as UTF-8 with fallback. Invalid bytes become U+FFFD
+        // replacement chars rather than throw — for a "show me what's
+        // in this file" UX, showing partial garbled content is better
+        // than failing outright.
+        var enc = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: false);
+        return enc.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+    }
+
+    /// <summary>Hard cap on inline-preview file size. 1 MB is enough
+    /// for typical config files, scripts, logs you'd realistically
+    /// preview; bigger files should be downloaded properly.</summary>
+    public const long PreviewMaxBytes = 1L * 1024 * 1024;
+
     [RelayCommand]
     public async Task CreateRemoteFolderAsync(string name)
     {
