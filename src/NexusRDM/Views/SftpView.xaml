@@ -106,11 +106,12 @@
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:SftpEntry">
-                            <Grid ColumnDefinitions="Auto,*,80,140" VerticalAlignment="Center">
+                            <Grid ColumnDefinitions="20,*,90,150" VerticalAlignment="Center">
                                 <FontIcon Grid.Column="0"
                                           Glyph="{x:Bind IsDirectory, Converter={StaticResource DirectoryGlyphConv}}"
                                           FontSize="11"
                                           Foreground="{StaticResource NxTx3}"
+                                          HorizontalAlignment="Left"
                                           Margin="0,0,6,0" />
                                 <TextBlock Grid.Column="1" Text="{x:Bind Name}"
                                            FontSize="12" Foreground="{StaticResource NxTx1}"
@@ -183,11 +184,12 @@
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:SftpEntry">
-                            <Grid ColumnDefinitions="Auto,*,80,140" VerticalAlignment="Center">
+                            <Grid ColumnDefinitions="20,*,90,150" VerticalAlignment="Center">
                                 <FontIcon Grid.Column="0"
                                           Glyph="{x:Bind IsDirectory, Converter={StaticResource DirectoryGlyphConv}}"
                                           FontSize="11"
                                           Foreground="{StaticResource NxTx3}"
+                                          HorizontalAlignment="Left"
                                           Margin="0,0,6,0" />
                                 <TextBlock Grid.Column="1" Text="{x:Bind Name}"
                                            FontSize="12" Foreground="{StaticResource NxTx1}"

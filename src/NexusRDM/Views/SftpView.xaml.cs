@@ -491,11 +491,113 @@ public sealed partial class SftpView : UserControl, ISessionView
             var del = new MenuFlyoutItem { Text = "Delete", Icon = new SymbolIcon(Symbol.Delete) };
             del.Click += async (_, _) => await ViewModel.DeleteRemoteAsync(entry);
             menu.Items.Add(del);
+
+            var props = new MenuFlyoutItem { Text = "Properties…", Icon = new SymbolIcon(Symbol.Setting) };
+            props.Click += async (_, _) => await ShowRemotePropertiesAsync(entry);
+            menu.Items.Add(props);
         }
         if (menu.Items.Count > 0)
             menu.ShowAt((FrameworkElement)sender, e.GetPosition((UIElement)sender));
         e.Handled = true;
         await System.Threading.Tasks.Task.CompletedTask;
+    }
+
+    /// <summary>Read-only details dialog for a remote entry. Shows
+    /// everything <see cref="SftpEntry"/> carries plus a properly
+    /// formatted <c>rwxr-xr-x</c> permission string + the octal
+    /// equivalent (000-777). The path field is selectable so the user
+    /// can copy it.</summary>
+    private async System.Threading.Tasks.Task ShowRemotePropertiesAsync(SftpEntry entry)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(110) },
+                                  new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) } },
+            ColumnSpacing = 8,
+            RowSpacing    = 4,
+            MinWidth      = 480,
+        };
+
+        int row = 0;
+        void AddField(string label, string value, bool selectable = false)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var l = new TextBlock
+            {
+                Text       = label,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Opacity    = 0.7,
+                FontSize   = 12,
+            };
+            Grid.SetRow(l, row); Grid.SetColumn(l, 0);
+            grid.Children.Add(l);
+
+            FrameworkElement v;
+            if (selectable)
+            {
+                v = new TextBox
+                {
+                    Text       = value,
+                    IsReadOnly = true,
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas"),
+                    FontSize   = 12,
+                    BorderThickness = new Thickness(0),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    Padding    = new Thickness(0),
+                };
+            }
+            else
+            {
+                v = new TextBlock
+                {
+                    Text         = value,
+                    TextWrapping = TextWrapping.Wrap,
+                    FontFamily   = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas"),
+                    FontSize     = 12,
+                };
+            }
+            Grid.SetRow(v, row); Grid.SetColumn(v, 1);
+            grid.Children.Add(v);
+            row++;
+        }
+
+        var type = entry.IsSymlink ? "Symlink" : entry.IsDirectory ? "Directory" : "File";
+        AddField("Name",       entry.Name);
+        AddField("Path",       entry.FullPath, selectable: true);
+        AddField("Type",       type);
+        AddField("Size",       entry.IsDirectory ? "—" : $"{entry.Size:N0} bytes");
+        AddField("Modified",   entry.LastModified.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"));
+        AddField("Permissions", $"{FormatPermissions(entry.Permissions, entry.IsDirectory, entry.IsSymlink)}  ({Convert.ToString(entry.Permissions, 8).PadLeft(3, '0')})");
+
+        var dlg = new ContentDialog
+        {
+            XamlRoot        = XamlRoot,
+            Title           = entry.Name,
+            Content         = grid,
+            CloseButtonText = "Close",
+            DefaultButton   = ContentDialogButton.Close,
+        };
+        await dlg.ShowAsync();
+    }
+
+    /// <summary>Render a POSIX permission triplet as the classic
+    /// <c>rwxr-xr-x</c> form with a leading type char (<c>d</c> for
+    /// directory, <c>l</c> for symlink, <c>-</c> for regular file).
+    /// Matches what <c>ls -l</c> produces on the server.</summary>
+    private static string FormatPermissions(short mode, bool isDir, bool isSymlink)
+    {
+        var sb = new System.Text.StringBuilder(10);
+        sb.Append(isSymlink ? 'l' : isDir ? 'd' : '-');
+        sb.Append((mode & 0b100_000_000) != 0 ? 'r' : '-');
+        sb.Append((mode & 0b010_000_000) != 0 ? 'w' : '-');
+        sb.Append((mode & 0b001_000_000) != 0 ? 'x' : '-');
+        sb.Append((mode & 0b000_100_000) != 0 ? 'r' : '-');
+        sb.Append((mode & 0b000_010_000) != 0 ? 'w' : '-');
+        sb.Append((mode & 0b000_001_000) != 0 ? 'x' : '-');
+        sb.Append((mode & 0b000_000_100) != 0 ? 'r' : '-');
+        sb.Append((mode & 0b000_000_010) != 0 ? 'w' : '-');
+        sb.Append((mode & 0b000_000_001) != 0 ? 'x' : '-');
+        return sb.ToString();
     }
 
     /// <summary>Read the remote file into memory and show it in a
