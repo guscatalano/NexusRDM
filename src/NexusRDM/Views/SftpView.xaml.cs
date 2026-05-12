@@ -34,20 +34,33 @@ public sealed partial class SftpView : UserControl, ISessionView
     }
 
     /// <summary>"Destination already exists" dialog. Three options:
-    /// overwrite, skip, cancel the rest of the batch. Plus a checkbox
-    /// that promotes the choice to apply to every remaining conflict
-    /// in this batch — so a recursive upload of 200 files with 50
-    /// duplicates doesn't become 50 dialogs.</summary>
+    /// overwrite, skip, cancel the rest of the batch. The "Apply to
+    /// remaining" checkbox only appears when there are actually more
+    /// files queued behind this one — for a single-file drop it'd be
+    /// a meaningless option.</summary>
     private async Task<SftpSessionViewModel.ConflictChoice> AskOverwriteAsync(string destPath, bool isRemote)
     {
         var location = isRemote ? "server" : "local disk";
-        var msg = new TextBlock
+        var stack = new StackPanel { Spacing = 8 };
+        stack.Children.Add(new TextBlock
         {
             Text         = $"\"{destPath}\" already exists on the {location}.",
             TextWrapping = TextWrapping.Wrap,
-        };
-        var apply = new CheckBox { Content = "Apply to remaining conflicts in this batch" };
-        var stack = new StackPanel { Spacing = 8, Children = { msg, apply } };
+        });
+
+        // Only show the bulk-action checkbox when there's actually a
+        // bulk to apply it to. QueueDepth is the count remaining AFTER
+        // the current file (which has already been dequeued by the
+        // pump), so a single-file drop reads as 0 here.
+        CheckBox? apply = null;
+        if (ViewModel.QueueDepth > 0)
+        {
+            apply = new CheckBox
+            {
+                Content = $"Apply to remaining conflicts ({ViewModel.QueueDepth} files left)",
+            };
+            stack.Children.Add(apply);
+        }
         var dlg = new ContentDialog
         {
             XamlRoot            = XamlRoot,
@@ -55,11 +68,11 @@ public sealed partial class SftpView : UserControl, ISessionView
             Content             = stack,
             PrimaryButtonText   = "Overwrite",
             SecondaryButtonText = "Skip",
-            CloseButtonText     = "Cancel batch",
+            CloseButtonText     = ViewModel.QueueDepth > 0 ? "Cancel batch" : "Cancel",
             DefaultButton       = ContentDialogButton.Primary,
         };
-        var result   = await dlg.ShowAsync();
-        bool toAll   = apply.IsChecked == true;
+        var result = await dlg.ShowAsync();
+        bool toAll = apply?.IsChecked == true;
         return result switch
         {
             ContentDialogResult.Primary   => toAll ? SftpSessionViewModel.ConflictChoice.OverwriteAll : SftpSessionViewModel.ConflictChoice.Overwrite,
