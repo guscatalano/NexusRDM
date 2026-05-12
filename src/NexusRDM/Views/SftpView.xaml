@@ -205,12 +205,12 @@
             </Grid>
         </Grid>
 
-        <!-- Bottom status bar — transfer progress + queue depth. -->
+        <!-- Bottom status bar — transfer progress + batch aggregates. -->
         <Border Grid.Row="2"
                 Background="#1E1E28"
                 BorderBrush="{StaticResource NxBrd}"
                 BorderThickness="0,1,0,0">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="10,0">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" Margin="10,0">
                 <TextBlock Grid.Column="0" Text="SFTP"
                            Style="{StaticResource StatusTextStyle}" Margin="0,0,12,0" />
                 <ProgressBar Grid.Column="1" Width="120"
@@ -218,8 +218,12 @@
                              Minimum="0" Maximum="100"
                              VerticalAlignment="Center" Margin="0,0,12,0" />
                 <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.TransferStatus, Mode=OneWay}"
-                           Style="{StaticResource StatusTextStyle}" />
-                <TextBlock Grid.Column="3"
+                           Style="{StaticResource StatusTextStyle}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="280" />
+                <TextBlock Grid.Column="3" Text="{x:Bind ViewModel.BatchProgress, Mode=OneWay}"
+                           Style="{StaticResource StatusTextStyle}"
+                           Margin="14,0,0,0" />
+                <TextBlock Grid.Column="4"
                            Text="{x:Bind ViewModel.QueueDepth, Mode=OneWay}"
                            Style="{StaticResource StatusTextStyle}" />
             </Grid>

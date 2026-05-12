@@ -48,6 +48,12 @@ public interface ISftpSession : IAsyncDisposable
     Task CreateDirectoryAsync(string path, CancellationToken ct = default);
     Task DeleteAsync(string path, bool isDirectory, CancellationToken ct = default);
     Task RenameAsync(string fromPath, string toPath, CancellationToken ct = default);
+
+    /// <summary>Return the remote file's last-write timestamp. Used by
+    /// edit-in-place conflict detection: we snapshot mtime at download
+    /// time and compare before each re-upload. Returns null on stat
+    /// failure (file deleted, permission denied, etc.).</summary>
+    Task<DateTimeOffset?> GetRemoteMTimeAsync(string path, CancellationToken ct = default);
 }
 
 /// <summary>Audit-loggable transfer event raised when a file finishes

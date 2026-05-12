@@ -386,7 +386,36 @@ public sealed partial class SftpView : UserControl, ISessionView
             ToolTipService.SetToolTip(edit,
                 "Download to a temp file, open in your default editor, " +
                 "auto-upload on save. The tab keeps watching until you close it.");
-            edit.Click += async (_, _) => await ViewModel.BeginEditInPlaceAsync(entry);
+            edit.Click += async (_, _) =>
+            {
+                var session = await ViewModel.BeginEditInPlaceAsync(entry);
+                if (session is null) return;
+                // Conflict callback runs on the watcher's threadpool —
+                // hop to the UI thread to actually show the dialog.
+                session.OnConflictDetected = remoteMtime =>
+                {
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>(
+                        System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        var dlg = new ContentDialog
+                        {
+                            XamlRoot = XamlRoot,
+                            Title    = $"Conflict on {entry.Name}",
+                            Content  = $"The server's copy of \"{entry.Name}\" was modified at " +
+                                       $"{remoteMtime.LocalDateTime:G}, after you started editing.\n\n" +
+                                       "Overwriting will lose the server-side changes. " +
+                                       "Cancelling keeps the file open in your editor; the next save will " +
+                                       "prompt again.",
+                            PrimaryButtonText = "Overwrite server",
+                            CloseButtonText   = "Cancel save",
+                            DefaultButton     = ContentDialogButton.Close,
+                        };
+                        tcs.SetResult(await dlg.ShowAsync() == ContentDialogResult.Primary);
+                    });
+                    return tcs.Task;
+                };
+            };
             menu.Items.Add(edit);
             if (alreadyEditing)
             {

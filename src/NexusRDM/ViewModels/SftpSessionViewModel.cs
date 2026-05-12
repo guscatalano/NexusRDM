@@ -54,6 +54,16 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     [ObservableProperty] private int    _transferPercent;
     [ObservableProperty] private int    _queueDepth;
 
+    // Aggregate progress across the current batch (queue lifetime).
+    // Reset to zero when the queue drains. Lets the status bar show
+    // "23/147 files · 12.5 / 89 MB" so a recursive copy of 200 files
+    // isn't just "Upload foo.txt · queue: 199".
+    [ObservableProperty] private int    _queueDoneFiles;
+    [ObservableProperty] private int    _queueTotalFiles;
+    [ObservableProperty] private long   _queueDoneBytes;
+    [ObservableProperty] private long   _queueTotalBytes;
+    [ObservableProperty] private string _batchProgress = string.Empty;
+
     public SftpSessionViewModel(
         ConnectionProfile profile, ISftpSession sftp, SessionManager mgr)
     {
@@ -182,10 +192,9 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
 
     public void EnqueueDownload(SftpEntry remote)
     {
-        if (remote.IsDirectory) return; // dir download is a follow-up
+        if (remote.IsDirectory) return; // dir download path is EnqueueDownloadDirectoryAsync
         var localDest = Path.Combine(LocalPath, remote.Name);
-        _queue.Enqueue(new TransferRequest(SftpTransferDirection.Download, localDest, remote.FullPath, remote.Size));
-        QueueDepth = _queue.Count;
+        EnqueueOne(new TransferRequest(SftpTransferDirection.Download, localDest, remote.FullPath, remote.Size));
         _ = PumpQueueAsync();
     }
 
@@ -193,9 +202,42 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     {
         if (local.IsDirectory) return;
         var remoteDest = RemotePath.TrimEnd('/') + "/" + local.Name;
-        _queue.Enqueue(new TransferRequest(SftpTransferDirection.Upload, local.FullPath, remoteDest, local.Size));
-        QueueDepth = _queue.Count;
+        EnqueueOne(new TransferRequest(SftpTransferDirection.Upload, local.FullPath, remoteDest, local.Size));
         _ = PumpQueueAsync();
+    }
+
+    /// <summary>Single funnel for adding to the transfer queue.
+    /// Maintains <see cref="QueueTotalFiles"/> + <see cref="QueueTotalBytes"/>
+    /// so the status bar can show batch-wide aggregates regardless of
+    /// whether the enqueue came from a recursive walk or a single
+    /// drag-and-drop.</summary>
+    private void EnqueueOne(TransferRequest req)
+    {
+        _queue.Enqueue(req);
+        QueueTotalFiles++;
+        QueueTotalBytes += Math.Max(0, req.TotalSize);
+        QueueDepth = _queue.Count;
+        UpdateBatchProgress();
+    }
+
+    private void UpdateBatchProgress()
+    {
+        if (QueueTotalFiles == 0)
+        {
+            BatchProgress = string.Empty;
+            return;
+        }
+        BatchProgress =
+            $"{QueueDoneFiles}/{QueueTotalFiles} files · " +
+            $"{FormatBytes(QueueDoneBytes)} / {FormatBytes(QueueTotalBytes)}";
+    }
+
+    private static string FormatBytes(long n)
+    {
+        if (n < 1024)        return $"{n} B";
+        if (n < 1024 * 1024) return $"{n / 1024.0:F1} KB";
+        if (n < 1024L * 1024 * 1024) return $"{n / (1024.0 * 1024):F1} MB";
+        return $"{n / (1024.0 * 1024 * 1024):F2} GB";
     }
 
     /// <summary>Recursive download. Walk the remote tree rooted at
@@ -209,7 +251,6 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         if (!IsConnected || !remoteDir.IsDirectory) return;
         var localRoot = System.IO.Path.Combine(LocalPath, remoteDir.Name);
         await WalkRemoteAsync(remoteDir.FullPath, localRoot);
-        QueueDepth = _queue.Count;
         _ = PumpQueueAsync();
     }
 
@@ -239,7 +280,7 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             }
             else
             {
-                _queue.Enqueue(new TransferRequest(
+                EnqueueOne(new TransferRequest(
                     SftpTransferDirection.Download, localChild, e.FullPath, e.Size));
             }
         }
@@ -256,7 +297,6 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         try { await _sftp.CreateDirectoryAsync(remoteRoot); }
         catch { /* may already exist */ }
         await WalkLocalAsync(localDir.FullPath, remoteRoot);
-        QueueDepth = _queue.Count;
         _ = PumpQueueAsync();
     }
 
@@ -276,7 +316,7 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
                 var name = System.IO.Path.GetFileName(file);
                 long size = 0;
                 try { size = new System.IO.FileInfo(file).Length; } catch { }
-                _queue.Enqueue(new TransferRequest(
+                EnqueueOne(new TransferRequest(
                     SftpTransferDirection.Upload, file, remotePath + "/" + name, size));
             }
         }
@@ -297,9 +337,19 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
                 var req = _queue.Dequeue();
                 QueueDepth = _queue.Count;
                 await RunOneTransferAsync(req);
+                QueueDoneFiles++;
+                QueueDoneBytes += Math.Max(0, req.TotalSize);
+                UpdateBatchProgress();
             }
             TransferStatus  = "Idle";
             TransferPercent = 0;
+            // Reset batch aggregates so the next single-file drop
+            // starts from 0/1, not N/N+1.
+            QueueDoneFiles  = 0;
+            QueueTotalFiles = 0;
+            QueueDoneBytes  = 0;
+            QueueTotalBytes = 0;
+            UpdateBatchProgress();
             // Refresh both panes — the just-completed transfer changed
             // sizes / added an entry on one side.
             await RefreshLocalAsync();
@@ -469,6 +519,11 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         }
 
         var session = new EditSession(this, remote.FullPath, tempPath);
+        // Snapshot the remote mtime right after download so the
+        // conflict check has a meaningful baseline. If the stat fails
+        // we leave baseline null → no conflict detection (best effort,
+        // matches "ignore if server doesn't support stat" behaviour).
+        session.BaselineMTime = await _sftp.GetRemoteMTimeAsync(remote.FullPath);
         _activeEdits[remote.FullPath] = session;
         session.Start();
         return session;
@@ -503,6 +558,22 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
 
         public string RemotePath { get; }
         public string TempPath   { get; }
+
+        /// <summary>The remote file's mtime when we downloaded it.
+        /// Compared against the live remote mtime before each
+        /// re-upload to detect "someone else edited the file on the
+        /// server while you were editing locally" conflicts. Null
+        /// when the initial stat failed (no conflict detection).</summary>
+        public DateTimeOffset? BaselineMTime { get; internal set; }
+
+        /// <summary>Conflict-resolution callback. Invoked on the
+        /// threadpool when a conflict is detected; the implementation
+        /// is responsible for hopping to the UI thread to prompt the
+        /// user. Return true to overwrite the server version, false
+        /// to skip this upload (the watcher stays attached and the
+        /// next save can prompt again). Null = silent overwrite
+        /// (matches v1 behaviour).</summary>
+        public Func<DateTimeOffset, Task<bool>>? OnConflictDetected { get; set; }
 
         internal EditSession(SftpSessionViewModel owner, string remotePath, string tempPath)
         {
@@ -555,6 +626,30 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             _uploading = true;
             try
             {
+                // Conflict check: has the remote file changed since we
+                // downloaded it? If so, hand off to the view's callback
+                // to ask the user how to resolve. No callback installed
+                // = silent overwrite (v1 behaviour preserved).
+                if (BaselineMTime is DateTimeOffset baseline)
+                {
+                    var current = await _owner._sftp.GetRemoteMTimeAsync(RemotePath);
+                    if (current is DateTimeOffset c && c > baseline.AddSeconds(1))
+                    {
+                        // 1s slop tolerates filesystem mtime quantisation
+                        // (some FS round to whole seconds, the upload we
+                        // just made might appear "newer" by half a second).
+                        bool overwrite = true;
+                        if (OnConflictDetected is not null)
+                            overwrite = await OnConflictDetected(c);
+                        if (!overwrite)
+                        {
+                            NexusRDM.Core.Diagnostics.SshLog.Info(
+                                $"Edit-in-place conflict skipped: {RemotePath} (remote mtime {c:O} > baseline {baseline:O})");
+                            return;
+                        }
+                    }
+                }
+
                 // Retry the open a few times — editors sometimes hold
                 // an exclusive handle for a beat after save.
                 System.IO.FileStream? fs = null;
@@ -571,6 +666,9 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
                 {
                     await _owner._sftp.UploadFileAsync(fs, RemotePath);
                 }
+                // Refresh baseline so the next save doesn't re-trigger
+                // the conflict path against our own upload.
+                BaselineMTime = await _owner._sftp.GetRemoteMTimeAsync(RemotePath);
                 NexusRDM.Core.Diagnostics.SshLog.Info($"Edit-in-place re-uploaded: {RemotePath}");
             }
             catch (Exception ex)

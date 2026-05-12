@@ -220,6 +220,33 @@ public partial class App : Application
         // we forward here. Tag every message with [ssh] for easy grep.
         NexusRDM.Core.Diagnostics.SshLog.Sink = msg => Log.Debug("[ssh] {Msg}", msg);
 
+        // Best-effort sweep of leftover edit-in-place temp directories
+        // from prior runs. Each session creates a GUID'd subdir under
+        // %TEMP%\NexusRDM-edit\<connId>\<sessionGuid>; on graceful
+        // shutdown EditSession.Dispose deletes its own subdir, but if
+        // the app crashed those subdirs leak. Nothing live can be using
+        // them at app start (no concurrent app instances of NexusRDM
+        // share state), so blow them all away.
+        try
+        {
+            var editRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "NexusRDM-edit");
+            if (System.IO.Directory.Exists(editRoot))
+            {
+                foreach (var dir in System.IO.Directory.EnumerateDirectories(editRoot))
+                {
+                    try { System.IO.Directory.Delete(dir, recursive: true); }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("[ssh] Could not delete stale edit-in-place dir {Dir}: {Err}", dir, ex.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[ssh] Edit-in-place temp sweep failed: {Err}", ex.Message);
+        }
+
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddSerilog(dispose: true));
         services.AddNexusData(DbPath);

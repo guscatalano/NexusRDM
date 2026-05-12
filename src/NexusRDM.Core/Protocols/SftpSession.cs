@@ -213,6 +213,21 @@ public sealed class SftpSession : ISftpSession
         return Task.Run(() => client.RenameFile(fromPath, toPath), ct);
     }
 
+    public Task<DateTimeOffset?> GetRemoteMTimeAsync(string path, CancellationToken ct = default)
+    {
+        if (_client is null || !_client.IsConnected) return Task.FromResult<DateTimeOffset?>(null);
+        var client = _client;
+        return Task.Run<DateTimeOffset?>(() =>
+        {
+            try
+            {
+                var attrs = client.GetAttributes(path);
+                return new DateTimeOffset(attrs.LastWriteTime);
+            }
+            catch { return null; }
+        }, ct);
+    }
+
     /// <summary>Pack SSH.NET's per-bit permission booleans into a
     /// classic octal mode short (e.g. 0755). Owner / group / others
     /// triplets in the low 9 bits — what <c>ls -l</c> displays.</summary>
