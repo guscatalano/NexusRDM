@@ -24,7 +24,48 @@ public sealed partial class SftpView : UserControl, ISessionView
         ViewModel = vm;
         InitializeComponent();
         HostLabel.Text = vm.Host;
+        // Install the conflict-resolution callback. Runs on the UI
+        // thread since RunOneTransferAsync is awaited from PumpQueueAsync
+        // which is on the UI thread (the file I/O inside happens on
+        // Task.Run, but RunOneTransferAsync itself is invoked from
+        // the UI dispatcher).
+        ViewModel.OnConflictAsk = AskOverwriteAsync;
         Loaded += OnLoaded;
+    }
+
+    /// <summary>"Destination already exists" dialog. Three options:
+    /// overwrite, skip, cancel the rest of the batch. Plus a checkbox
+    /// that promotes the choice to apply to every remaining conflict
+    /// in this batch — so a recursive upload of 200 files with 50
+    /// duplicates doesn't become 50 dialogs.</summary>
+    private async Task<SftpSessionViewModel.ConflictChoice> AskOverwriteAsync(string destPath, bool isRemote)
+    {
+        var location = isRemote ? "server" : "local disk";
+        var msg = new TextBlock
+        {
+            Text         = $"\"{destPath}\" already exists on the {location}.",
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var apply = new CheckBox { Content = "Apply to remaining conflicts in this batch" };
+        var stack = new StackPanel { Spacing = 8, Children = { msg, apply } };
+        var dlg = new ContentDialog
+        {
+            XamlRoot            = XamlRoot,
+            Title               = "Overwrite?",
+            Content             = stack,
+            PrimaryButtonText   = "Overwrite",
+            SecondaryButtonText = "Skip",
+            CloseButtonText     = "Cancel batch",
+            DefaultButton       = ContentDialogButton.Primary,
+        };
+        var result   = await dlg.ShowAsync();
+        bool toAll   = apply.IsChecked == true;
+        return result switch
+        {
+            ContentDialogResult.Primary   => toAll ? SftpSessionViewModel.ConflictChoice.OverwriteAll : SftpSessionViewModel.ConflictChoice.Overwrite,
+            ContentDialogResult.Secondary => toAll ? SftpSessionViewModel.ConflictChoice.SkipAll      : SftpSessionViewModel.ConflictChoice.Skip,
+            _                              => SftpSessionViewModel.ConflictChoice.Cancel,
+        };
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -68,6 +109,13 @@ public sealed partial class SftpView : UserControl, ISessionView
     {
         if (e.Key == VirtualKey.Enter)
         {
+            // TextBox's TwoWay binding only pushes back on LostFocus —
+            // hitting Enter alone doesn't update ViewModel.LocalPath
+            // before we refresh. Read the box directly and force the
+            // VM into sync, then refresh against the new path.
+            var typed = LocalPathBox.Text?.Trim();
+            if (!string.IsNullOrWhiteSpace(typed) && typed != ViewModel.LocalPath)
+                ViewModel.LocalPath = typed;
             await ViewModel.RefreshLocalAsync();
             e.Handled = true;
         }
@@ -512,6 +560,13 @@ public sealed partial class SftpView : UserControl, ISessionView
     {
         if (e.Key == VirtualKey.Enter)
         {
+            // Same Enter-vs-LostFocus issue as LocalPathBox: TextBox.Text
+            // doesn't push to the bound source until the box loses
+            // focus. Sync the typed value into the VM before refresh
+            // so we list the directory the user typed, not the old one.
+            var typed = RemotePathBox.Text?.Trim();
+            if (!string.IsNullOrWhiteSpace(typed) && typed != ViewModel.RemotePath)
+                ViewModel.RemotePath = typed;
             await ViewModel.RefreshRemoteAsync();
             e.Handled = true;
         }

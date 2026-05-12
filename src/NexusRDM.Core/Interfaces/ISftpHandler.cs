@@ -54,6 +54,12 @@ public interface ISftpSession : IAsyncDisposable
     /// time and compare before each re-upload. Returns null on stat
     /// failure (file deleted, permission denied, etc.).</summary>
     Task<DateTimeOffset?> GetRemoteMTimeAsync(string path, CancellationToken ct = default);
+
+    /// <summary>True if a remote file or directory exists at <paramref name="path"/>.
+    /// Used by transfer-time overwrite confirmation. Failures (permission
+    /// denied, broken symlink, transient I/O) return false rather than
+    /// throw — a "can't tell" answer should never abort a transfer.</summary>
+    Task<bool> ExistsAsync(string path, CancellationToken ct = default);
 }
 
 /// <summary>Audit-loggable transfer event raised when a file finishes

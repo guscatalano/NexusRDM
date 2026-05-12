@@ -228,6 +228,17 @@ public sealed class SftpSession : ISftpSession
         }, ct);
     }
 
+    public Task<bool> ExistsAsync(string path, CancellationToken ct = default)
+    {
+        if (_client is null || !_client.IsConnected) return Task.FromResult(false);
+        var client = _client;
+        return Task.Run(() =>
+        {
+            try { return client.Exists(path); }
+            catch { return false; }
+        }, ct);
+    }
+
     /// <summary>Pack SSH.NET's per-bit permission booleans into a
     /// classic octal mode short (e.g. 0755). Owner / group / others
     /// triplets in the low 9 bits — what <c>ls -l</c> displays.</summary>

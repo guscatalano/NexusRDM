@@ -25,6 +25,22 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
     private readonly SessionManager _mgr;
     private readonly Queue<TransferRequest> _queue = new();
     private bool _pumpRunning;
+    private ConflictChoice? _appliedToRemaining;
+
+    public enum ConflictChoice
+    {
+        Overwrite,
+        Skip,
+        Cancel,
+        OverwriteAll,
+        SkipAll,
+    }
+
+    /// <summary>Hook the View installs to ask the user how to resolve
+    /// a destination-already-exists conflict at transfer time. Runs on
+    /// the UI thread (caller hops via DispatcherQueue if needed).
+    /// Null = silent overwrite (matches the pre-MVP behaviour).</summary>
+    public Func<string /* destPath */, bool /* isRemoteDest */, Task<ConflictChoice>>? OnConflictAsk { get; set; }
 
     public ISftpSession Sftp => _sftp;
 
@@ -344,11 +360,14 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             TransferStatus  = "Idle";
             TransferPercent = 0;
             // Reset batch aggregates so the next single-file drop
-            // starts from 0/1, not N/N+1.
-            QueueDoneFiles  = 0;
-            QueueTotalFiles = 0;
-            QueueDoneBytes  = 0;
-            QueueTotalBytes = 0;
+            // starts from 0/1, not N/N+1. Also drop any "apply to
+            // remaining" choice — a fresh queue starts with a fresh
+            // conflict policy.
+            QueueDoneFiles      = 0;
+            QueueTotalFiles     = 0;
+            QueueDoneBytes      = 0;
+            QueueTotalBytes     = 0;
+            _appliedToRemaining = null;
             UpdateBatchProgress();
             // Refresh both panes — the just-completed transfer changed
             // sizes / added an entry on one side.
@@ -365,6 +384,45 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
             : $"Download {Path.GetFileName(req.RemotePath)}";
         TransferStatus  = label;
         TransferPercent = 0;
+
+        // Pre-flight: does the destination already exist? If yes, ask
+        // the user (or apply the previously-chosen "all" answer). Only
+        // ask when a handler is installed — without one, we preserve
+        // the silent-overwrite behaviour callers might depend on.
+        if (OnConflictAsk is not null)
+        {
+            bool destExists = req.Direction == SftpTransferDirection.Upload
+                ? await _sftp.ExistsAsync(req.RemotePath)
+                : System.IO.File.Exists(req.LocalPath);
+            if (destExists)
+            {
+                ConflictChoice choice;
+                if (_appliedToRemaining is ConflictChoice.OverwriteAll) choice = ConflictChoice.Overwrite;
+                else if (_appliedToRemaining is ConflictChoice.SkipAll)  choice = ConflictChoice.Skip;
+                else
+                {
+                    var destForPrompt = req.Direction == SftpTransferDirection.Upload
+                        ? req.RemotePath : req.LocalPath;
+                    choice = await OnConflictAsk(destForPrompt, req.Direction == SftpTransferDirection.Upload);
+                    if (choice == ConflictChoice.OverwriteAll || choice == ConflictChoice.SkipAll)
+                        _appliedToRemaining = choice;
+                }
+                switch (choice)
+                {
+                    case ConflictChoice.Skip:
+                    case ConflictChoice.SkipAll:
+                        TransferStatus = $"Skipped: {Path.GetFileName(req.RemotePath)}";
+                        return;
+                    case ConflictChoice.Cancel:
+                        // Drop the rest of the queue so the user isn't
+                        // asked again for every remaining conflict.
+                        _queue.Clear();
+                        QueueDepth = 0;
+                        TransferStatus = "Cancelled.";
+                        return;
+                }
+            }
+        }
         var progress = new Progress<long>(bytes =>
         {
             if (req.TotalSize > 0)
