@@ -541,6 +541,20 @@ public sealed partial class SftpSessionViewModel : ObservableObject, IAsyncDispo
         await RefreshRemoteAsync();
     }
 
+    /// <summary>Create an empty text file at <paramref name="name"/>
+    /// inside the current remote directory. Equivalent to <c>touch</c>
+    /// in shell terms. Uploads a zero-byte stream rather than going
+    /// through a temp file on local disk. Refreshes the remote pane
+    /// after so the new entry shows up immediately.</summary>
+    public async Task CreateRemoteFileAsync(string name)
+    {
+        if (!IsConnected || string.IsNullOrWhiteSpace(name)) return;
+        var path = RemotePath.TrimEnd('/') + "/" + name;
+        using var ms = new System.IO.MemoryStream(Array.Empty<byte>());
+        await _sftp.UploadFileAsync(ms, path);
+        await RefreshRemoteAsync();
+    }
+
     /// <summary>Delete a local file or directory. Symmetric with the
     /// existing remote-delete; only used by the local-pane right-click
     /// menu. No undo / recycle bin in v1 — straight to permanent

@@ -348,7 +348,9 @@ public sealed partial class SftpView : UserControl, ISessionView
     }
 
     /// <summary>Classic hex+ASCII dump dialog. 16-byte rows with a
-    /// gap between the two 8-byte halves, ASCII column on the right.</summary>
+    /// gap between the two 8-byte halves, ASCII column on the right.
+    /// Word wrap is on because the user asked for it — accept that
+    /// narrow dialogs will break the column alignment.</summary>
     private async System.Threading.Tasks.Task PreviewHexAsync(SftpEntry entry)
     {
         var bytes = await ViewModel.ReadRemoteBytesAsync(entry, HexPreviewMaxBytes);
@@ -360,24 +362,52 @@ public sealed partial class SftpView : UserControl, ISessionView
         var dump = FormatHexDump(bytes);
         var tb = new TextBox
         {
-            Text             = dump,
-            IsReadOnly       = true,
-            AcceptsReturn    = true,
-            TextWrapping     = TextWrapping.NoWrap,
-            FontFamily       = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas, Courier New"),
-            FontSize         = 12,
-            Height           = 480,
-            MinWidth         = 760,
+            Text         = dump,
+            IsReadOnly   = true,
+            AcceptsReturn= true,
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily   = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas, Courier New"),
+            FontSize     = 12,
+            Height       = 480,
+            MinWidth     = 760,
         };
-        ScrollViewer.SetHorizontalScrollBarVisibility(tb, ScrollBarVisibility.Auto);
-        ScrollViewer.SetVerticalScrollBarVisibility(tb,   ScrollBarVisibility.Auto);
+        ScrollViewer.SetVerticalScrollBarVisibility(tb, ScrollBarVisibility.Auto);
+
+        await ShowPreviewDialogAsync(
+            title:    $"{entry.Name} — {entry.Size:N0} bytes (hex preview, not saved)",
+            content:  tb,
+            copyText: dump);
+    }
+
+    /// <summary>Shared dialog frame for text + hex previews. Wires a
+    /// secondary "Copy" button that pushes the supplied text to the
+    /// clipboard without dismissing the dialog — so the user can
+    /// keep reading after a copy.</summary>
+    private async System.Threading.Tasks.Task ShowPreviewDialogAsync(string title, FrameworkElement content, string copyText)
+    {
         var dlg = new ContentDialog
         {
-            XamlRoot        = XamlRoot,
-            Title           = $"{entry.Name} — {entry.Size:N0} bytes (hex preview, not saved)",
-            Content         = tb,
-            CloseButtonText = "Close",
-            DefaultButton   = ContentDialogButton.Close,
+            XamlRoot            = XamlRoot,
+            Title               = title,
+            Content             = content,
+            PrimaryButtonText   = "Copy",
+            CloseButtonText     = "Close",
+            DefaultButton       = ContentDialogButton.Close,
+        };
+        dlg.PrimaryButtonClick += (_, args) =>
+        {
+            // Don't dismiss — let the user copy and keep reading.
+            args.Cancel = true;
+            try
+            {
+                var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                dp.SetText(copyText);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+            }
+            catch (Exception ex)
+            {
+                NexusRDM.Core.Diagnostics.SshLog.Warn($"Preview copy failed: {ex.Message}");
+            }
         };
         await dlg.ShowAsync();
     }
@@ -701,32 +731,29 @@ public sealed partial class SftpView : UserControl, ISessionView
         }
 
         // Read-only TextBox inside a scrollable dialog. Monospace
-        // font so logs / configs line up correctly.
+        // font so logs / configs line up correctly. TextWrapping.Wrap
+        // for the preview UX — long single-line content (minified
+        // JSON, base64 blobs) was rendering as one horizontal line
+        // running off the right edge.
         var tb = new TextBox
         {
-            Text             = text,
-            IsReadOnly       = true,
-            AcceptsReturn    = true,
-            TextWrapping     = TextWrapping.NoWrap,
-            FontFamily       = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas, Courier New"),
-            FontSize         = 12,
-            Height           = 480,
-            MinWidth         = 760,
+            Text                = text,
+            IsReadOnly          = true,
+            AcceptsReturn       = true,
+            TextWrapping        = TextWrapping.Wrap,
+            FontFamily          = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono, Consolas, Courier New"),
+            FontSize            = 12,
+            Height              = 480,
+            MinWidth            = 760,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment   = VerticalAlignment.Stretch,
         };
-        ScrollViewer.SetHorizontalScrollBarVisibility(tb, ScrollBarVisibility.Auto);
-        ScrollViewer.SetVerticalScrollBarVisibility(tb,   ScrollBarVisibility.Auto);
+        ScrollViewer.SetVerticalScrollBarVisibility(tb, ScrollBarVisibility.Auto);
 
-        var dlg = new ContentDialog
-        {
-            XamlRoot          = XamlRoot,
-            Title             = $"{entry.Name} — {entry.Size:N0} bytes (preview, not saved)",
-            Content           = tb,
-            CloseButtonText   = "Close",
-            DefaultButton     = ContentDialogButton.Close,
-        };
-        await dlg.ShowAsync();
+        await ShowPreviewDialogAsync(
+            title:   $"{entry.Name} — {entry.Size:N0} bytes (preview, not saved)",
+            content: tb,
+            copyText: text);
     }
 
     private async void RemotePathBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -774,6 +801,25 @@ public sealed partial class SftpView : UserControl, ISessionView
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(tb.Text))
             await ViewModel.CreateRemoteFolderAsync(tb.Text.Trim());
+    }
+
+    private async void RemoteNewFile_Click(object sender, RoutedEventArgs e)
+    {
+        // Same shape as the New folder dialog. Uploads a zero-byte
+        // stream — equivalent to `touch <name>` on the server.
+        var tb     = new TextBox { PlaceholderText = "filename.txt" };
+        var dialog = new ContentDialog
+        {
+            XamlRoot          = XamlRoot,
+            Title             = "New remote file",
+            Content           = tb,
+            PrimaryButtonText = "Create",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Primary,
+        };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(tb.Text))
+            await ViewModel.CreateRemoteFileAsync(tb.Text.Trim());
     }
 
     // ── Cross-launch terminal ────────────────────────────────────────

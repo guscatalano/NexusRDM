@@ -17,6 +17,7 @@ public sealed class FakeSftpSession : ISftpSession
     public string Username     { get; set; } = "demo";
 
     public event EventHandler? Disconnected;
+    public event EventHandler? Connected;
     public event EventHandler<SftpTransferEventArgs>? TransferCompleted;
 
     /// <summary>Pre-loaded "remote" tree. Key = full path, value =
@@ -52,6 +53,7 @@ public sealed class FakeSftpSession : ISftpSession
     public Task ConnectAsync(CancellationToken ct = default)
     {
         IsConnected = true;
+        Connected?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 

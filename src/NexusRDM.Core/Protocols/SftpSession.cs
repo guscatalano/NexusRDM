@@ -31,6 +31,7 @@ public sealed class SftpSession : ISftpSession
     public string Username     => _username;
 
     public event EventHandler? Disconnected;
+    public event EventHandler? Connected;
     public event EventHandler<SftpTransferEventArgs>? TransferCompleted;
 
     internal SftpSession(
@@ -66,6 +67,7 @@ public sealed class SftpSession : ISftpSession
                 // the thread pool so the UI thread keeps moving.
                 await Task.Run(() => _client.Connect(), ct);
                 SshLog.Info($"SFTP connected: user={_username} conn={ConnectionId} attempt={attempt}");
+                Connected?.Invoke(this, EventArgs.Empty);
                 return;
             }
             catch (Renci.SshNet.Common.SshAuthenticationException ex)

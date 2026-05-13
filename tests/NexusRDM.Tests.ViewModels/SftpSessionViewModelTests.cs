@@ -462,6 +462,7 @@ public sealed class SftpSessionViewModelTests
         public bool   IsConnected  => false;
         public string Username     => "";
         public event EventHandler? Disconnected { add { } remove { } }
+        public event EventHandler? Connected    { add { } remove { } }
         public event EventHandler<SftpTransferEventArgs>? TransferCompleted { add { } remove { } }
         public Task ConnectAsync(CancellationToken ct = default) => throw new InvalidOperationException(_message);
         public Task DisconnectAsync() => Task.CompletedTask;

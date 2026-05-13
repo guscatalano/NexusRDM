@@ -1018,6 +1018,11 @@ public sealed partial class MainWindow : Window
             rdp.Disconnected += (_, _)  => Mark(false);
             rdp.FatalError   += (_, _)  => Mark(false);
         }
+        if (entry.SftpSession is { } sftp)
+        {
+            sftp.Connected    += (_, _) => Mark(true);
+            sftp.Disconnected += (_, _) => Mark(false);
+        }
 
         var tab = new TabViewItem
         {

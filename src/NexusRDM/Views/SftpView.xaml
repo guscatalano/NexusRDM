@@ -162,7 +162,7 @@
                 <Border Grid.Row="0" Background="{StaticResource NxBg1}"
                         BorderBrush="{StaticResource NxBrd}" BorderThickness="0,0,0,1"
                         Padding="8,0">
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" VerticalAlignment="Center">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" VerticalAlignment="Center">
                         <TextBlock Grid.Column="0" Text="Remote" FontSize="11"
                                    Foreground="{StaticResource NxTx3}" Margin="0,0,8,0"
                                    VerticalAlignment="Center" />
@@ -187,7 +187,13 @@
                                 Click="RemoteMkdir_Click"
                                 Background="{StaticResource NxBg2}"
                                 BorderBrush="{StaticResource NxBrd}" BorderThickness="1"
-                                CornerRadius="3" />
+                                CornerRadius="3" Margin="0,0,4,0" />
+                        <Button Grid.Column="5" Content="New file" FontSize="11" Padding="6,2"
+                                Click="RemoteNewFile_Click"
+                                Background="{StaticResource NxBg2}"
+                                BorderBrush="{StaticResource NxBrd}" BorderThickness="1"
+                                CornerRadius="3"
+                                ToolTipService.ToolTip="Create an empty file in the current remote folder" />
                     </Grid>
                 </Border>
                 <ListView Grid.Row="1" x:Name="RemoteList"

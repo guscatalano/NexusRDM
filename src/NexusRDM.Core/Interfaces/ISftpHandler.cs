@@ -17,6 +17,11 @@ public interface ISftpSession : IAsyncDisposable
     string Username     { get; }
 
     event EventHandler? Disconnected;
+    /// <summary>Fires once after the underlying SftpClient finishes
+    /// connecting and authenticating. The tab's status dot wires off
+    /// this to flip from red→green. Not fired for failed connects;
+    /// callers should also handle <see cref="Disconnected"/>.</summary>
+    event EventHandler? Connected;
     event EventHandler<SftpTransferEventArgs>? TransferCompleted;
 
     Task ConnectAsync(CancellationToken ct = default);
