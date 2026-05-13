@@ -812,7 +812,7 @@ public sealed partial class MainWindow : Window
         });
         // "FilesFolder" Segoe Fluent glyph (U+E838) for the tab icon —
         // distinguishes SFTP from SSH (CommandPrompt) and RDP (Remote).
-        AddSessionTab(profile, entry, "", view,
+        AddSessionTab(profile, entry, "", view,
             (SolidColorBrush)Application.Current.Resources["NxAccent"]);
     }
 
