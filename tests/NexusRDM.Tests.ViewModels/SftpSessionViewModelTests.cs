@@ -378,6 +378,118 @@ public sealed class SftpSessionViewModelTests
         Assert.Null(text);
     }
 
+    // ── Remote create (folder + file) ────────────────────────────────
+
+    [Fact]
+    public async Task CreateRemoteFolderAsync_BuildsPath_AndRefreshes()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        vm.RemotePath = "/srv";
+
+        await vm.CreateRemoteFolderAsync("dist");
+
+        Assert.Contains("/srv/dist", fake.CreatedDirs);
+        // Refresh listed the new path; the listing call lands in
+        // fake.Listed twice — once for the initial Connect home
+        // refresh and once for the post-create refresh.
+        Assert.Contains("/srv", fake.Listed);
+    }
+
+    [Fact]
+    public async Task CreateRemoteFolderAsync_NoOp_OnEmptyName()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        vm.RemotePath = "/srv";
+        int before = fake.CreatedDirs.Count;
+
+        await vm.CreateRemoteFolderAsync("");
+        await vm.CreateRemoteFolderAsync("   ");
+        await vm.CreateRemoteFolderAsync(null!);
+
+        Assert.Equal(before, fake.CreatedDirs.Count);
+    }
+
+    [Fact]
+    public async Task CreateRemoteFileAsync_UploadsZeroByteFile_AtCurrentRemotePath()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        vm.RemotePath = "/var/tmp";
+
+        await vm.CreateRemoteFileAsync("touch-me.txt");
+
+        Assert.Single(fake.Uploads);
+        Assert.Equal("/var/tmp/touch-me.txt", fake.Uploads[0].Path);
+        Assert.Empty(fake.Uploads[0].Bytes); // zero-byte payload
+    }
+
+    [Fact]
+    public async Task CreateRemoteFileAsync_TrimsTrailingSlashOnRemotePath()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        vm.RemotePath = "/var/tmp/"; // trailing slash
+
+        await vm.CreateRemoteFileAsync("a.txt");
+
+        // RemotePath.TrimEnd('/') + "/" + name → not "/var/tmp//a.txt"
+        Assert.Single(fake.Uploads);
+        Assert.Equal("/var/tmp/a.txt", fake.Uploads[0].Path);
+    }
+
+    [Fact]
+    public async Task CreateRemoteFileAsync_NoOp_OnEmptyName()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        vm.RemotePath = "/var/tmp";
+        int before = fake.Uploads.Count;
+
+        await vm.CreateRemoteFileAsync("");
+        await vm.CreateRemoteFileAsync("   ");
+        await vm.CreateRemoteFileAsync(null!);
+
+        Assert.Equal(before, fake.Uploads.Count);
+    }
+
+    // ── Session lifecycle events ─────────────────────────────────────
+
+    [Fact]
+    public async Task Connected_EventFires_OnConnectAsync()
+    {
+        var fake = new FakeSftpSession();
+        int fired = 0;
+        fake.Connected += (_, _) => fired++;
+
+        await fake.ConnectAsync();
+
+        Assert.Equal(1, fired);
+        Assert.True(fake.IsConnected);
+    }
+
+    [Fact]
+    public async Task Disconnected_EventFires_OnDisconnectAsync()
+    {
+        var fake = new FakeSftpSession();
+        await fake.ConnectAsync();
+        int fired = 0;
+        fake.Disconnected += (_, _) => fired++;
+
+        await fake.DisconnectAsync();
+
+        Assert.Equal(1, fired);
+        Assert.False(fake.IsConnected);
+    }
+
+    [Fact]
+    public async Task VM_OnSessionDisconnected_FlipsState()
+    {
+        var (vm, fake) = await ConnectedAsync();
+        Assert.True(vm.IsConnected);
+
+        await fake.DisconnectAsync();
+
+        Assert.False(vm.IsConnected);
+        Assert.Equal("Disconnected", vm.StatusMessage);
+    }
+
     [Fact]
     public async Task ReadRemoteBytesAsync_RespectsMaxBytes()
     {
