@@ -17,7 +17,11 @@ namespace NexusRDM.Core.Protocols;
 public sealed class SftpSession : ISftpSession
 {
     private SftpClient? _client;
-    private readonly Func<CancellationToken, Task<SftpClient>> _clientFactory;
+    /// <summary>Factory takes (attempt, ct). Attempt = 0 on first
+    /// try; the handler uses this to decide whether to honour the
+    /// stored vault password (attempt 0) or always re-prompt (≥1).
+    /// Mirrors the equivalent signature on <see cref="SshSession"/>.</summary>
+    private readonly Func<int, CancellationToken, Task<SftpClient>> _clientFactory;
     private readonly string _username;
     private string?         _homeDir;
     private bool            _disposed;
@@ -31,7 +35,7 @@ public sealed class SftpSession : ISftpSession
 
     internal SftpSession(
         Guid connectionId, string username,
-        Func<CancellationToken, Task<SftpClient>> clientFactory)
+        Func<int, CancellationToken, Task<SftpClient>> clientFactory)
     {
         ConnectionId    = connectionId;
         _username       = username;
@@ -41,11 +45,37 @@ public sealed class SftpSession : ISftpSession
     public async Task ConnectAsync(CancellationToken ct = default)
     {
         if (_client is not null) return;
-        _client = await _clientFactory(ct);
-        // SftpClient.Connect blocks on the network; bounce to the
-        // thread pool so the UI thread keeps moving.
-        await Task.Run(() => _client.Connect(), ct);
-        SshLog.Info($"SFTP connected: user={_username} conn={ConnectionId}");
+
+        // Auth retry loop. SSH typically gives 3 attempts per TCP
+        // connection — we open a fresh TCP connection per attempt by
+        // building a new SftpClient through the factory each time.
+        // Mirrors SshSession.ConnectAsync. The factory's onPrompt
+        // re-fires on each attempt > 0 (the SFTP modal dialog
+        // reappears), so the user can try a different password.
+        //
+        // We don't bound the loop on count — the user cancels the
+        // modal which makes the factory throw OperationCanceledException,
+        // which propagates out as the exit signal. Matches SshSession's
+        // "keep trying until success or explicit cancel" UX.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                _client = await _clientFactory(attempt, ct);
+                // SftpClient.Connect blocks on the network; bounce to
+                // the thread pool so the UI thread keeps moving.
+                await Task.Run(() => _client.Connect(), ct);
+                SshLog.Info($"SFTP connected: user={_username} conn={ConnectionId} attempt={attempt}");
+                return;
+            }
+            catch (Renci.SshNet.Common.SshAuthenticationException ex)
+            {
+                SshLog.Warn($"SFTP auth attempt {attempt} failed: {ex.Message}");
+                try { _client?.Dispose(); } catch { }
+                _client = null;
+                // Loop continues — factory re-prompts on attempt > 0.
+            }
+        }
     }
 
     public Task DisconnectAsync()

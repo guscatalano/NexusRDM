@@ -30,10 +30,14 @@ public sealed class SftpHandler : ISftpHandler
         string? keyPassphrase,
         SshKeyboardPromptHandler? onPrompt)
     {
-        async Task<SftpClient> Factory(CancellationToken ct)
+        async Task<SftpClient> Factory(int attempt, CancellationToken ct)
         {
-            var resolvedUser     = username;
-            var resolvedPassword = storedPassword;
+            var resolvedUser = username;
+            // Attempt 0: trust the vault-stored password. Subsequent
+            // attempts mean attempt 0's password was wrong, so drop
+            // it and force a fresh prompt via the modal dialog.
+            // Mirrors SshHandler's attempt-vs-stored handling.
+            var resolvedPassword = attempt == 0 ? storedPassword : null;
             var methods          = new List<AuthenticationMethod>();
 
             // SSH.NET's AuthenticationMethod base ctor rejects empty
@@ -63,8 +67,12 @@ public sealed class SftpHandler : ISftpHandler
                     if (profile.SshAuthMode == SshAuthMode.KeyThenPrompt)
                     {
                         if (string.IsNullOrEmpty(resolvedPassword) && onPrompt is not null)
+                        {
                             resolvedPassword = await onPrompt(
                                 $"{resolvedUser}@{profile.Host} SFTP password: ", true, ct);
+                            if (resolvedPassword is null && attempt > 0)
+                                throw new OperationCanceledException("SFTP password prompt cancelled.");
+                        }
                         if (resolvedPassword is not null)
                             methods.Add(new PasswordAuthenticationMethod(resolvedUser, resolvedPassword));
                         if (onPrompt is not null)
@@ -78,6 +86,8 @@ public sealed class SftpHandler : ISftpHandler
                         methods.Add(BuildInteractive(resolvedUser, onPrompt));
                         var pw = await onPrompt(
                             $"{resolvedUser}@{profile.Host} SFTP password: ", true, ct);
+                        if (pw is null && attempt > 0)
+                            throw new OperationCanceledException("SFTP password prompt cancelled.");
                         if (pw is not null)
                             methods.Add(new PasswordAuthenticationMethod(resolvedUser, pw));
                     }
@@ -86,8 +96,16 @@ public sealed class SftpHandler : ISftpHandler
                 case SshAuthMode.Stored:
                 default:
                     if (string.IsNullOrEmpty(resolvedPassword) && onPrompt is not null)
+                    {
                         resolvedPassword = await onPrompt(
                             $"{resolvedUser}@{profile.Host} SFTP password: ", true, ct);
+                        // Modal dialog returns null when the user clicks
+                        // Cancel. Don't loop forever sending empty
+                        // passwords — propagate as cancellation so the
+                        // retry loop in SftpSession.ConnectAsync exits.
+                        if (resolvedPassword is null && attempt > 0)
+                            throw new OperationCanceledException("SFTP password prompt cancelled.");
+                    }
                     methods.Add(new PasswordAuthenticationMethod(
                         resolvedUser, resolvedPassword ?? string.Empty));
                     if (onPrompt is not null)
