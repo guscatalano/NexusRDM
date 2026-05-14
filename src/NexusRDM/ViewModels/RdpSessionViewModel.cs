@@ -90,6 +90,7 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         RdpDefaultResolution.Res1366x768,
         RdpDefaultResolution.Res1600x900,
         RdpDefaultResolution.Res1920x1080,
+        RdpDefaultResolution.Res1920x1200,
         RdpDefaultResolution.Res2560x1440,
         RdpDefaultResolution.Res3840x2160,
     };
@@ -106,6 +107,7 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         RdpDefaultResolution.Res1366x768   => "1366 × 768",
         RdpDefaultResolution.Res1600x900   => "1600 × 900",
         RdpDefaultResolution.Res1920x1080  => "1920 × 1080",
+        RdpDefaultResolution.Res1920x1200  => "1920 × 1200",
         RdpDefaultResolution.Res2560x1440  => "2560 × 1440",
         RdpDefaultResolution.Res3840x2160  => "3840 × 2160",
         _ => r.ToString(),
@@ -133,6 +135,7 @@ public sealed partial class RdpSessionViewModel : ObservableObject, IDisposable
         RdpDefaultResolution.Res1366x768  => (1366,  768),
         RdpDefaultResolution.Res1600x900  => (1600,  900),
         RdpDefaultResolution.Res1920x1080 => (1920, 1080),
+        RdpDefaultResolution.Res1920x1200 => (1920, 1200),
         RdpDefaultResolution.Res2560x1440 => (2560, 1440),
         RdpDefaultResolution.Res3840x2160 => (3840, 2160),
         _                                 => (0, 0),

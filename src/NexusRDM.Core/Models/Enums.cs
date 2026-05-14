@@ -160,4 +160,5 @@ public enum RdpDefaultResolution
     Res1920x1080 = 6,
     Res2560x1440 = 7,
     Res3840x2160 = 8,
+    Res1920x1200 = 9,
 }

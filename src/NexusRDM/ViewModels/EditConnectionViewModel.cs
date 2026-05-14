@@ -340,6 +340,7 @@ public sealed partial class EditConnectionViewModel : ObservableValidator
         new("1366 × 768",             RdpDefaultResolution.Res1366x768),
         new("1600 × 900",             RdpDefaultResolution.Res1600x900),
         new("1920 × 1080",            RdpDefaultResolution.Res1920x1080),
+        new("1920 × 1200",            RdpDefaultResolution.Res1920x1200),
         new("2560 × 1440",            RdpDefaultResolution.Res2560x1440),
         new("3840 × 2160",            RdpDefaultResolution.Res3840x2160),
     ];
