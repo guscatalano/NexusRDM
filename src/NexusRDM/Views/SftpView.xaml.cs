@@ -176,6 +176,31 @@ public sealed partial class SftpView : UserControl, ISessionView
             await ViewModel.DeleteLocalAsync(entry);
     }
 
+    /// <summary>Confirm-then-delete on the remote side. Same shape as
+    /// the local confirmation but the wording calls out "from the
+    /// server" since remote deletes are typically more dangerous —
+    /// they hit the user's actual infrastructure, no recycle bin.
+    /// Directory deletes are recursive on the server (rm -rf
+    /// equivalent via SshNet's DeleteDirectory). The dialog default
+    /// button is Cancel to make the destructive path require an
+    /// explicit click.</summary>
+    private async System.Threading.Tasks.Task ConfirmAndDeleteRemoteAsync(SftpEntry entry)
+    {
+        var what = entry.IsDirectory ? "folder (and everything inside it)" : "file";
+        var dlg = new ContentDialog
+        {
+            XamlRoot          = XamlRoot,
+            Title             = $"Delete remote {(entry.IsDirectory ? "folder" : "file")}?",
+            Content           = $"\"{entry.FullPath}\" will be permanently deleted from the server. " +
+                                $"This removes the {what}. There's no undo and no recycle bin on the remote.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText   = "Cancel",
+            DefaultButton     = ContentDialogButton.Close,
+        };
+        if (await dlg.ShowAsync() == ContentDialogResult.Primary)
+            await ViewModel.DeleteRemoteAsync(entry);
+    }
+
     private async void LocalPathBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Enter)
@@ -576,8 +601,8 @@ public sealed partial class SftpView : UserControl, ISessionView
         if (entry.Name != "..")
         {
             menu.Items.Add(new MenuFlyoutSeparator());
-            var del = new MenuFlyoutItem { Text = "Delete", Icon = new SymbolIcon(Symbol.Delete) };
-            del.Click += async (_, _) => await ViewModel.DeleteRemoteAsync(entry);
+            var del = new MenuFlyoutItem { Text = "Delete (remote)", Icon = new SymbolIcon(Symbol.Delete) };
+            del.Click += async (_, _) => await ConfirmAndDeleteRemoteAsync(entry);
             menu.Items.Add(del);
 
             var props = new MenuFlyoutItem { Text = "Properties…", Icon = new SymbolIcon(Symbol.Setting) };
